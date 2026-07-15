@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="Pronostici probabilistici per le partite di Serie A basati su forma recente, Elo, xG, tiri e indisponibili." />
+  <title>Serie A Match Predictor</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="hero">
+    <div class="hero__inner">
+      <p class="eyebrow">SERIE A · MODELLO POISSON + ELO</p>
+      <h1>Scegli la partita.<br /><span>Ottieni un pronostico trasparente.</span></h1>
+      <p class="lead">Il modello ricalcola la forza delle squadre sui dati più recenti, produce probabilità 1X2 e una distribuzione completa dei risultati esatti.</p>
+      <div class="status-row">
+        <span id="data-status" class="pill">Caricamento dati…</span>
+        <span id="coverage-status" class="pill pill--muted">Copertura avanzata…</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="panel controls" aria-labelledby="match-title">
+      <div class="section-heading">
+        <div>
+          <p class="kicker">INPUT</p>
+          <h2 id="match-title">Partita da prevedere</h2>
+        </div>
+        <button id="swap-button" class="button button--ghost" type="button" title="Inverti casa e trasferta">⇄ Inverti</button>
+      </div>
+
+      <div class="team-grid">
+        <label>
+          <span>Squadra di casa</span>
+          <select id="home-team"></select>
+        </label>
+        <div class="versus">VS</div>
+        <label>
+          <span>Squadra ospite</span>
+          <select id="away-team"></select>
+        </label>
+      </div>
+
+      <div class="input-grid input-grid--three">
+        <label>
+          <span>Data partita</span>
+          <input id="match-date" type="date" />
+        </label>
+        <label>
+          <span>Finestra dati</span>
+          <select id="window-days">
+            <option value="365">Ultimi 12 mesi</option>
+            <option value="540" selected>Ultimi 18 mesi</option>
+            <option value="730">Ultimi 24 mesi</option>
+          </select>
+        </label>
+        <label>
+          <span>Emivita recenza</span>
+          <select id="half-life">
+            <option value="75">75 giorni</option>
+            <option value="120" selected>120 giorni</option>
+            <option value="180">180 giorni</option>
+          </select>
+        </label>
+      </div>
+
+      <details class="advanced">
+        <summary>Parametri pre-partita avanzati</summary>
+        <p class="hint">Usa questi controlli per assenze, squalifiche e informazioni dell’ultima ora non presenti nel dataset.</p>
+        <div class="adjustment-grid">
+          <fieldset>
+            <legend id="home-adjustment-title">Casa</legend>
+            <label class="range-label">
+              <span>Impatto assenze in attacco <output id="home-attack-output">0%</output></span>
+              <input id="home-attack-absence" type="range" min="0" max="35" value="0" step="1" />
+            </label>
+            <label class="range-label">
+              <span>Impatto assenze in difesa <output id="home-defense-output">0%</output></span>
+              <input id="home-defense-absence" type="range" min="0" max="35" value="0" step="1" />
+            </label>
+            <label class="range-label">
+              <span>Forza formazione <output id="home-lineup-output">100%</output></span>
+              <input id="home-lineup" type="range" min="85" max="110" value="100" step="1" />
+            </label>
+          </fieldset>
+          <fieldset>
+            <legend id="away-adjustment-title">Trasferta</legend>
+            <label class="range-label">
+              <span>Impatto assenze in attacco <output id="away-attack-output">0%</output></span>
+              <input id="away-attack-absence" type="range" min="0" max="35" value="0" step="1" />
+            </label>
+            <label class="range-label">
+              <span>Impatto assenze in difesa <output id="away-defense-output">0%</output></span>
+              <input id="away-defense-absence" type="range" min="0" max="35" value="0" step="1" />
+            </label>
+            <label class="range-label">
+              <span>Forza formazione <output id="away-lineup-output">100%</output></span>
+              <input id="away-lineup" type="range" min="85" max="110" value="100" step="1" />
+            </label>
+          </fieldset>
+        </div>
+      </details>
+
+      <button id="predict-button" class="button button--primary" type="button">
+        <span>Ricalcola e pronostica</span><span aria-hidden="true">→</span>
+      </button>
+      <p id="error-message" class="error" role="alert" hidden></p>
+    </section>
+
+    <section id="results" class="results" aria-live="polite" hidden>
+      <div class="prediction-hero panel">
+        <p class="kicker">PRONOSTICO</p>
+        <div class="prediction-title-row">
+          <div>
+            <h2 id="fixture-label">—</h2>
+            <p id="prediction-summary" class="lead-small">—</p>
+          </div>
+          <div class="score-pick">
+            <span>Risultato più probabile</span>
+            <strong id="top-score">—</strong>
+            <small id="top-score-probability">—</small>
+          </div>
+        </div>
+      </div>
+
+      <div class="outcome-grid">
+        <article class="outcome-card panel">
+          <span id="home-win-label">Vittoria casa</span>
+          <strong id="home-win-probability">—</strong>
+          <div class="meter"><i id="home-win-meter"></i></div>
+          <small id="home-fair-odds">Quota teorica —</small>
+        </article>
+        <article class="outcome-card panel">
+          <span>Pareggio</span>
+          <strong id="draw-probability">—</strong>
+          <div class="meter"><i id="draw-meter"></i></div>
+          <small id="draw-fair-odds">Quota teorica —</small>
+        </article>
+        <article class="outcome-card panel">
+          <span id="away-win-label">Vittoria ospite</span>
+          <strong id="away-win-probability">—</strong>
+          <div class="meter"><i id="away-win-meter"></i></div>
+          <small id="away-fair-odds">Quota teorica —</small>
+        </article>
+      </div>
+
+      <div class="detail-grid">
+        <article class="panel">
+          <div class="section-heading compact"><div><p class="kicker">GOAL MODEL</p><h3>Gol attesi e mercati</h3></div></div>
+          <div class="metric-grid">
+            <div><span id="home-xg-label">xG casa</span><strong id="home-lambda">—</strong></div>
+            <div><span id="away-xg-label">xG ospite</span><strong id="away-lambda">—</strong></div>
+            <div><span>Over 2.5</span><strong id="over-probability">—</strong></div>
+            <div><span>Goal / BTTS</span><strong id="btts-probability">—</strong></div>
+          </div>
+        </article>
+
+        <article class="panel">
+          <div class="section-heading compact"><div><p class="kicker">FORMA</p><h3>Confronto pre-partita</h3></div></div>
+          <div id="comparison-table" class="comparison-table"></div>
+        </article>
+      </div>
+
+      <div class="detail-grid">
+        <article class="panel">
+          <div class="section-heading compact"><div><p class="kicker">SCORE MATRIX</p><h3>Risultati esatti più probabili</h3></div></div>
+          <ol id="score-list" class="score-list"></ol>
+        </article>
+        <article class="panel methodology">
+          <div class="section-heading compact"><div><p class="kicker">TRASPARENZA</p><h3>Come leggere il risultato</h3></div></div>
+          <p id="model-note"></p>
+          <p>Le probabilità sono stime statistiche, non garanzie. Il modello non considera eventi successivi alla data selezionata.</p>
+        </article>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <p>Dati risultati: Football-Data.co.uk. xG: Understat quando disponibile; altrimenti proxy dichiarato. Modello a scopo informativo.</p>
+    <a href="https://github.com/FRAMAX444/serie-a-match-predictor" rel="noreferrer">Codice sorgente su GitHub</a>
+  </footer>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
