@@ -128,6 +128,9 @@ async function init() {
     const response = await fetch("data/matches.json", { cache: "no-store" });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     payload = await response.json();
+    if (payload.columns && payload.matches.length && Array.isArray(payload.matches[0])) {
+      payload.matches = payload.matches.map((row) => Object.fromEntries(payload.columns.map((column, index) => [column, row[index]])));
+    }
     populateTeams(payload.teams);
     const params = new URLSearchParams(window.location.search);
     if (payload.teams.includes(params.get("home"))) $("home-team").value = params.get("home");
