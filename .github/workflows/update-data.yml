@@ -27,10 +27,10 @@ jobs:
         with:
           node-version: "22"
       - name: Download UEFA fixtures and relevant domestic form
-        run: python scripts/update_europe_data.py --target-season "$TARGET_SEASON"
+        run: python scripts/update_uefa_data.py --target-season "$TARGET_SEASON"
       - name: Validate generated inputs and model
         run: |
-          python -m py_compile scripts/update_europe_data.py
+          python -m py_compile scripts/update_europe_data.py scripts/update_uefa_data.py
           npm test
           npm run check
       - name: Commit changed dataset
