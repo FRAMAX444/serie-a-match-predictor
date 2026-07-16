@@ -1,4 +1,4 @@
-name: Validate multi-league predictor
+name: Validate top-five predictor
 
 on:
   pull_request:
@@ -20,20 +20,18 @@ jobs:
           node-version: "22"
       - name: Validate application
         run: |
-          python -m py_compile scripts/update_europe_data.py scripts/update_uefa_data.py scripts/enrich_competitions_players.py
+          python -m py_compile scripts/update_europe_data.py scripts/update_top5_data.py
           npm test
           npm run check
       - name: Build dataset from public sources
         id: source_build
         continue-on-error: true
-        run: |
-          python scripts/update_uefa_data.py --target-season "2627" --history-seasons 3 --skip-understat > source-smoke.log 2>&1
-          python scripts/enrich_competitions_players.py --target-season "2627" --history-seasons 2 --skip-player-data >> source-smoke.log 2>&1
+        run: python scripts/update_top5_data.py --target-season "2627" --history-seasons 3 --skip-understat > source-smoke.log 2>&1
       - name: Upload source diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: multi-league-source-smoke
+          name: top-five-source-smoke
           path: source-smoke.log
       - name: Require successful source build
         if: steps.source_build.outcome == 'failure'
