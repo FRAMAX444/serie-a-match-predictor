@@ -28,17 +28,39 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Refresh UEFA competition inputs
-        continue-on-error: true
-        run: python scripts/update_uefa_data.py --target-season "$TARGET_SEASON"
+      - name: Build compact production dataset
+        run: python scripts/update_top5_data.py --target-season "$TARGET_SEASON" --history-seasons 4 --skip-understat
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: Validate model
+      - name: Validate application and production payload
         run: |
-          python -m py_compile scripts/update_europe_data.py scripts/update_uefa_data.py
+          python -m py_compile scripts/update_europe_data.py scripts/update_uefa_data.py scripts/update_top5_data.py
           npm test
           npm run check
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path("data/matches.json")
+          payload = json.loads(path.read_text(encoding="utf-8"))
+          expected = {"ucl", "uel", "uecl", "eng.1", "esp.1", "ita.1", "ger.1", "fra.1"}
+          available = {
+              str(item.get("id"))
+              for item in payload.get("competitions", [])
+              if isinstance(item, dict) and item.get("fixtures")
+          }
+          missing = sorted(expected - available)
+          if missing:
+              raise SystemExit(f"Competizioni mancanti nel deploy: {', '.join(missing)}")
+          if payload.get("model_inputs_version") != "4.1-top5-uefa-core":
+              raise SystemExit("Versione dataset di produzione non valida")
+          size = path.stat().st_size
+          limit = 6 * 1024 * 1024
+          print(f"Payload produzione: {size / 1024:.1f} KiB; competizioni: {len(available)}")
+          if size > limit:
+              raise SystemExit(f"Payload troppo pesante: {size} byte, limite {limit}")
+          PY
       - name: Configure Pages
         uses: actions/configure-pages@v5
       - name: Upload static site
