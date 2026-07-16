@@ -30,13 +30,13 @@ jobs:
           python-version: "3.12"
       - name: Refresh UEFA competition inputs
         continue-on-error: true
-        run: python scripts/update_europe_data.py --target-season "$TARGET_SEASON"
+        run: python scripts/update_uefa_data.py --target-season "$TARGET_SEASON"
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
       - name: Validate model
         run: |
-          python -m py_compile scripts/update_europe_data.py
+          python -m py_compile scripts/update_europe_data.py scripts/update_uefa_data.py
           npm test
           npm run check
       - name: Configure Pages
