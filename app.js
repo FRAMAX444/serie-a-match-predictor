@@ -38,6 +38,31 @@ function teamInitials(team) {
   return team.split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase();
 }
 
+function competitionInitials(name) {
+  return String(name).split(/\s+/).filter(Boolean).map((part) => part[0]).join("").slice(0, 3).toUpperCase();
+}
+
+function updateCompetitionLogo() {
+  const container = $("competition-logo");
+  if (!container) return;
+  const competition = competitionCatalog.find((item) => item.id === selectedCompetitionId());
+  container.replaceChildren();
+  container.title = competition?.name || "Competizione";
+  if (!competition?.logo) {
+    container.textContent = competitionInitials(competition?.name || "C");
+    return;
+  }
+  const image = document.createElement("img");
+  image.src = competition.logo;
+  image.alt = "";
+  image.referrerPolicy = "no-referrer";
+  image.addEventListener("error", () => {
+    container.replaceChildren();
+    container.textContent = competitionInitials(competition.name);
+  }, { once: true });
+  container.append(image);
+}
+
 function qualityClass(label) {
   return `quality--${String(label).toLowerCase()}`;
 }
@@ -61,6 +86,7 @@ function populateCompetitions() {
     .map((competition) => `<option value="${escapeHtml(competition.id)}">${escapeHtml(competition.name)}</option>`)
     .join("");
   $("competition-select").value = preferred;
+  updateCompetitionLogo();
 }
 
 function populateFavoriteTeams() {
@@ -93,6 +119,7 @@ function populateMatchdays() {
 }
 
 function loadSelectedCompetition() {
+  updateCompetitionLogo();
   calendar = buildMatchdays(payload, selectedCompetitionId());
   if (!calendar.competition || !calendar.matchdays.length) {
     $("matchday-select").innerHTML = '<option value="">Calendario non disponibile</option>';
@@ -276,11 +303,11 @@ async function init() {
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     payload = unpackMatches(await response.json());
     competitionCatalog = buildCompetitionCatalog(payload);
-    if (!competitionCatalog.length) throw new Error("I cinque campionati supportati non sono disponibili nel dataset.");
+    if (!competitionCatalog.length) throw new Error("Le competizioni supportate non sono disponibili nel dataset.");
     populateCompetitions();
     loadSelectedCompetition();
   } catch {
-    $("error-message").textContent = "Impossibile caricare i dati dei cinque maggiori campionati europei. Riprova tra poco.";
+    $("error-message").textContent = "Impossibile caricare i dati dei campionati e delle coppe UEFA. Riprova tra poco.";
     $("error-message").hidden = false;
     $("predict-button").disabled = true;
   }
