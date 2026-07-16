@@ -90,7 +90,7 @@ body.league-picker-open { overflow: hidden; }
 
 .detail-column--lineups { grid-column: 1 / -1; }
 .lineups-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
-.lineup-team { padding: 16px; border-radius: 16px; background: rgba(var(--primary-rgb), .055); }
+.lineup-team { padding: 16px; border-radius: 16px; background: rgb(var(--primary-rgb) / .055); }
 .lineup-team h4 { margin: 0; }
 .lineup-source, .lineup-empty { margin: 5px 0 12px; color: #6b778c; font-size: .76rem; }
 .lineup-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; margin: 0; padding: 0; list-style: none; }
