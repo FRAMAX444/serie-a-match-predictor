@@ -1,5 +1,12 @@
 import { predictMatchdayFromMatches } from "./model.js";
 import { buildMatchdays, matchdayLabel } from "./matchdays.js";
+import {
+  FAVORITE_STORAGE_KEY,
+  applyStoredAppearance,
+  applyTeamPalette,
+  getModelSettings,
+  setFavoriteTeam,
+} from "./preferences.js";
 
 const $ = (id) => document.getElementById(id);
 const percent = (value) => `${(100 * value).toFixed(1)}%`;
@@ -14,32 +21,6 @@ const formatDate = (value) => new Intl.DateTimeFormat("it-IT", {
   month: "short",
 }).format(new Date(`${value}T12:00:00Z`));
 
-const FAVORITE_STORAGE_KEY = "serie-a-predictor-favorite-team";
-const PALETTE_STORAGE_KEY = "serie-a-predictor-team-palettes";
-const BACKGROUND_STORAGE_KEY = "serie-a-predictor-background";
-const DEFAULT_PALETTE = { primary: "#1f4f8f", secondary: "#172033" };
-const TEAM_PALETTES = {
-  Atalanta: { primary: "#1e71b8", secondary: "#101820" },
-  Bologna: { primary: "#9b1b30", secondary: "#14213d" },
-  Cagliari: { primary: "#a71930", secondary: "#17365d" },
-  Como: { primary: "#1d5ca8", secondary: "#ffffff" },
-  Fiorentina: { primary: "#5b2a86", secondary: "#ffffff" },
-  Frosinone: { primary: "#f4c300", secondary: "#174a8b" },
-  Genoa: { primary: "#a71930", secondary: "#17365d" },
-  Inter: { primary: "#0057b8", secondary: "#111111" },
-  Juventus: { primary: "#111111", secondary: "#ffffff" },
-  Lazio: { primary: "#75bde0", secondary: "#ffffff" },
-  Lecce: { primary: "#d9ad00", secondary: "#b51f2e" },
-  Milan: { primary: "#c8102e", secondary: "#111111" },
-  Monza: { primary: "#d71920", secondary: "#ffffff" },
-  Napoli: { primary: "#12a0d7", secondary: "#ffffff" },
-  Parma: { primary: "#f2c300", secondary: "#1d4f91" },
-  Roma: { primary: "#8e1f2f", secondary: "#f0bc42" },
-  Sassuolo: { primary: "#2eaa50", secondary: "#111111" },
-  Torino: { primary: "#7a263a", secondary: "#ffffff" },
-  Udinese: { primary: "#111111", secondary: "#ffffff" },
-  Venezia: { primary: "#e86f21", secondary: "#0b6b4f" },
-};
 const OPENING_ROUND_2627 = [
   ["Inter", "Monza"],
   ["Roma", "Fiorentina"],
@@ -69,181 +50,12 @@ function teamInitials(team) {
   return team.split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase();
 }
 
-function outcomeClass(key) {
-  if (key === "1") return "outcome--home";
-  if (key === "2") return "outcome--away";
-  return "outcome--draw";
-}
-
 function qualityClass(label) {
   return `quality--${label.toLowerCase()}`;
 }
 
 function favoriteTeam() {
   return $("favorite-team-select").value;
-}
-
-function hexToRgb(hex) {
-  const normalized = String(hex).replace("#", "");
-  if (!/^[0-9a-f]{6}$/i.test(normalized)) return null;
-  return {
-    r: Number.parseInt(normalized.slice(0, 2), 16),
-    g: Number.parseInt(normalized.slice(2, 4), 16),
-    b: Number.parseInt(normalized.slice(4, 6), 16),
-  };
-}
-
-function rgbToHex({ r, g, b }) {
-  return `#${[r, g, b].map((channel) => Math.round(channel).toString(16).padStart(2, "0")).join("")}`;
-}
-
-function mixColors(color, target, amount) {
-  const sourceRgb = hexToRgb(color) || hexToRgb(DEFAULT_PALETTE.primary);
-  const targetRgb = hexToRgb(target) || { r: 255, g: 255, b: 255 };
-  return rgbToHex({
-    r: sourceRgb.r + (targetRgb.r - sourceRgb.r) * amount,
-    g: sourceRgb.g + (targetRgb.g - sourceRgb.g) * amount,
-    b: sourceRgb.b + (targetRgb.b - sourceRgb.b) * amount,
-  });
-}
-
-function readableText(color) {
-  const rgb = hexToRgb(color) || { r: 0, g: 0, b: 0 };
-  const channels = [rgb.r, rgb.g, rgb.b].map((value) => {
-    const channel = value / 255;
-    return channel <= .03928 ? channel / 12.92 : ((channel + .055) / 1.055) ** 2.4;
-  });
-  const luminance = .2126 * channels[0] + .7152 * channels[1] + .0722 * channels[2];
-  return luminance > .56 ? "#172033" : "#ffffff";
-}
-
-function storedPalettes() {
-  try {
-    return JSON.parse(localStorage.getItem(PALETTE_STORAGE_KEY) || "{}") || {};
-  } catch {
-    return {};
-  }
-}
-
-function paletteForTeam(team) {
-  const custom = storedPalettes()[team];
-  return custom || TEAM_PALETTES[team] || DEFAULT_PALETTE;
-}
-
-function applyPalette(palette) {
-  const primary = palette.primary || DEFAULT_PALETTE.primary;
-  const secondary = palette.secondary || DEFAULT_PALETTE.secondary;
-  const primaryRgb = hexToRgb(primary) || hexToRgb(DEFAULT_PALETTE.primary);
-  const root = document.documentElement.style;
-  root.setProperty("--primary", primary);
-  root.setProperty("--primary-rgb", `${primaryRgb.r} ${primaryRgb.g} ${primaryRgb.b}`);
-  root.setProperty("--primary-dark", mixColors(primary, "#000000", .28));
-  root.setProperty("--primary-soft", mixColors(primary, "#ffffff", .89));
-  root.setProperty("--on-primary", readableText(primary));
-  root.setProperty("--accent", secondary);
-  root.setProperty("--accent-dark", mixColors(secondary, "#000000", .25));
-  root.setProperty("--on-accent", readableText(secondary));
-  root.setProperty("--favorite-bg", mixColors(primary, "#ffffff", .91));
-  root.setProperty("--favorite-bg-strong", mixColors(primary, "#ffffff", .82));
-  root.setProperty("--favorite-border", mixColors(primary, "#ffffff", .55));
-  $("primary-color").value = primary;
-  $("secondary-color").value = secondary;
-}
-
-function applyFavoritePalette() {
-  applyPalette(paletteForTeam(favoriteTeam()));
-}
-
-function savePaletteForFavorite() {
-  const team = favoriteTeam();
-  if (!team) return;
-  const palettes = storedPalettes();
-  palettes[team] = {
-    primary: $("primary-color").value,
-    secondary: $("secondary-color").value,
-  };
-  try {
-    localStorage.setItem(PALETTE_STORAGE_KEY, JSON.stringify(palettes));
-    applyPalette(palettes[team]);
-    $("customization-status").textContent = `Colori personalizzati salvati per ${team}.`;
-  } catch {
-    $("customization-status").textContent = "Impossibile salvare la palette nel browser.";
-  }
-}
-
-function resetFavoritePalette() {
-  const team = favoriteTeam();
-  const palettes = storedPalettes();
-  delete palettes[team];
-  localStorage.setItem(PALETTE_STORAGE_KEY, JSON.stringify(palettes));
-  applyFavoritePalette();
-  $("customization-status").textContent = `Ripristinati i colori predefiniti di ${team}.`;
-}
-
-function applyBackground(dataUrl) {
-  if (!dataUrl) {
-    document.body.classList.remove("has-custom-background");
-    document.body.style.removeProperty("--custom-background-image");
-    $("remove-background").disabled = true;
-    return;
-  }
-  document.body.style.setProperty("--custom-background-image", `url("${dataUrl}")`);
-  document.body.classList.add("has-custom-background");
-  $("remove-background").disabled = false;
-}
-
-function resizeBackground(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error("Impossibile leggere l'immagine."));
-    reader.onload = () => {
-      const image = new Image();
-      image.onerror = () => reject(new Error("Formato immagine non supportato."));
-      image.onload = () => {
-        const maxWidth = 1920;
-        const maxHeight = 1200;
-        const scale = Math.min(1, maxWidth / image.width, maxHeight / image.height);
-        const canvas = document.createElement("canvas");
-        canvas.width = Math.max(1, Math.round(image.width * scale));
-        canvas.height = Math.max(1, Math.round(image.height * scale));
-        const context = canvas.getContext("2d");
-        context.drawImage(image, 0, 0, canvas.width, canvas.height);
-        resolve(canvas.toDataURL("image/jpeg", .84));
-      };
-      image.src = reader.result;
-    };
-    reader.readAsDataURL(file);
-  });
-}
-
-async function updateBackground(event) {
-  const [file] = event.target.files;
-  if (!file) return;
-  const status = $("customization-status");
-  if (!file.type.startsWith("image/")) {
-    status.textContent = "Seleziona un file immagine.";
-    event.target.value = "";
-    return;
-  }
-  status.textContent = "Preparazione dello sfondo…";
-  try {
-    const dataUrl = await resizeBackground(file);
-    localStorage.setItem(BACKGROUND_STORAGE_KEY, dataUrl);
-    applyBackground(dataUrl);
-    status.textContent = "Immagine di sfondo salvata su questo browser.";
-  } catch (error) {
-    status.textContent = error.name === "QuotaExceededError"
-      ? "Immagine troppo grande per essere salvata. Prova un file più leggero."
-      : error.message || "Impossibile impostare lo sfondo.";
-  } finally {
-    event.target.value = "";
-  }
-}
-
-function removeBackground() {
-  localStorage.removeItem(BACKGROUND_STORAGE_KEY);
-  applyBackground("");
-  $("customization-status").textContent = "Sfondo personalizzato rimosso.";
 }
 
 function openingRoundFallback(data) {
@@ -280,7 +92,7 @@ function populateFavoriteTeams() {
     .join("");
   $("favorite-team-select").value = selected || "";
   $("favorite-team-select").disabled = !teams.length;
-  applyFavoritePalette();
+  applyTeamPalette(selected);
 }
 
 function populateMatchdays() {
@@ -293,7 +105,6 @@ function populateMatchdays() {
   const validRound = calendar.matchdays.some((matchday) => matchday.round === requested);
   select.value = String(validRound ? requested : calendar.defaultRound);
   select.disabled = false;
-  syncSelectedMatchday();
 }
 
 function selectedMatchday() {
@@ -301,22 +112,11 @@ function selectedMatchday() {
   return calendar.matchdays.find((matchday) => matchday.round === round);
 }
 
-function syncSelectedMatchday() {
-  const matchday = selectedMatchday();
-  if (!matchday) {
-    $("selected-round-summary").textContent = "Calendario in aggiornamento";
-    return;
-  }
-  const dateLabel = matchdayLabel(matchday).replace(`Giornata ${matchday.round} · `, "");
-  $("selected-round-summary").textContent = calendar.fallback
-    ? `${matchday.fixtures.length} partite · ${dateLabel} · calendario completo in aggiornamento`
-    : `${matchday.fixtures.length} partite · ${dateLabel}`;
-}
-
 function predictionOptions() {
+  const model = getModelSettings();
   return {
-    windowDays: Number($("window-days").value),
-    halfLifeDays: Number($("half-life").value),
+    windowDays: model.windowDays,
+    halfLifeDays: model.halfLifeDays,
     teamContext: payload.team_context || {},
   };
 }
@@ -371,11 +171,10 @@ function renderFixtureCard(item, index) {
 
   return `
     <article class="fixture-card ${isFavoriteMatch ? "fixture-card--favorite" : ""}">
-      ${isFavoriteMatch ? `<div class="favorite-ribbon"><span>${escapeHtml(preferred)}</span><span>Squadra preferita</span></div>` : ""}
       <button class="fixture-toggle" type="button" aria-expanded="false" aria-controls="${cardId}">
         <div class="fixture-meta">
           <span>${formatDate(fixture.date)}</span>
-          <span class="quality ${qualityClass(result.quality.label)}">Dati ${result.quality.label.toLowerCase()}</span>
+          <span class="quality ${qualityClass(result.quality.label)}">${result.quality.label}</span>
         </div>
         <div class="fixture-main">
           <div class="team team--home ${fixture.home_team === preferred ? "team--favorite" : ""}">
@@ -383,7 +182,6 @@ function renderFixtureCard(item, index) {
             <strong>${escapeHtml(fixture.home_team)}</strong>
           </div>
           <div class="predicted-score">
-            <span>Previsto</span>
             <strong>${top.home}–${top.away}</strong>
             <small>${percent(top.probability)}</small>
           </div>
@@ -398,7 +196,7 @@ function renderFixtureCard(item, index) {
           <span><b>2</b>${percent(p.awayWin)}</span>
         </div>
         <div class="fixture-footer">
-          <span class="outcome ${outcomeClass(result.mostLikelyOutcome.key)}">${result.mostLikelyOutcome.key} · ${escapeHtml(result.mostLikelyOutcome.name)}</span>
+          <span>${result.mostLikelyOutcome.key} · ${escapeHtml(result.mostLikelyOutcome.name)}</span>
           <span class="expand-label">Dettagli <i>⌄</i></span>
         </div>
       </button>
@@ -428,26 +226,10 @@ function renderFixtureCard(item, index) {
   `;
 }
 
-function updateFavoriteSummary(batch) {
-  const preferred = favoriteTeam();
-  const prediction = batch.predictions.find(({ fixture }) => fixture.home_team === preferred || fixture.away_team === preferred);
-  const box = $("favorite-summary");
-  if (!prediction) {
-    box.hidden = true;
-    return;
-  }
-  const score = prediction.result.probabilities.scores[0];
-  box.querySelector("strong").textContent = `${prediction.fixture.home_team}–${prediction.fixture.away_team} · ${score.home}–${score.away}`;
-  box.hidden = false;
-}
-
 function renderMatchday(matchday, batch, shouldScroll = true) {
   lastMatchday = matchday;
   lastBatch = batch;
   $("results").hidden = false;
-  $("round-title").textContent = `Giornata ${matchday.round}`;
-  $("round-subtitle").textContent = `${matchdayLabel(matchday).replace(`Giornata ${matchday.round} · `, "")} · dati fino al ${batch.cutoffDate}`;
-  updateFavoriteSummary(batch);
   $("fixtures-grid").innerHTML = batch.predictions.map(renderFixtureCard).join("");
   const url = new URL(window.location.href);
   url.searchParams.set("round", String(matchday.round));
@@ -466,7 +248,7 @@ async function runMatchdayPrediction() {
     return;
   }
   button.disabled = true;
-  button.querySelector("span").textContent = "Calcolo…";
+  button.querySelector("span").textContent = "…";
   await new Promise((resolve) => setTimeout(resolve, 30));
   try {
     const batch = predictMatchdayFromMatches(payload.matches, matchday.fixtures, predictionOptions());
@@ -476,7 +258,7 @@ async function runMatchdayPrediction() {
     error.hidden = false;
   } finally {
     button.disabled = false;
-    button.querySelector("span").textContent = "Calcola pronostici";
+    button.querySelector("span").textContent = "Calcola";
   }
 }
 
@@ -491,13 +273,12 @@ function showPendingCalendar() {
   populateFavoriteTeams();
   $("matchday-select").innerHTML = '<option value="">Calendario in aggiornamento</option>';
   $("matchday-select").disabled = true;
-  $("selected-round-summary").textContent = "Dati storici pronti";
   $("predict-button").disabled = true;
   $("error-message").hidden = true;
 }
 
 async function init() {
-  applyBackground(localStorage.getItem(BACKGROUND_STORAGE_KEY));
+  applyStoredAppearance();
   try {
     const response = await fetch("data/matches.json", { cache: "no-store" });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -510,25 +291,18 @@ async function init() {
     }
     populateFavoriteTeams();
     populateMatchdays();
-  } catch (error) {
+  } catch {
     $("error-message").textContent = "Impossibile caricare i dati. Riprova tra poco.";
     $("error-message").hidden = false;
     $("predict-button").disabled = true;
   }
 }
 
-$("matchday-select").addEventListener("change", syncSelectedMatchday);
 $("favorite-team-select").addEventListener("change", () => {
-  localStorage.setItem(FAVORITE_STORAGE_KEY, favoriteTeam());
-  applyFavoritePalette();
-  $("customization-status").textContent = `Palette aggiornata per ${favoriteTeam()}.`;
+  setFavoriteTeam(favoriteTeam());
+  applyTeamPalette(favoriteTeam());
   if (lastMatchday && lastBatch) renderMatchday(lastMatchday, lastBatch, false);
 });
-$("primary-color").addEventListener("input", savePaletteForFavorite);
-$("secondary-color").addEventListener("input", savePaletteForFavorite);
-$("reset-palette").addEventListener("click", resetFavoritePalette);
-$("background-image").addEventListener("change", updateBackground);
-$("remove-background").addEventListener("click", removeBackground);
 $("predict-button").addEventListener("click", runMatchdayPrediction);
 $("fixtures-grid").addEventListener("click", (event) => {
   const button = event.target.closest(".fixture-toggle");

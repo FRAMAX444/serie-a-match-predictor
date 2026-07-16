@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="Impostazioni di Serie A Predictor." />
+  <title>Impostazioni · Serie A Predictor</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main class="settings-shell">
+    <header class="settings-header">
+      <a class="back-link" href="index.html">← Pronostici</a>
+      <h1>Impostazioni</h1>
+      <p>Qui sono raccolte tutte le opzioni grafiche e del modello.</p>
+    </header>
+
+    <form class="settings-stack" id="settings-form">
+      <section class="settings-card">
+        <div class="settings-card__heading">
+          <h2>Squadra e palette</h2>
+          <p>I colori personalizzano soltanto controlli e navigazione. I risultati restano neutri.</p>
+        </div>
+        <div class="settings-grid settings-grid--three">
+          <label>
+            <span>Squadra</span>
+            <select id="settings-team"></select>
+          </label>
+          <label class="color-control">
+            <span>Colore principale</span>
+            <input id="primary-color" type="color" value="#1f4f8f" />
+          </label>
+          <label class="color-control">
+            <span>Colore secondario</span>
+            <input id="secondary-color" type="color" value="#172033" />
+          </label>
+        </div>
+        <div class="settings-actions">
+          <button id="save-palette" class="primary-button" type="button"><span>Salva colori</span></button>
+          <button id="reset-palette" class="secondary-button" type="button">Ripristina colori squadra</button>
+        </div>
+      </section>
+
+      <section class="settings-card">
+        <div class="settings-card__heading">
+          <h2>Modello</h2>
+          <p>Queste preferenze vengono usate quando premi Calcola nella pagina principale.</p>
+        </div>
+        <div class="settings-grid">
+          <label>
+            <span>Finestra dati</span>
+            <select id="window-days">
+              <option value="365">12 mesi</option>
+              <option value="540">18 mesi</option>
+              <option value="730">24 mesi</option>
+            </select>
+          </label>
+          <label>
+            <span>Recenza</span>
+            <select id="half-life">
+              <option value="75">75 giorni</option>
+              <option value="120">120 giorni</option>
+              <option value="180">180 giorni</option>
+            </select>
+          </label>
+        </div>
+      </section>
+
+      <section class="settings-card">
+        <div class="settings-card__heading">
+          <h2>Sfondo</h2>
+          <p>L'immagine viene ridimensionata e salvata soltanto in questo browser.</p>
+        </div>
+        <div class="settings-grid settings-grid--background">
+          <label class="background-control">
+            <span>Immagine personalizzata</span>
+            <input id="background-image" type="file" accept="image/*" />
+          </label>
+          <button id="remove-background" class="secondary-button" type="button">Rimuovi sfondo</button>
+        </div>
+      </section>
+
+      <p id="settings-status" class="settings-status" aria-live="polite"></p>
+    </form>
+  </main>
+
+  <script type="module" src="settings.js"></script>
+</body>
+</html>
