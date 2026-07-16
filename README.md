@@ -1,14 +1,78 @@
 # Serie A Matchday Predictor — GitHub Pages
 
-Web app statica per prevedere **tutta una giornata di Serie A** con un solo input: il numero della giornata. Il calcolo avviene interamente nel browser; non esiste un backend applicativo e non vengono inviati dati dell'utente.
+Web app per prevedere **tutta una giornata di Serie A** con un solo input: il numero della giornata. Il modello gira nel browser. Le impostazioni grafiche e i valori predefiniti possono essere pubblicati globalmente da una pagina amministrativa protetta con Firebase Authentication e Firestore.
 
 ## Esperienza utente
 
 - selezione della giornata e calcolo simultaneo di tutte le partite;
-- Roma evidenziata con card dedicata e riepilogo in alto;
+- squadra preferita evidenziata con card dedicata e riepilogo in alto;
 - click su qualsiasi partita o squadra per aprire probabilità, xG e risultati esatti;
 - layout responsive ottimizzato per mobile e desktop;
-- stesso cutoff pre-giornata per tutte le gare, così gli anticipi non contaminano le previsioni delle partite successive.
+- stesso cutoff pre-giornata per tutte le gare, così gli anticipi non contaminano le previsioni delle partite successive;
+- configurazione globale in tempo reale di sfondo, colori, testi e valori predefiniti.
+
+## Admin page
+
+`admin.html` contiene un pannello senza registrazione pubblica. Un utente può salvare le impostazioni soltanto quando:
+
+1. ha effettuato l'accesso con email e password tramite Firebase Authentication;
+2. esiste il documento Firestore `admins/<UID>` con il campo `enabled: true`;
+3. le regole di `firestore.rules` sono state pubblicate.
+
+Dal pannello è possibile modificare:
+
+- immagine HTTPS dello sfondo e relativa opacità;
+- colori principali, sfondo e gradiente della testata;
+- titolo, descrizione e avviso globale;
+- squadra da evidenziare;
+- finestra dati ed emivita predefinite;
+- visibilità della qualità dati e delle quote teoriche.
+
+Le modifiche vengono salvate nel documento `public/settings`. Il sito pubblico lo legge in tempo reale; se Firebase non è configurato o non è raggiungibile, continua a funzionare con i valori locali e l'ultima configurazione memorizzata nel browser.
+
+## Configurazione Firebase
+
+### 1. Crea e registra la web app
+
+Crea un progetto nella Firebase Console e registra una web app. Copia il relativo oggetto di configurazione in `firebase-config.js`:
+
+```js
+export const FIREBASE_CONFIG = Object.freeze({
+  apiKey: "...",
+  authDomain: "...firebaseapp.com",
+  projectId: "...",
+  appId: "...",
+});
+```
+
+La configurazione web Firebase è pubblica per definizione: la protezione effettiva è fornita da Authentication e dalle Security Rules. Non inserire password, service account o chiavi private nella repository.
+
+### 2. Abilita accesso email/password
+
+In Firebase Authentication abilita il provider **Email/Password** e crea gli account delle persone autorizzate. È consigliato configurare una password policy forte e disabilitare qualunque registrazione pubblica nell'applicazione.
+
+### 3. Crea gli amministratori
+
+Per ogni account autorizzato copia il suo UID dalla sezione Authentication e crea in Firestore:
+
+```text
+admins/<UID>
+  enabled: true
+```
+
+Per revocare l'accesso imposta `enabled: false`, elimina il documento oppure disabilita l'account Authentication.
+
+### 4. Pubblica le regole Firestore
+
+Con Firebase CLI:
+
+```bash
+npx firebase-tools login
+npx firebase-tools use --add
+npx firebase-tools deploy --only firestore:rules
+```
+
+Le regole consentono a tutti di leggere solo `public/settings`; la scrittura è riservata agli UID presenti nella collezione `admins`. Tutti gli altri documenti sono negati per default.
 
 ## Modello
 
@@ -35,7 +99,7 @@ Per squadre neopromosse o con storico insufficiente il modello usa un prior prud
 - usa un fallback ricostruito dai risultati quando il calendario esterno non è disponibile;
 - aggiorna il JSON soltanto se i dati cambiano.
 
-Nessuna chiave API è necessaria. L'import Understat è best-effort: un errore non blocca l'aggiornamento dei risultati.
+L'import Understat è best-effort: un errore non blocca l'aggiornamento dei risultati.
 
 ## Avvio locale
 
@@ -43,7 +107,7 @@ Nessuna chiave API è necessaria. L'import Understat è best-effort: un errore n
 python -m http.server 8000
 ```
 
-Aprire `http://localhost:8000`.
+Aprire `http://localhost:8000`. Il pannello è disponibile su `http://localhost:8000/admin.html`.
 
 ## Test
 
@@ -55,7 +119,7 @@ python -m py_compile scripts/update_data.py
 
 ## Deploy GitHub Pages
 
-Il workflow `pages.yml` esegue i test e pubblica il sito. Il workflow giornaliero aggiorna il dataset e un nuovo commit attiva automaticamente un altro deploy.
+Il workflow `pages.yml` esegue i test e pubblica il sito. Il workflow giornaliero aggiorna il dataset e un nuovo commit attiva automaticamente un altro deploy. Firebase resta un servizio esterno e non richiede di spostare il sito da GitHub Pages.
 
 ## Limiti
 
