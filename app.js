@@ -20,6 +20,8 @@ const formatDate = (value) => new Intl.DateTimeFormat("it-IT", {
   weekday: "short", day: "numeric", month: "short",
 }).format(new Date(`${value}T12:00:00Z`));
 
+const ROMA_LATEST_LOGO = "https://upload.wikimedia.org/wikipedia/fr/thumb/b/b7/Logo_AS_Roma_2026.svg/240px-Logo_AS_Roma_2026.svg.png";
+
 let payload;
 let competitionCatalog = [];
 let calendar;
@@ -36,6 +38,47 @@ function unpackMatches(data) {
 
 function teamInitials(team) {
   return team.split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase();
+}
+
+function teamLogoUrl(fixture, side) {
+  const team = fixture[`${side}_team`];
+  if (team === "Roma") return ROMA_LATEST_LOGO;
+
+  const explicit = fixture[`${side}_team_logo`] || payload?.team_logos?.[team];
+  if (explicit) return explicit;
+
+  const teamId = String(fixture[`${side}_team_id`] || "").trim();
+  if (fixture.competition_type === "domestic" && teamId) {
+    return `https://a.espncdn.com/i/teamlogos/soccer/500/${encodeURIComponent(teamId)}.png`;
+  }
+  return "";
+}
+
+function teamBadgeMarkup(fixture, side) {
+  const team = fixture[`${side}_team`];
+  const logo = teamLogoUrl(fixture, side);
+  const fallback = `<span class="team-badge__fallback">${teamInitials(team)}</span>`;
+  if (!logo) return `<span class="team-badge team-badge--fallback">${fallback}</span>`;
+  return `
+    <span class="team-badge">
+      <img class="team-badge__image" src="${escapeHtml(logo)}" alt="Stemma ${escapeHtml(team)}" loading="lazy" decoding="async" referrerpolicy="no-referrer" />
+      <span class="team-badge__fallback" hidden>${teamInitials(team)}</span>
+    </span>
+  `;
+}
+
+function hydrateTeamBadges(root = document) {
+  root.querySelectorAll(".team-badge__image").forEach((image) => {
+    const badge = image.closest(".team-badge");
+    const fallback = badge?.querySelector(".team-badge__fallback");
+    const showFallback = () => {
+      image.hidden = true;
+      if (fallback) fallback.hidden = false;
+      badge?.classList.add("team-badge--fallback");
+    };
+    image.addEventListener("error", showFallback, { once: true });
+    if (image.complete && !image.naturalWidth) showFallback();
+  });
 }
 
 function competitionInitials(name) {
@@ -200,13 +243,13 @@ function renderFixtureCard(item, index) {
         </div>
         <div class="fixture-main">
           <div class="team team--home ${fixture.home_team === preferred ? "team--favorite" : ""}">
-            <span class="team-badge">${teamInitials(fixture.home_team)}</span>
+            ${teamBadgeMarkup(fixture, "home")}
             <strong>${escapeHtml(fixture.home_team)}</strong>
           </div>
           <div class="predicted-score"><strong>${top.home}–${top.away}</strong><small>${percent(top.probability)}</small></div>
           <div class="team team--away ${fixture.away_team === preferred ? "team--favorite" : ""}">
             <strong>${escapeHtml(fixture.away_team)}</strong>
-            <span class="team-badge">${teamInitials(fixture.away_team)}</span>
+            ${teamBadgeMarkup(fixture, "away")}
           </div>
         </div>
         <div class="probability-strip">
@@ -249,6 +292,7 @@ function renderMatchday(matchday, batch, shouldScroll = true) {
   lastBatch = batch;
   $("results").hidden = false;
   $("fixtures-grid").innerHTML = batch.predictions.map(renderFixtureCard).join("");
+  hydrateTeamBadges($("fixtures-grid"));
   const url = new URL(window.location.href);
   url.searchParams.set("competition", selectedCompetitionId());
   url.searchParams.set("round", String(matchday.round));
