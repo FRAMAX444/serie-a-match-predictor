@@ -20,20 +20,21 @@ L'interfaccia è responsive per mobile e desktop.
 
 ## Dati usati
 
-`scripts/update_europe_data.py` aggiorna il dataset quattro volte al giorno.
+`scripts/update_uefa_data.py` aggiorna il dataset quattro volte al giorno e usa `scripts/update_europe_data.py` come pipeline di base.
 
 La pipeline:
 
-1. scarica calendario e risultati di Champions, Europa League e Conference League dai feed pubblici ESPN;
-2. identifica automaticamente le squadre presenti nella stagione target;
-3. individua i campionati nazionali che contengono quelle squadre;
-4. conserva soltanto le partite nazionali dei club europei, evitando di appesantire il dataset con campionati irrilevanti;
-5. usa Football-Data.co.uk per statistiche, tiri e quote quando il campionato è supportato;
-6. usa ESPN come fonte di fallback per i campionati non coperti dai CSV;
-7. arricchisce con xG Understat i campionati supportati;
-8. collega campionati diversi attraverso un Elo globale aggiornato anche con le partite UEFA.
+1. scarica calendario e risultati di Champions, Europa League e Conference League dall'API pubblica ufficiale UEFA;
+2. usa i feed ESPN come fallback europeo e come fonte per i campionati nazionali disponibili;
+3. identifica automaticamente le squadre presenti nella stagione target e i relativi codici paese UEFA;
+4. individua tutti i campionati nazionali pertinenti alle federazioni rappresentate;
+5. normalizza i nomi dei club per collegare correttamente dati UEFA, ESPN e Football-Data;
+6. conserva soltanto le partite nazionali dei club europei, evitando di appesantire il dataset con gare irrilevanti;
+7. usa Football-Data.co.uk per statistiche, tiri e quote quando il campionato è supportato;
+8. arricchisce con xG Understat i principali campionati supportati;
+9. collega campionati diversi attraverso un Elo globale aggiornato anche con le partite UEFA.
 
-I campionati nazionali vengono quindi usati per forma, riposo, rendimento casa/trasferta, finalizzazione, disciplina ed Elo, ma non compaiono nel menu delle previsioni.
+I campionati nazionali vengono quindi usati per forma, riposo, rendimento casa/trasferta, finalizzazione, disciplina ed Elo, ma non compaiono nel menu delle previsioni. La copertura mancante di alcuni campionati minori viene dichiarata in `coverage.teams_without_domestic_feed` e compensata con storico UEFA, Elo e prior di forza del campionato.
 
 ## Modello 3.0 Europa
 
@@ -92,7 +93,7 @@ Aprire `http://localhost:8000`.
 ## Test
 
 ```bash
-python -m py_compile scripts/update_europe_data.py
+python -m py_compile scripts/update_europe_data.py scripts/update_uefa_data.py
 npm test
 npm run check
 ```
@@ -103,7 +104,7 @@ I test coprono il catalogo multi-competizione, il cutoff comune, le baseline UEF
 
 - `.github/workflows/update-data.yml` aggiorna il dataset quattro volte al giorno;
 - `.github/workflows/pages.yml` valida e pubblica GitHub Pages;
-- `.github/workflows/validate-pr.yml` verifica ogni pull request e prova le fonti pubbliche senza bloccare la CI in caso di indisponibilità temporanea.
+- `.github/workflows/validate-pr.yml` verifica ogni pull request e richiede che la pipeline riesca a costruire un dataset reale dalle fonti pubbliche.
 
 ## Limiti
 
@@ -111,4 +112,4 @@ Le previsioni sono probabilistiche. Formazioni ufficiali, infortuni, squalifiche
 
 ## Licenza e fonti
 
-Codice MIT. I dati restano soggetti alle condizioni delle fonti utilizzate: ESPN, Football-Data.co.uk e Understat.
+Codice MIT. I dati restano soggetti alle condizioni delle fonti utilizzate: UEFA public match API, ESPN, Football-Data.co.uk e Understat.
