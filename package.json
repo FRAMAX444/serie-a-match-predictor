@@ -5,6 +5,6 @@
   "type": "module",
   "scripts": {
     "test": "node tests/model.test.js && node tests/global-settings.test.js",
-    "check": "node --check app.js && node --check preferences.js && node --check settings.js && node --check competition-preference.js && node --check model.js && node --check matchdays.js && node --check firebase-config.js && node --check firebase-client.js && node --check global-settings.js && node --check admin.js && node --check admin-username.js"
+    "check": "node --check app.js && node --check preferences.js && node --check settings.js && node --check competition-preference.js && node --check model.js && node --check matchdays.js && node --check firebase-config.js && node --check firebase-client.js && node --check global-settings.js && node --check admin.js"
   }
 }
