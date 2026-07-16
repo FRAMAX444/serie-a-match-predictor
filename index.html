@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="global.css" />
   <link rel="stylesheet" href="europe.css" />
   <link rel="stylesheet" href="team-logos.css" />
+  <link rel="stylesheet" href="fixture-modal.css" />
 </head>
 <body>
   <div id="global-announcement" class="global-announcement" hidden></div>
@@ -65,6 +66,12 @@
       <div id="fixtures-grid" class="fixtures-grid"></div>
     </section>
   </main>
+
+  <section id="fixture-modal" class="fixture-modal" role="dialog" aria-modal="true" aria-labelledby="fixture-modal-title" hidden>
+    <div id="fixture-modal-panel" class="fixture-modal__panel" tabindex="-1">
+      <div id="fixture-modal-content"></div>
+    </div>
+  </section>
 
   <script type="module" src="data-fetch-cache.js"></script>
   <script type="module" src="competition-preference.js"></script>
