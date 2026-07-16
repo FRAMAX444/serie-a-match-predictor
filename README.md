@@ -41,7 +41,60 @@ Il peso dei dati sui giocatori è volutamente contenuto: migliora il prior pre-s
 - conserva il precedente calendario 2026/27 se le fonti esterne falliscono;
 - pubblica `data/matches.json` solo dopo i controlli automatici.
 
-Nessuna chiave API è necessaria. Le fonti esterne sono best-effort e la provenienza viene salvata nel payload in `sources` e `source_health`.
+Nessuna chiave API è necessaria per i dati sportivi. Le fonti esterne sono best-effort e la provenienza viene salvata nel payload in `sources` e `source_health`.
+
+## Admin page e impostazioni globali
+
+`admin.html` permette agli account autorizzati di pubblicare una configurazione condivisa da tutti i visitatori. Il pannello usa Firebase Authentication con email/password e Firestore; il sito può restare su GitHub Pages.
+
+Dal pannello è possibile cambiare:
+
+- titolo della pagina e avviso globale;
+- squadra da evidenziare;
+- colori principali e immagine di sfondo HTTPS;
+- opacità dello sfondo;
+- finestra dati ed emivita del modello;
+- visibilità della qualità dati e delle quote teoriche;
+- quali preferenze devono essere obbligatorie per tutti.
+
+Le impostazioni personali in `settings.html` continuano a funzionare quando l'amministratore non le rende obbligatorie. Il documento globale è `public/settings`; gli aggiornamenti vengono ricevuti in tempo reale e memorizzati anche in cache per il fallback offline.
+
+### Configurazione Firebase
+
+1. Crea un progetto nella Firebase Console e registra una web app.
+2. Copia la configurazione pubblica della web app in `firebase-config.js`:
+
+```js
+export const FIREBASE_CONFIG = Object.freeze({
+  apiKey: "...",
+  authDomain: "...firebaseapp.com",
+  projectId: "...",
+  appId: "...",
+});
+```
+
+La configurazione web Firebase non è una password. Non inserire nella repository password, service account, chiavi private o file JSON amministrativi.
+
+3. In **Authentication → Sign-in method** abilita **Email/Password**.
+4. Crea da Firebase Console gli account delle persone che possono accedere alla pagina admin.
+5. Per ogni account, copia il relativo UID e crea in Firestore:
+
+```text
+admins/<UID>
+  enabled: true
+```
+
+La sola conoscenza di email e password non basta: il documento `admins/<UID>` deve essere presente e abilitato. Per revocare l'accesso imposta `enabled: false`, elimina il documento oppure disabilita l'account Authentication.
+
+6. Pubblica le Security Rules incluse nella repository:
+
+```bash
+npx firebase-tools login
+npx firebase-tools use --add
+npx firebase-tools deploy --only firestore:rules
+```
+
+Le regole consentono la lettura pubblica soltanto di `public/settings`, permettono la scrittura esclusivamente agli UID amministratori e negano tutto il resto per impostazione predefinita.
 
 ## Informazioni verificate dell'ultimo minuto
 
@@ -73,7 +126,10 @@ Gli override vengono applicati soltanto se `as_of` è precedente al cutoff della
 python -m http.server 8000
 ```
 
-Aprire `http://localhost:8000`.
+Aprire `http://localhost:8000`. Le pagine di configurazione sono:
+
+- `http://localhost:8000/settings.html` per le preferenze personali;
+- `http://localhost:8000/admin.html` per le impostazioni globali.
 
 ## Test
 
@@ -83,7 +139,7 @@ npm run check
 python -m py_compile scripts/update_data.py
 ```
 
-I test coprono normalizzazione delle probabilità, cutoff comune, stagione target 2026/27, prior delle neopromosse, influenza del contesto rosa e blocco del leakage temporale.
+I test coprono normalizzazione delle probabilità, cutoff comune, stagione target 2026/27, prior delle neopromosse, influenza del contesto rosa, blocco del leakage temporale e validazione delle impostazioni globali.
 
 ## Limiti
 
