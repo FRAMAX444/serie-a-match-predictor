@@ -1,146 +1,228 @@
-import { predictFromMatches } from "./model.js";
+import { predictMatchdayFromMatches } from "./model.js";
+import { buildMatchdays, matchdayLabel } from "./matchdays.js";
 
 const $ = (id) => document.getElementById(id);
 const percent = (value) => `${(100 * value).toFixed(1)}%`;
 const number = (value, digits = 2) => Number(value).toFixed(digits);
 const fairOdds = (value) => value > 0 ? number(1 / value, 2) : "—";
+const formatDate = (value) => new Intl.DateTimeFormat("it-IT", {
+  weekday: "short",
+  day: "numeric",
+  month: "short",
+}).format(new Date(`${value}T12:00:00Z`));
+
 let payload;
+let calendar;
 
-function setRangeOutput(inputId, outputId, suffix = "%") {
-  const input = $(inputId), output = $(outputId);
-  const render = () => { output.value = `${input.value}${suffix}`; };
-  input.addEventListener("input", render); render();
+function unpackMatches(data) {
+  if (data.columns && data.matches?.length && Array.isArray(data.matches[0])) {
+    data.matches = data.matches.map((row) => Object.fromEntries(data.columns.map((column, index) => [column, row[index]])));
+  }
+  return data;
 }
 
-function populateTeams(teams) {
-  [$("home-team"), $("away-team")].forEach((select) => {
-    select.innerHTML = teams.map((team) => `<option value="${team}">${team}</option>`).join("");
-  });
-  const preferredHome = teams.includes("Roma") ? "Roma" : teams[0];
-  const preferredAway = teams.includes("Inter") ? "Inter" : teams.find((team) => team !== preferredHome);
-  $("home-team").value = preferredHome;
-  $("away-team").value = preferredAway;
-  syncLabels();
+function teamInitials(team) {
+  return team.split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase();
 }
 
-function syncLabels() {
-  $("home-adjustment-title").textContent = $("home-team").value || "Casa";
-  $("away-adjustment-title").textContent = $("away-team").value || "Trasferta";
+function outcomeClass(key) {
+  if (key === "1") return "outcome--home";
+  if (key === "2") return "outcome--away";
+  return "outcome--draw";
+}
+
+function qualityClass(label) {
+  return `quality--${label.toLowerCase()}`;
+}
+
+function populateMatchdays() {
+  const select = $("matchday-select");
+  select.innerHTML = calendar.matchdays.map((matchday) => `
+    <option value="${matchday.round}">${matchdayLabel(matchday)}</option>
+  `).join("");
+  const params = new URLSearchParams(window.location.search);
+  const requested = Number(params.get("round"));
+  const validRound = calendar.matchdays.some((matchday) => matchday.round === requested);
+  select.value = String(validRound ? requested : calendar.defaultRound);
+  $("season-label").textContent = `Stagione ${calendar.season.slice(0, 2)}/${calendar.season.slice(2)}`;
+  $("schedule-status").textContent = calendar.inferred
+    ? "Giornate ricostruite dal calendario disponibile"
+    : "Calendario ufficiale importato nel dataset";
+  syncSelectedMatchday();
+}
+
+function selectedMatchday() {
+  const round = Number($("matchday-select").value);
+  return calendar.matchdays.find((matchday) => matchday.round === round);
+}
+
+function syncSelectedMatchday() {
+  const matchday = selectedMatchday();
+  $("selected-round-summary").textContent = matchday
+    ? `${matchday.fixtures.length} partite · ${matchdayLabel(matchday).replace(`Giornata ${matchday.round} · `, "")}`
+    : "Nessuna partita disponibile";
 }
 
 function predictionOptions() {
   return {
-    homeTeam: $("home-team").value,
-    awayTeam: $("away-team").value,
-    date: $("match-date").value,
     windowDays: Number($("window-days").value),
     halfLifeDays: Number($("half-life").value),
-    homeAttackAbsence: Number($("home-attack-absence").value) / 100,
-    homeDefenseAbsence: Number($("home-defense-absence").value) / 100,
-    awayAttackAbsence: Number($("away-attack-absence").value) / 100,
-    awayDefenseAbsence: Number($("away-defense-absence").value) / 100,
-    homeLineup: Number($("home-lineup").value) / 100,
-    awayLineup: Number($("away-lineup").value) / 100,
   };
 }
 
-function outcomeSummary(result, options) {
-  const outcomes = [
-    { name: options.homeTeam, probability: result.probabilities.homeWin },
-    { name: "pareggio", probability: result.probabilities.draw },
-    { name: options.awayTeam, probability: result.probabilities.awayWin },
-  ].sort((a, b) => b.probability - a.probability);
-  return `Esito più probabile: ${outcomes[0].name} (${percent(outcomes[0].probability)}). Modello calibrato su ${result.trainingMatches} partite recenti.`;
+function exactScoreRows(scores) {
+  const maximum = scores[0]?.probability || 1;
+  return scores.slice(0, 8).map((score) => `
+    <li>
+      <b>${score.home}–${score.away}</b>
+      <span class="score-bar"><i style="width:${100 * score.probability / maximum}%"></i></span>
+      <span>${percent(score.probability)}</span>
+    </li>
+  `).join("");
 }
 
-function comparisonRow(home, label, away, formatter = (v) => number(v, 2)) {
+function comparisonRow(home, label, away, formatter = (value) => number(value, 2)) {
   return `<div class="comparison-row"><strong>${formatter(home)}</strong><span>${label}</span><strong>${formatter(away)}</strong></div>`;
 }
 
-function render(result, options) {
+function renderFixtureCard(item, index) {
+  const { fixture, result } = item;
   const p = result.probabilities;
   const top = p.scores[0];
-  $("fixture-label").textContent = `${options.homeTeam} — ${options.awayTeam}`;
-  $("prediction-summary").textContent = outcomeSummary(result, options);
-  $("top-score").textContent = `${top.home}–${top.away}`;
-  $("top-score-probability").textContent = percent(top.probability);
-
-  const outcomes = [
-    ["home-win-probability", "home-win-meter", "home-fair-odds", p.homeWin],
-    ["draw-probability", "draw-meter", "draw-fair-odds", p.draw],
-    ["away-win-probability", "away-win-meter", "away-fair-odds", p.awayWin],
-  ];
-  outcomes.forEach(([probabilityId, meterId, oddsId, value]) => {
-    $(probabilityId).textContent = percent(value);
-    $(meterId).style.width = percent(value);
-    $(oddsId).textContent = `Quota teorica ${fairOdds(value)}`;
-  });
-  $("home-win-label").textContent = `Vittoria ${options.homeTeam}`;
-  $("away-win-label").textContent = `Vittoria ${options.awayTeam}`;
-  $("home-xg-label").textContent = `Gol attesi ${options.homeTeam}`;
-  $("away-xg-label").textContent = `Gol attesi ${options.awayTeam}`;
-  $("home-lambda").textContent = number(result.lambdaHome);
-  $("away-lambda").textContent = number(result.lambdaAway);
-  $("over-probability").textContent = percent(p.over25);
-  $("btts-probability").textContent = percent(p.bothScore);
-
-  $("comparison-table").innerHTML = [
+  const romaMatch = fixture.home_team === "Roma" || fixture.away_team === "Roma";
+  const cardId = `fixture-${index}`;
+  const comparison = [
     comparisonRow(result.home.ppg5, "Punti/gara ultime 5", result.away.ppg5),
     comparisonRow(result.home.xgFor5, "xG ultime 5", result.away.xgFor5),
     comparisonRow(result.home.xgAgainst5, "xGA ultime 5", result.away.xgAgainst5),
-    comparisonRow(result.home.possession5, "Possesso ultime 5", result.away.possession5, (v) => `${number(v, 1)}%`),
-    comparisonRow(result.home.sot5, "Tiri in porta ultime 5", result.away.sot5),
-    comparisonRow(result.home.elo, "Rating Elo", result.away.elo, (v) => number(v, 0)),
+    comparisonRow(result.home.sot5, "Tiri in porta", result.away.sot5),
+    comparisonRow(result.home.possession5, "Possesso", result.away.possession5, (value) => `${number(value, 1)}%`),
+    comparisonRow(result.home.elo, "Rating Elo", result.away.elo, (value) => number(value, 0)),
   ].join("");
-
-  const maxScoreProbability = p.scores[0].probability;
-  $("score-list").innerHTML = p.scores.slice(0, 10).map((score) => `
-    <li><b>${score.home}–${score.away}</b><span class="score-bar"><i style="width:${100 * score.probability / maxScoreProbability}%"></i></span><span>${percent(score.probability)}</span></li>
-  `).join("");
-
-  const xgText = result.xgCoverage > 0.65
-    ? "Gli xG delle due squadre hanno buona copertura reale nelle ultime gare."
-    : "La copertura xG reale è parziale: dove manca, il sistema usa un proxy dichiarato basato su tiri e tiri in porta.";
-  $("model-note").textContent = `${xgText} Finestra: ${result.firstTrainingDate} → ${result.lastTrainingDate}; emivita ${options.halfLifeDays} giorni. Gli aggiustamenti per assenze e formazione sono applicati dopo la stima base.`;
-  $("results").hidden = false;
-  $("results").scrollIntoView({ behavior: "smooth", block: "start" });
-
-  const url = new URL(window.location.href);
-  url.searchParams.set("home", options.homeTeam); url.searchParams.set("away", options.awayTeam); url.searchParams.set("date", options.date);
-  history.replaceState({}, "", url);
+  return `
+    <article class="fixture-card ${romaMatch ? "fixture-card--roma" : ""}">
+      ${romaMatch ? '<div class="roma-ribbon">ROMA IN EVIDENZA</div>' : ""}
+      <button class="fixture-toggle" type="button" aria-expanded="false" aria-controls="${cardId}">
+        <div class="fixture-meta">
+          <span>${formatDate(fixture.date)}</span>
+          <span class="quality ${qualityClass(result.quality.label)}">Qualità dati ${result.quality.label}</span>
+        </div>
+        <div class="fixture-main">
+          <div class="team team--home ${fixture.home_team === "Roma" ? "team--roma" : ""}">
+            <span class="team-badge">${teamInitials(fixture.home_team)}</span>
+            <strong>${fixture.home_team}</strong>
+          </div>
+          <div class="predicted-score">
+            <span>Pronostico</span>
+            <strong>${top.home}–${top.away}</strong>
+            <small>${percent(top.probability)}</small>
+          </div>
+          <div class="team team--away ${fixture.away_team === "Roma" ? "team--roma" : ""}">
+            <strong>${fixture.away_team}</strong>
+            <span class="team-badge">${teamInitials(fixture.away_team)}</span>
+          </div>
+        </div>
+        <div class="probability-strip">
+          <span><b>1</b>${percent(p.homeWin)}</span>
+          <span><b>X</b>${percent(p.draw)}</span>
+          <span><b>2</b>${percent(p.awayWin)}</span>
+        </div>
+        <div class="fixture-footer">
+          <span class="outcome ${outcomeClass(result.mostLikelyOutcome.key)}">Esito: ${result.mostLikelyOutcome.key} · ${result.mostLikelyOutcome.name}</span>
+          <span class="expand-label">Risultati esatti e dettagli <i>⌄</i></span>
+        </div>
+      </button>
+      <div id="${cardId}" class="fixture-details" hidden>
+        <div class="detail-column">
+          <div class="detail-heading">
+            <div><p class="kicker">RISULTATI ESATTI</p><h3>Top punteggi previsti</h3></div>
+            <span>Cutoff ${result.cutoffDate}</span>
+          </div>
+          <ol class="score-list">${exactScoreRows(p.scores)}</ol>
+        </div>
+        <div class="detail-column">
+          <div class="detail-heading"><div><p class="kicker">MODELLO</p><h3>Indicatori chiave</h3></div></div>
+          <div class="metric-grid">
+            <div><span>xG ${fixture.home_team}</span><strong>${number(result.lambdaHome)}</strong></div>
+            <div><span>xG ${fixture.away_team}</span><strong>${number(result.lambdaAway)}</strong></div>
+            <div><span>Over 2.5</span><strong>${percent(p.over25)}</strong></div>
+            <div><span>Goal / BTTS</span><strong>${percent(p.bothScore)}</strong></div>
+            <div><span>Quota teorica 1</span><strong>${fairOdds(p.homeWin)}</strong></div>
+            <div><span>Quota teorica 2</span><strong>${fairOdds(p.awayWin)}</strong></div>
+          </div>
+        </div>
+        <div class="detail-column detail-column--wide">
+          <div class="detail-heading"><div><p class="kicker">CONFRONTO</p><h3>Forma e forza pre-partita</h3></div></div>
+          <div class="comparison-table">${comparison}</div>
+          <p class="model-note">Riposo: ${result.home.restDays} giorni ${fixture.home_team}, ${result.away.restDays} giorni ${fixture.away_team}. Modello allenato su ${result.trainingMatches} partite (${result.firstTrainingDate} → ${result.lastTrainingDate}). Correzione Dixon–Coles applicata ai punteggi bassi.</p>
+        </div>
+      </div>
+    </article>
+  `;
 }
 
-async function runPrediction() {
-  const button = $("predict-button"), error = $("error-message");
+function renderMatchday(matchday, batch) {
+  $("results").hidden = false;
+  $("round-title").textContent = `Giornata ${matchday.round}`;
+  $("round-subtitle").textContent = `${matchdayLabel(matchday).replace(`Giornata ${matchday.round} · `, "")} · cutoff comune ${batch.cutoffDate}`;
+  const romaPrediction = batch.predictions.find(({ fixture }) => fixture.home_team === "Roma" || fixture.away_team === "Roma");
+  $("roma-summary").textContent = romaPrediction
+    ? `Roma: ${romaPrediction.fixture.home_team}–${romaPrediction.fixture.away_team}, risultato più probabile ${romaPrediction.result.probabilities.scores[0].home}–${romaPrediction.result.probabilities.scores[0].away}`
+    : "La Roma non gioca in questa giornata.";
+  $("fixtures-grid").innerHTML = batch.predictions.map(renderFixtureCard).join("");
+  $("method-note").textContent = `Tutte le ${batch.predictions.length} previsioni usano dati antecedenti al ${batch.cutoffDate}: nessuna gara della stessa giornata entra nell'allenamento delle altre. Le probabilità sono stime statistiche, non risultati garantiti.`;
+  const url = new URL(window.location.href);
+  url.searchParams.set("round", String(matchday.round));
+  history.replaceState({}, "", url);
+  $("results").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+async function runMatchdayPrediction() {
+  const button = $("predict-button");
+  const error = $("error-message");
   error.hidden = true;
-  const options = predictionOptions();
-  if (!options.date) { error.textContent = "Seleziona la data della partita."; error.hidden = false; return; }
-  if (options.homeTeam === options.awayTeam) { error.textContent = "Scegli due squadre diverse."; error.hidden = false; return; }
-  button.disabled = true; button.querySelector("span").textContent = "Ricalcolo modello…";
+  const matchday = selectedMatchday();
+  if (!matchday?.fixtures.length) {
+    error.textContent = "La giornata selezionata non contiene partite.";
+    error.hidden = false;
+    return;
+  }
+  button.disabled = true;
+  button.querySelector("span").textContent = "Calcolo delle 10 partite…";
   await new Promise((resolve) => setTimeout(resolve, 30));
-  try { render(predictFromMatches(payload.matches, options), options); }
-  catch (caught) { error.textContent = caught.message || "Errore durante la previsione."; error.hidden = false; }
-  finally { button.disabled = false; button.querySelector("span").textContent = "Ricalcola e pronostica"; }
+  try {
+    const batch = predictMatchdayFromMatches(payload.matches, matchday.fixtures, predictionOptions());
+    renderMatchday(matchday, batch);
+  } catch (caught) {
+    error.textContent = caught.message || "Errore durante il calcolo della giornata.";
+    error.hidden = false;
+  } finally {
+    button.disabled = false;
+    button.querySelector("span").textContent = "Calcola tutta la giornata";
+  }
+}
+
+function toggleFixture(button) {
+  const panel = document.getElementById(button.getAttribute("aria-controls"));
+  const expanded = button.getAttribute("aria-expanded") === "true";
+  button.setAttribute("aria-expanded", String(!expanded));
+  panel.hidden = expanded;
+  if (!expanded && window.matchMedia("(max-width: 720px)").matches) {
+    panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
 }
 
 async function init() {
   try {
     const response = await fetch("data/matches.json", { cache: "no-store" });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    payload = await response.json();
-    if (payload.columns && payload.matches.length && Array.isArray(payload.matches[0])) {
-      payload.matches = payload.matches.map((row) => Object.fromEntries(payload.columns.map((column, index) => [column, row[index]])));
-    }
-    populateTeams(payload.teams);
-    const params = new URLSearchParams(window.location.search);
-    if (payload.teams.includes(params.get("home"))) $("home-team").value = params.get("home");
-    if (payload.teams.includes(params.get("away"))) $("away-team").value = params.get("away");
-    const defaultDate = params.get("date") || new Date().toISOString().slice(0, 10);
-    $("match-date").value = defaultDate;
-    syncLabels();
-    $("data-status").textContent = `${payload.matches.length} partite · aggiornato ${payload.generated_at.slice(0, 10)}`;
+    payload = unpackMatches(await response.json());
+    calendar = buildMatchdays(payload);
+    if (!calendar.matchdays.length) throw new Error("Calendario non disponibile nel dataset.");
+    populateMatchdays();
+    $("data-status").textContent = `${payload.matches.length} partite storiche · aggiornato ${payload.generated_at.slice(0, 10)}`;
     const actualXg = payload.coverage?.xg_actual_matches || 0;
-    $("coverage-status").textContent = actualXg ? `xG reali: ${actualXg} gare` : "xG proxy + tiri · assenze manuali";
+    $("coverage-status").textContent = actualXg ? `xG reali: ${actualXg} gare` : "xG proxy da tiri e tiri in porta";
   } catch (error) {
     $("data-status").textContent = "Dati non disponibili";
     $("error-message").textContent = `Impossibile caricare il dataset: ${error.message}`;
@@ -149,13 +231,11 @@ async function init() {
   }
 }
 
-setRangeOutput("home-attack-absence", "home-attack-output");
-setRangeOutput("home-defense-absence", "home-defense-output");
-setRangeOutput("away-attack-absence", "away-attack-output");
-setRangeOutput("away-defense-absence", "away-defense-output");
-setRangeOutput("home-lineup", "home-lineup-output");
-setRangeOutput("away-lineup", "away-lineup-output");
-$("home-team").addEventListener("change", syncLabels); $("away-team").addEventListener("change", syncLabels);
-$("swap-button").addEventListener("click", () => { const home = $("home-team").value; $("home-team").value = $("away-team").value; $("away-team").value = home; syncLabels(); });
-$("predict-button").addEventListener("click", runPrediction);
+$("matchday-select").addEventListener("change", syncSelectedMatchday);
+$("predict-button").addEventListener("click", runMatchdayPrediction);
+$("fixtures-grid").addEventListener("click", (event) => {
+  const button = event.target.closest(".fixture-toggle");
+  if (button) toggleFixture(button);
+});
+
 init();
