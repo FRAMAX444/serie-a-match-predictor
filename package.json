@@ -1,10 +1,10 @@
 {
-  "name": "european-cups-match-predictor-pages",
-  "version": "3.0.0",
+  "name": "multi-league-match-predictor-pages",
+  "version": "3.1.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node tests/model.test.js && node tests/global-settings.test.js",
-    "check": "node --check app.js && node --check preferences.js && node --check settings.js && node --check competition-preference.js && node --check model.js && node --check matchdays.js && node --check firebase-config.js && node --check firebase-client.js && node --check global-settings.js && node --check admin.js"
+    "test": "node tests/model.test.js && node tests/global-settings.test.js && node tests/multi-league.test.js && node tests/admin-auth.test.js",
+    "check": "node --check app.js && node --check preferences.js && node --check settings.js && node --check competition-preference.js && node --check league-picker.js && node --check model.js && node --check matchdays.js && node --check firebase-config.js && node --check firebase-client.js && node --check global-settings.js && node --check admin-auth.js && node --check admin.js"
   }
 }

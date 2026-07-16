@@ -18,6 +18,7 @@ import {
 
 const $ = (id) => document.getElementById(id);
 let globalSettings = { ...DEFAULT_GLOBAL_SETTINGS };
+let availableTeams = TEAM_NAMES.slice();
 
 function setStatus(message) {
   $("settings-status").textContent = message;
@@ -40,6 +41,11 @@ function setDisabled(ids, disabled) {
   ids.forEach((id) => { $(id).disabled = disabled; });
 }
 
+function ensureTeamOption(team) {
+  if (!team || [...$("settings-team").options].some((option) => option.value === team)) return;
+  $("settings-team").add(new Option(team, team));
+}
+
 function renderGlobalPolicy(settings, meta = {}) {
   globalSettings = settings;
   const locks = [];
@@ -53,7 +59,8 @@ function renderGlobalPolicy(settings, meta = {}) {
     ? "Policy globali sincronizzate con il pannello amministratore."
     : "Uso della configurazione globale disponibile in cache o dei valori iniziali.";
 
-  if (settings.forceFeaturedTeam && TEAM_NAMES.includes(settings.featuredTeam)) {
+  if (settings.forceFeaturedTeam) {
+    ensureTeamOption(settings.featuredTeam);
     $("settings-team").value = settings.featuredTeam;
   }
   $("settings-team").disabled = settings.forceFeaturedTeam || settings.forceAppearance;
@@ -75,13 +82,34 @@ function renderGlobalPolicy(settings, meta = {}) {
   }
 }
 
+async function loadAvailableTeams() {
+  try {
+    const response = await fetch("data/matches.json", { cache: "no-store" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    const fixtureTeams = Array.isArray(data.competitions)
+      ? data.competitions.flatMap((competition) => Array.isArray(competition.fixtures)
+        ? competition.fixtures.flatMap((fixture) => [fixture.home_team, fixture.away_team])
+        : [])
+      : [];
+    availableTeams = [...new Set([
+      ...(Array.isArray(data.teams) ? data.teams : []),
+      ...fixtureTeams,
+      ...Object.keys(data.team_context || {}),
+      ...TEAM_NAMES,
+    ].filter(Boolean))].sort((left, right) => left.localeCompare(right, "it"));
+  } catch {
+    availableTeams = TEAM_NAMES.slice();
+  }
+}
+
 async function init() {
   applyStoredAppearance();
-  const favorite = getFavoriteTeam(TEAM_NAMES[0]);
-  $("settings-team").innerHTML = TEAM_NAMES
-    .map((team) => `<option value="${team}">${team}</option>`)
-    .join("");
-  $("settings-team").value = TEAM_NAMES.includes(favorite) ? favorite : TEAM_NAMES[0];
+  await loadAvailableTeams();
+  const favorite = getFavoriteTeam(availableTeams[0]);
+  $("settings-team").replaceChildren(...availableTeams.map((team) => new Option(team, team)));
+  ensureTeamOption(favorite);
+  $("settings-team").value = favorite || availableTeams[0] || "";
   showTeamPalette();
 
   const model = getModelSettings();

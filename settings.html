@@ -3,10 +3,11 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="description" content="Impostazioni di Serie A Predictor." />
-  <title>Impostazioni · Serie A Predictor</title>
+  <meta name="description" content="Impostazioni personali del Match Predictor." />
+  <title>Impostazioni · Match Predictor</title>
   <link rel="stylesheet" href="styles.css" />
   <link rel="stylesheet" href="global.css" />
+  <link rel="stylesheet" href="europe.css" />
 </head>
 <body>
   <div id="global-announcement" class="global-announcement" hidden></div>
@@ -17,7 +18,7 @@
         <a class="back-link" href="admin.html">Area admin →</a>
       </div>
       <h1>Impostazioni personali</h1>
-      <p>Queste preferenze valgono su questo browser, salvo opzioni rese obbligatorie dall'amministratore.</p>
+      <p>Le preferenze di squadra e lega vengono salvate nella cache di questo browser e determinano l’ordine iniziale delle competizioni.</p>
     </header>
 
     <form class="settings-stack" id="settings-form">
@@ -31,8 +32,8 @@
 
       <section class="settings-card">
         <div class="settings-card__heading">
-          <h2>Pronostici</h2>
-          <p>La competizione scelta viene aperta automaticamente nella pagina principale.</p>
+          <h2>Leghe preferite</h2>
+          <p>La prima lega viene aperta per impostazione predefinita. Puoi riordinare tutte le competizioni supportate.</p>
         </div>
         <div class="settings-grid">
           <label>
@@ -42,17 +43,18 @@
             </select>
           </label>
         </div>
+        <div id="settings-league-order" class="league-order" aria-label="Ordine delle competizioni"></div>
       </section>
 
       <section class="settings-card">
         <div class="settings-card__heading">
           <h2>Squadra e palette</h2>
-          <p>I colori personalizzano soltanto controlli e navigazione. I risultati restano neutri.</p>
+          <p>La squadra preferita viene mostrata per prima e, quando partecipa alla lega scelta, apre automaticamente la prossima partita.</p>
         </div>
         <div class="settings-grid settings-grid--three">
           <label>
-            <span>Squadra</span>
-            <select id="settings-team"></select>
+            <span>Squadra preferita</span>
+            <select id="settings-team"><option value="">Caricamento squadre…</option></select>
           </label>
           <label class="color-control">
             <span>Colore principale</span>
@@ -72,7 +74,7 @@
       <section class="settings-card">
         <div class="settings-card__heading">
           <h2>Modello</h2>
-          <p>Queste preferenze vengono usate quando premi Calcola nella pagina principale.</p>
+          <p>Queste preferenze vengono usate insieme a statistiche di squadra, dati dei giocatori e probabili formazioni.</p>
         </div>
         <div class="settings-grid">
           <label>

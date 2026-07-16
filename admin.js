@@ -1,8 +1,7 @@
 import { DEFAULT_GLOBAL_SETTINGS, applyGlobalSettings, normalizeGlobalSettings } from "./global-settings.js";
 import { TEAM_NAMES } from "./preferences.js";
+import { ADMIN_USERNAME, adminAuthSupported, verifyCredentials } from "./admin-auth.js";
 
-const ADMIN_USERNAME = "RC25M";
-const ADMIN_PASSWORD_SHA256 = "ba8a8700eed325f42283bae17c64cff6957735c049991fb33ee2e3d4e5c59eb4";
 const ADMIN_SESSION_KEY = "serie-a-predictor-local-admin-session";
 const SETTINGS_STORAGE_KEY = "serie-a-predictor-global-settings-v1";
 
@@ -103,31 +102,19 @@ function showEditor() {
   loadSettings();
 }
 
-async function sha256(value) {
-  if (!globalThis.crypto?.subtle) throw new Error("Hash non disponibile");
-  const bytes = new TextEncoder().encode(value);
-  const digest = await globalThis.crypto.subtle.digest("SHA-256", bytes);
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
-function safeEqual(left, right) {
-  if (left.length !== right.length) return false;
-  let difference = 0;
-  for (let index = 0; index < left.length; index += 1) {
-    difference |= left.charCodeAt(index) ^ right.charCodeAt(index);
-  }
-  return difference === 0;
-}
-
 async function availableTeams() {
   try {
     const response = await fetch("data/matches.json", { cache: "no-store" });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
-    const fixtureTeams = (data.schedule || data.fixtures || [])
+    const directFixtures = [...(data.schedule || []), ...(data.fixtures || [])];
+    const competitionFixtures = Array.isArray(data.competitions)
+      ? data.competitions.flatMap((competition) => Array.isArray(competition.fixtures) ? competition.fixtures : [])
+      : [];
+    const fixtureTeams = [...directFixtures, ...competitionFixtures]
       .flatMap((fixture) => [fixture.home_team, fixture.away_team])
       .filter(Boolean);
-    return [...new Set([...(data.teams || []), ...fixtureTeams, ...TEAM_NAMES])]
+    return [...new Set([...(data.teams || []), ...fixtureTeams, ...Object.keys(data.team_context || {}), ...TEAM_NAMES])]
       .sort((left, right) => left.localeCompare(right, "it"));
   } catch {
     return TEAM_NAMES;
@@ -136,10 +123,14 @@ async function availableTeams() {
 
 async function init() {
   const teams = await availableTeams();
-  form.elements.featuredTeam.innerHTML = teams
-    .map((team) => `<option value="${team}">${team}</option>`)
-    .join("");
+  form.elements.featuredTeam.replaceChildren(...teams.map((team) => new Option(team, team)));
   populateForm(DEFAULT_GLOBAL_SETTINGS);
+
+  if (!adminAuthSupported()) {
+    setLoginError("Questo browser non supporta la verifica sicura della password. Apri il sito tramite HTTPS o localhost.");
+    $("login-form").querySelector("button[type='submit']").disabled = true;
+    return;
+  }
 
   try {
     if (sessionStorage.getItem(ADMIN_SESSION_KEY) === "1") showEditor();
@@ -156,10 +147,8 @@ $("login-form").addEventListener("submit", async (event) => {
   button.disabled = true;
   button.querySelector("span").textContent = "Accesso…";
   try {
-    const usernameMatches = $("login-email").value.trim().toLowerCase() === ADMIN_USERNAME.toLowerCase();
-    const suppliedHash = await sha256($("login-password").value);
-    const passwordMatches = safeEqual(suppliedHash, ADMIN_PASSWORD_SHA256);
-    if (!usernameMatches || !passwordMatches) {
+    const valid = await verifyCredentials($("login-email").value, $("login-password").value);
+    if (!valid) {
       setLoginError("Username o password non validi.");
       return;
     }
