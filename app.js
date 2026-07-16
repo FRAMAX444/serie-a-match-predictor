@@ -1,5 +1,6 @@
 import { predictMatchdayFromMatches } from "./model.js";
 import { buildMatchdays, matchdayLabel } from "./matchdays.js";
+import { DEFAULT_SITE_SETTINGS, initializePublicSettings } from "./site-settings.js";
 
 const $ = (id) => document.getElementById(id);
 const percent = (value) => `${(100 * value).toFixed(1)}%`;
@@ -10,9 +11,15 @@ const formatDate = (value) => new Intl.DateTimeFormat("it-IT", {
   day: "numeric",
   month: "short",
 }).format(new Date(`${value}T12:00:00Z`));
+const escapeHtml = (value) => String(value).replace(/[&<>'"]/g, (character) => ({
+  "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;",
+})[character]);
 
 let payload;
 let calendar;
+let siteSettings = { ...DEFAULT_SITE_SETTINGS };
+let controlsTouched = false;
+let lastRendered;
 
 function unpackMatches(data) {
   if (data.columns && data.matches?.length && Array.isArray(data.matches[0])) {
@@ -33,6 +40,20 @@ function outcomeClass(key) {
 
 function qualityClass(label) {
   return `quality--${label.toLowerCase()}`;
+}
+
+function applyModelDefaults(settings) {
+  if (controlsTouched) return;
+  $("window-days").value = String(settings.defaultWindowDays);
+  $("half-life").value = String(settings.defaultHalfLifeDays);
+}
+
+function handleSiteSettings(nextSettings) {
+  siteSettings = nextSettings;
+  applyModelDefaults(siteSettings);
+  if (lastRendered) {
+    renderMatchday(lastRendered.matchday, lastRendered.batch, { scroll: false });
+  }
 }
 
 function populateMatchdays() {
@@ -89,7 +110,8 @@ function renderFixtureCard(item, index) {
   const { fixture, result } = item;
   const p = result.probabilities;
   const top = p.scores[0];
-  const romaMatch = fixture.home_team === "Roma" || fixture.away_team === "Roma";
+  const featuredTeam = siteSettings.featuredTeam;
+  const featuredMatch = fixture.home_team === featuredTeam || fixture.away_team === featuredTeam;
   const cardId = `fixture-${index}`;
   const comparison = [
     comparisonRow(result.home.ppg5, "Punti/gara ultime 5", result.away.ppg5),
@@ -99,16 +121,23 @@ function renderFixtureCard(item, index) {
     comparisonRow(result.home.possession5, "Possesso", result.away.possession5, (value) => `${number(value, 1)}%`),
     comparisonRow(result.home.elo, "Rating Elo", result.away.elo, (value) => number(value, 0)),
   ].join("");
+  const qualityBadge = siteSettings.showDataQuality
+    ? `<span class="quality ${qualityClass(result.quality.label)}">Qualità dati ${result.quality.label}</span>`
+    : "";
+  const fairOddsMetrics = siteSettings.showFairOdds ? `
+    <div><span>Quota teorica 1</span><strong>${fairOdds(p.homeWin)}</strong></div>
+    <div><span>Quota teorica 2</span><strong>${fairOdds(p.awayWin)}</strong></div>
+  ` : "";
   return `
-    <article class="fixture-card ${romaMatch ? "fixture-card--roma" : ""}">
-      ${romaMatch ? '<div class="roma-ribbon">ROMA IN EVIDENZA</div>' : ""}
+    <article class="fixture-card ${featuredMatch ? "fixture-card--roma" : ""}">
+      ${featuredMatch ? `<div class="roma-ribbon">${escapeHtml(featuredTeam.toUpperCase())} IN EVIDENZA</div>` : ""}
       <button class="fixture-toggle" type="button" aria-expanded="false" aria-controls="${cardId}">
         <div class="fixture-meta">
           <span>${formatDate(fixture.date)}</span>
-          <span class="quality ${qualityClass(result.quality.label)}">Qualità dati ${result.quality.label}</span>
+          ${qualityBadge}
         </div>
         <div class="fixture-main">
-          <div class="team team--home ${fixture.home_team === "Roma" ? "team--roma" : ""}">
+          <div class="team team--home ${fixture.home_team === featuredTeam ? "team--roma" : ""}">
             <span class="team-badge">${teamInitials(fixture.home_team)}</span>
             <strong>${fixture.home_team}</strong>
           </div>
@@ -117,7 +146,7 @@ function renderFixtureCard(item, index) {
             <strong>${top.home}–${top.away}</strong>
             <small>${percent(top.probability)}</small>
           </div>
-          <div class="team team--away ${fixture.away_team === "Roma" ? "team--roma" : ""}">
+          <div class="team team--away ${fixture.away_team === featuredTeam ? "team--roma" : ""}">
             <strong>${fixture.away_team}</strong>
             <span class="team-badge">${teamInitials(fixture.away_team)}</span>
           </div>
@@ -147,8 +176,7 @@ function renderFixtureCard(item, index) {
             <div><span>xG ${fixture.away_team}</span><strong>${number(result.lambdaAway)}</strong></div>
             <div><span>Over 2.5</span><strong>${percent(p.over25)}</strong></div>
             <div><span>Goal / BTTS</span><strong>${percent(p.bothScore)}</strong></div>
-            <div><span>Quota teorica 1</span><strong>${fairOdds(p.homeWin)}</strong></div>
-            <div><span>Quota teorica 2</span><strong>${fairOdds(p.awayWin)}</strong></div>
+            ${fairOddsMetrics}
           </div>
         </div>
         <div class="detail-column detail-column--wide">
@@ -161,20 +189,22 @@ function renderFixtureCard(item, index) {
   `;
 }
 
-function renderMatchday(matchday, batch) {
+function renderMatchday(matchday, batch, { scroll = true } = {}) {
   $("results").hidden = false;
   $("round-title").textContent = `Giornata ${matchday.round}`;
   $("round-subtitle").textContent = `${matchdayLabel(matchday).replace(`Giornata ${matchday.round} · `, "")} · cutoff comune ${batch.cutoffDate}`;
-  const romaPrediction = batch.predictions.find(({ fixture }) => fixture.home_team === "Roma" || fixture.away_team === "Roma");
-  $("roma-summary").textContent = romaPrediction
-    ? `Roma: ${romaPrediction.fixture.home_team}–${romaPrediction.fixture.away_team}, risultato più probabile ${romaPrediction.result.probabilities.scores[0].home}–${romaPrediction.result.probabilities.scores[0].away}`
-    : "La Roma non gioca in questa giornata.";
+  const featuredTeam = siteSettings.featuredTeam;
+  const featuredPrediction = batch.predictions.find(({ fixture }) => fixture.home_team === featuredTeam || fixture.away_team === featuredTeam);
+  $("featured-summary").textContent = featuredPrediction
+    ? `${featuredTeam}: ${featuredPrediction.fixture.home_team}–${featuredPrediction.fixture.away_team}, risultato più probabile ${featuredPrediction.result.probabilities.scores[0].home}–${featuredPrediction.result.probabilities.scores[0].away}`
+    : `${featuredTeam} non gioca in questa giornata.`;
   $("fixtures-grid").innerHTML = batch.predictions.map(renderFixtureCard).join("");
   $("method-note").textContent = `Tutte le ${batch.predictions.length} previsioni usano dati antecedenti al ${batch.cutoffDate}: nessuna gara della stessa giornata entra nell'allenamento delle altre. Le probabilità sono stime statistiche, non risultati garantiti.`;
   const url = new URL(window.location.href);
   url.searchParams.set("round", String(matchday.round));
   history.replaceState({}, "", url);
-  $("results").scrollIntoView({ behavior: "smooth", block: "start" });
+  lastRendered = { matchday, batch };
+  if (scroll) $("results").scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 async function runMatchdayPrediction() {
@@ -213,6 +243,7 @@ function toggleFixture(button) {
 }
 
 async function init() {
+  await initializePublicSettings(handleSiteSettings);
   try {
     const response = await fetch("data/matches.json", { cache: "no-store" });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -232,6 +263,7 @@ async function init() {
 }
 
 $("matchday-select").addEventListener("change", syncSelectedMatchday);
+[$("window-days"), $("half-life")].forEach((control) => control.addEventListener("change", () => { controlsTouched = true; }));
 $("predict-button").addEventListener("click", runMatchdayPrediction);
 $("fixtures-grid").addEventListener("click", (event) => {
   const button = event.target.closest(".fixture-toggle");
