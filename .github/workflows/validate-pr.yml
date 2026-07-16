@@ -1,7 +1,8 @@
-name: Validate pull request
+name: Validate European predictor
 
 on:
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -22,6 +23,5 @@ jobs:
           python -m py_compile scripts/update_europe_data.py
           npm test
           npm run check
-      - name: Smoke-test public data sources
-        continue-on-error: true
+      - name: Build UEFA dataset from public sources
         run: python scripts/update_europe_data.py --target-season "2627" --history-seasons 3 --skip-understat
