@@ -101,8 +101,7 @@ export function resetPalette(team) {
   localStorage.setItem(PALETTE_STORAGE_KEY, JSON.stringify(palettes));
 }
 
-export function applyTeamPalette(team) {
-  const palette = paletteForTeam(team);
+export function applyPalette(palette) {
   const primary = palette.primary || DEFAULT_PALETTE.primary;
   const secondary = palette.secondary || DEFAULT_PALETTE.secondary;
   const primaryRgb = hexToRgb(primary) || hexToRgb(DEFAULT_PALETTE.primary);
@@ -114,7 +113,11 @@ export function applyTeamPalette(team) {
   root.setProperty("--on-primary", readableText(primary));
   root.setProperty("--accent", secondary);
   root.setProperty("--on-accent", readableText(secondary));
-  return palette;
+  return { primary, secondary };
+}
+
+export function applyTeamPalette(team) {
+  return applyPalette(paletteForTeam(team));
 }
 
 export function getModelSettings() {
@@ -134,20 +137,28 @@ export function saveModelSettings(settings) {
   }));
 }
 
-export function applyBackground(dataUrl = localStorage.getItem(BACKGROUND_STORAGE_KEY)) {
-  if (!dataUrl) {
+export function applyBackgroundSource(source, overlay = .78) {
+  if (!source) {
     document.body.classList.remove("has-custom-background");
     document.body.style.removeProperty("--custom-background-image");
+    document.body.style.removeProperty("background-image");
     return false;
   }
-  document.body.style.setProperty("--custom-background-image", `url("${dataUrl}")`);
+  const safeOverlay = Math.max(.1, Math.min(.95, Number(overlay) || .78));
+  const endingOverlay = Math.min(.99, safeOverlay + .13);
+  document.body.style.setProperty("--custom-background-image", `url(${JSON.stringify(source)})`);
+  document.body.style.backgroundImage = `linear-gradient(rgba(243, 245, 247, ${safeOverlay}), rgba(243, 245, 247, ${endingOverlay})), url(${JSON.stringify(source)})`;
   document.body.classList.add("has-custom-background");
   return true;
 }
 
+export function applyBackground(dataUrl = localStorage.getItem(BACKGROUND_STORAGE_KEY)) {
+  return applyBackgroundSource(dataUrl, .78);
+}
+
 export function removeBackground() {
   localStorage.removeItem(BACKGROUND_STORAGE_KEY);
-  applyBackground("");
+  applyBackgroundSource("");
 }
 
 export function resizeBackground(file) {
