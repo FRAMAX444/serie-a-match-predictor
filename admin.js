@@ -40,6 +40,10 @@ function settingsFromForm() {
 
 function populateForm(rawSettings) {
   const settings = normalizeGlobalSettings(rawSettings);
+  const teamSelect = form.elements.featuredTeam;
+  if (![...teamSelect.options].some((option) => option.value === settings.featuredTeam)) {
+    teamSelect.add(new Option(settings.featuredTeam, settings.featuredTeam));
+  }
   lastSavedSettings = settings;
   Object.entries(settings).forEach(([name, value]) => {
     const input = form.elements.namedItem(name);
@@ -116,8 +120,24 @@ async function handleAuthState(user) {
   }
 }
 
+async function availableTeams() {
+  try {
+    const response = await fetch("data/matches.json", { cache: "no-store" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    const fixtureTeams = (data.schedule || data.fixtures || [])
+      .flatMap((fixture) => [fixture.home_team, fixture.away_team])
+      .filter(Boolean);
+    return [...new Set([...(data.teams || []), ...fixtureTeams, ...TEAM_NAMES])]
+      .sort((left, right) => left.localeCompare(right, "it"));
+  } catch {
+    return TEAM_NAMES;
+  }
+}
+
 async function init() {
-  form.elements.featuredTeam.innerHTML = TEAM_NAMES
+  const teams = await availableTeams();
+  form.elements.featuredTeam.innerHTML = teams
     .map((team) => `<option value="${team}">${team}</option>`)
     .join("");
   populateForm(DEFAULT_GLOBAL_SETTINGS);
