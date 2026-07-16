@@ -1,9 +1,8 @@
-import { buildCompetitionCatalog, buildMatchdays, nextFixtureForTeam } from "./matchdays.js";
+import { buildCompetitionCatalog } from "./matchdays.js";
 import { getFavoriteTeam } from "./preferences.js";
 import { rankCompetitions, storeCompetition } from "./competition-preference.js";
 
 const $ = (id) => document.getElementById(id);
-let payload;
 let competitions = [];
 
 function initials(name) {
@@ -19,7 +18,7 @@ function logoNode(competition) {
   }
   const image = document.createElement("img");
   image.src = competition.logo;
-  image.alt = `Logo ${competition.name}`;
+  image.alt = "";
   image.loading = "lazy";
   image.referrerPolicy = "no-referrer";
   image.addEventListener("error", () => image.replaceWith(logoNode({ ...competition, logo: "" })), { once: true });
@@ -37,9 +36,10 @@ function closePicker() {
 function openPicker() {
   const picker = $("league-picker");
   if (!picker) return;
+  renderPicker();
   picker.hidden = false;
   document.body.classList.add("league-picker-open");
-  picker.querySelector(".league-card")?.focus();
+  requestAnimationFrame(() => picker.querySelector(".league-card--active, .league-card")?.focus());
 }
 
 function waitForSelectOptions(select, minimum = 1) {
@@ -69,29 +69,16 @@ async function chooseCompetition(competition) {
   select.value = competition.id;
   select.dispatchEvent(new Event("change", { bubbles: true }));
   closePicker();
-
-  const favorite = getFavoriteTeam("");
-  const calendar = buildMatchdays(payload, competition.id);
-  const next = nextFixtureForTeam(calendar, favorite);
-  if (!next) return;
-
-  const matchdaySelect = $("matchday-select");
-  await waitForSelectOptions(matchdaySelect);
-  if ([...matchdaySelect.options].some((option) => Number(option.value) === next.matchday.round)) {
-    matchdaySelect.value = String(next.matchday.round);
-    $("predict-button")?.click();
-  }
 }
 
-function competitionCard(competition, index) {
-  const favorite = getFavoriteTeam("");
-  const calendar = buildMatchdays(payload, competition.id);
-  const next = nextFixtureForTeam(calendar, favorite);
+function competitionCard(competition) {
+  const selectedId = $("competition-select")?.value;
+  const active = selectedId === competition.id;
   const card = document.createElement("button");
   card.type = "button";
-  card.className = "league-card";
+  card.className = `league-card${active ? " league-card--active" : ""}`;
   card.setAttribute("role", "listitem");
-  if (index === 0) card.classList.add("league-card--preferred");
+  card.setAttribute("aria-pressed", String(active));
   card.append(logoNode(competition));
 
   const copy = document.createElement("span");
@@ -99,33 +86,25 @@ function competitionCard(competition, index) {
   const title = document.createElement("strong");
   title.textContent = competition.name;
   const meta = document.createElement("small");
-  meta.textContent = [competition.country || (competition.type === "europe" ? "Europa" : "Campionato"), competition.season]
-    .filter(Boolean).join(" · ");
+  meta.textContent = competition.country || "Campionato";
   copy.append(title, meta);
-  if (next) {
-    const fixture = document.createElement("em");
-    fixture.textContent = `${favorite}: ${next.fixture.home_team} – ${next.fixture.away_team}`;
-    copy.append(fixture);
-  }
   card.append(copy);
 
-  const arrow = document.createElement("span");
-  arrow.className = "league-card__arrow";
-  arrow.textContent = "→";
-  card.append(arrow);
+  const marker = document.createElement("span");
+  marker.className = "league-card__arrow";
+  marker.textContent = active ? "✓" : "›";
+  marker.setAttribute("aria-hidden", "true");
+  card.append(marker);
   card.addEventListener("click", () => chooseCompetition(competition));
   return card;
 }
 
 function renderPicker() {
   const grid = $("league-picker-grid");
-  if (!grid) return;
+  if (!grid || !competitions.length) return;
   competitions = rankCompetitions(competitions, getFavoriteTeam(""));
   grid.replaceChildren(...competitions.map(competitionCard));
-  const favorite = getFavoriteTeam("");
-  $("league-picker-description").textContent = favorite
-    ? `Le competizioni sono ordinate usando le preferenze salvate. Se ${favorite} partecipa, apriamo direttamente la sua prossima partita.`
-    : "Le competizioni sono ordinate usando le preferenze salvate nel browser.";
+  $("league-picker-description").textContent = `${competitions.length} campionati disponibili`;
 }
 
 async function init() {
@@ -134,17 +113,17 @@ async function init() {
   try {
     const response = await fetch("data/matches.json", { cache: "no-store" });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    payload = await response.json();
+    const payload = await response.json();
     competitions = buildCompetitionCatalog(payload);
     renderPicker();
-    openPicker();
   } catch {
-    $("league-picker-description").textContent = "Impossibile caricare il catalogo delle competizioni.";
+    $("league-picker-description").textContent = "Campionati non disponibili.";
   }
 }
 
 $("close-league-picker")?.addEventListener("click", closePicker);
 $("open-league-picker")?.addEventListener("click", openPicker);
+$("competition-select")?.addEventListener("change", renderPicker);
 $("league-picker")?.addEventListener("click", (event) => {
   if (event.target === $("league-picker")) closePicker();
 });
