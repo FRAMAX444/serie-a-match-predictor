@@ -1,5 +1,6 @@
 import { predictMatchdayFromMatches } from "./model.js";
 import { buildCompetitionCatalog, buildMatchdays, matchdayLabel } from "./matchdays.js";
+import { DEFAULT_GLOBAL_SETTINGS, applyGlobalSettings, initializeGlobalSettings } from "./global-settings.js";
 import {
   FAVORITE_STORAGE_KEY,
   applyStoredAppearance,
@@ -24,6 +25,7 @@ let competitionCatalog = [];
 let calendar;
 let lastMatchday;
 let lastBatch;
+let globalSettings = { ...DEFAULT_GLOBAL_SETTINGS };
 
 function unpackMatches(data) {
   if (data.columns && data.matches?.length && Array.isArray(data.matches[0])) {
@@ -62,14 +64,18 @@ function populateCompetitions() {
 function populateFavoriteTeams() {
   const teams = calendar?.teams || [];
   const stored = localStorage.getItem(FAVORITE_STORAGE_KEY);
-  const fallback = teams.includes("Roma") ? "Roma" : teams[0];
-  const selected = teams.includes(stored) ? stored : fallback;
+  const configured = teams.includes(globalSettings.featuredTeam) ? globalSettings.featuredTeam : null;
+  const fallback = configured || (teams.includes("Roma") ? "Roma" : teams[0]);
+  const selected = globalSettings.forceFeaturedTeam
+    ? fallback
+    : (teams.includes(stored) ? stored : fallback);
   $("favorite-team-select").innerHTML = teams
     .map((team) => `<option value="${escapeHtml(team)}">${escapeHtml(team)}</option>`)
     .join("");
   $("favorite-team-select").value = selected || "";
-  $("favorite-team-select").disabled = !teams.length;
+  $("favorite-team-select").disabled = !teams.length || globalSettings.forceFeaturedTeam;
   applyTeamPalette(selected);
+  if (globalSettings.forceAppearance) applyGlobalSettings(globalSettings);
 }
 
 function populateMatchdays() {
@@ -104,7 +110,11 @@ function selectedMatchday() {
 }
 
 function predictionOptions() {
-  const model = getModelSettings();
+  const personal = getModelSettings();
+  const model = globalSettings.forceModelSettings ? {
+    windowDays: globalSettings.defaultWindowDays,
+    halfLifeDays: globalSettings.defaultHalfLifeDays,
+  } : personal;
   return {
     windowDays: model.windowDays,
     halfLifeDays: model.halfLifeDays,
@@ -159,13 +169,20 @@ function renderFixtureCard(item, index) {
     comparisonRow(result.home.marketPpg5, "Forza mercato", result.away.marketPpg5),
     comparisonRow(result.home.restDays, "Giorni di riposo", result.away.restDays, (value) => number(value, 0)),
   ].join("");
+  const qualityBadge = globalSettings.showDataQuality
+    ? `<span class="quality ${qualityClass(result.quality.label)}">${result.quality.label}</span>`
+    : "";
+  const fairOddsMetrics = globalSettings.showFairOdds ? `
+    <div><span>Quota 1</span><strong>${fairOdds(p.homeWin)}</strong></div>
+    <div><span>Quota 2</span><strong>${fairOdds(p.awayWin)}</strong></div>
+  ` : "";
 
   return `
     <article class="fixture-card ${isFavoriteMatch ? "fixture-card--favorite" : ""}">
       <button class="fixture-toggle" type="button" aria-expanded="false" aria-controls="${cardId}">
         <div class="fixture-meta">
           <span>${formatDate(fixture.date)}</span>
-          <span class="quality ${qualityClass(result.quality.label)}">${result.quality.label}</span>
+          ${qualityBadge}
         </div>
         <div class="fixture-main">
           <div class="team team--home ${fixture.home_team === preferred ? "team--favorite" : ""}">
@@ -200,8 +217,7 @@ function renderFixtureCard(item, index) {
             <div><span>xG ${escapeHtml(fixture.away_team)}</span><strong>${number(result.lambdaAway)}</strong></div>
             <div><span>Over 2.5</span><strong>${percent(p.over25)}</strong></div>
             <div><span>BTTS</span><strong>${percent(p.bothScore)}</strong></div>
-            <div><span>Quota 1</span><strong>${fairOdds(p.homeWin)}</strong></div>
-            <div><span>Quota 2</span><strong>${fairOdds(p.awayWin)}</strong></div>
+            ${fairOddsMetrics}
           </div>
         </div>
         <div class="detail-column detail-column--wide">
@@ -258,8 +274,16 @@ function toggleFixture(button) {
   panel.hidden = expanded;
 }
 
+function handleGlobalSettings(settings) {
+  globalSettings = settings;
+  if (!calendar) return;
+  populateFavoriteTeams();
+  if (lastMatchday && lastBatch) renderMatchday(lastMatchday, lastBatch, false);
+}
+
 async function init() {
   applyStoredAppearance();
+  await initializeGlobalSettings(handleGlobalSettings);
   try {
     const response = await fetch("data/matches.json", { cache: "no-store" });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -282,8 +306,10 @@ $("competition-select").addEventListener("change", () => {
   loadSelectedCompetition();
 });
 $("favorite-team-select").addEventListener("change", () => {
+  if (globalSettings.forceFeaturedTeam) return;
   setFavoriteTeam(favoriteTeam());
   applyTeamPalette(favoriteTeam());
+  if (globalSettings.forceAppearance) applyGlobalSettings(globalSettings);
   if (lastMatchday && lastBatch) renderMatchday(lastMatchday, lastBatch, false);
 });
 $("predict-button").addEventListener("click", runMatchdayPrediction);
