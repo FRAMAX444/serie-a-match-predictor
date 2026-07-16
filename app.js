@@ -68,13 +68,14 @@ function populateFavoriteTeams() {
   const fallback = configured || (teams.includes("Roma") ? "Roma" : teams[0]);
   const selected = globalSettings.forceFeaturedTeam
     ? fallback
-    : (teams.includes(stored) ? stored : fallback);
-  $("favorite-team-select").innerHTML = teams
-    .map((team) => `<option value="${escapeHtml(team)}">${escapeHtml(team)}</option>`)
-    .join("");
+    : (teams.includes(stored) ? stored : "");
+  $("favorite-team-select").innerHTML = [
+    '<option value="">Nessuna squadra evidenziata</option>',
+    ...teams.map((team) => `<option value="${escapeHtml(team)}">${escapeHtml(team)}</option>`),
+  ].join("");
   $("favorite-team-select").value = selected || "";
   $("favorite-team-select").disabled = !teams.length || globalSettings.forceFeaturedTeam;
-  applyTeamPalette(selected);
+  applyTeamPalette(selected || stored || fallback);
   if (globalSettings.forceAppearance) applyGlobalSettings(globalSettings);
 }
 
@@ -148,6 +149,38 @@ function playerNames(context) {
   return parts.join(" · ");
 }
 
+function rawPlayerContext(team) {
+  return payload.player_context?.[team] || payload.team_context?.[team] || null;
+}
+
+function playerStat(player) {
+  const parts = [];
+  if (Number(player.starts) > 0) parts.push(`${player.starts} tit.`);
+  if (Number(player.goals) > 0) parts.push(`${player.goals} gol`);
+  if (Number(player.assists) > 0) parts.push(`${player.assists} assist`);
+  return parts.join(" · ") || player.position || "Rosa";
+}
+
+function lineupColumn(team) {
+  const context = rawPlayerContext(team);
+  const lineup = Array.isArray(context?.probable_lineup) ? context.probable_lineup : [];
+  if (!lineup.length) {
+    return `<div class="lineup-team"><h4>${escapeHtml(team)}</h4><p class="lineup-empty">Formazione probabile non disponibile nel feed corrente.</p></div>`;
+  }
+  const formation = context.formation ? ` · ${escapeHtml(context.formation)}` : "";
+  const reliability = Number(context.lineup_reliability);
+  const confidence = Number.isFinite(reliability) ? ` · affidabilità ${percent(reliability)}` : "";
+  return `
+    <div class="lineup-team">
+      <h4>${escapeHtml(team)}${formation}</h4>
+      <p class="lineup-source">${escapeHtml(context.lineup_source || "Ultime formazioni disponibili")}${confidence}</p>
+      <ol class="lineup-list">
+        ${lineup.map((player) => `<li><span>${escapeHtml(player.position || "—")}</span><strong>${escapeHtml(player.name || player)}</strong><small>${escapeHtml(playerStat(player))}</small></li>`).join("")}
+      </ol>
+    </div>
+  `;
+}
+
 function renderFixtureCard(item, index) {
   const { fixture, result } = item;
   const p = result.probabilities;
@@ -165,9 +198,10 @@ function renderFixtureCard(item, index) {
     comparisonRow(result.home.ppg5, "Forma (PPG)", result.away.ppg5),
     comparisonRow(result.home.xgFor5, "xG ultime 5", result.away.xgFor5),
     comparisonRow(result.home.xgAgainst5, "xGA ultime 5", result.away.xgAgainst5),
-    comparisonRow(result.home.elo, "Elo europeo", result.away.elo, (value) => number(value, 0)),
+    comparisonRow(result.home.elo, "Elo", result.away.elo, (value) => number(value, 0)),
     comparisonRow(result.home.marketPpg5, "Forza mercato", result.away.marketPpg5),
     comparisonRow(result.home.restDays, "Giorni di riposo", result.away.restDays, (value) => number(value, 0)),
+    comparisonRow(result.homeContext.lineupStrength, "Indice formazione", result.awayContext.lineupStrength),
   ].join("");
   const qualityBadge = globalSettings.showDataQuality
     ? `<span class="quality ${qualityClass(result.quality.label)}">${result.quality.label}</span>`
@@ -211,7 +245,7 @@ function renderFixtureCard(item, index) {
           <ol class="score-list">${exactScoreRows(p.scores)}</ol>
         </div>
         <div class="detail-column">
-          <div class="detail-heading"><h3>Indicatori</h3><span>${result.baselineMatches} gare coppa</span></div>
+          <div class="detail-heading"><h3>Indicatori</h3><span>${result.baselineMatches} gare baseline</span></div>
           <div class="metric-grid">
             <div><span>xG ${escapeHtml(fixture.home_team)}</span><strong>${number(result.lambdaHome)}</strong></div>
             <div><span>xG ${escapeHtml(fixture.away_team)}</span><strong>${number(result.lambdaAway)}</strong></div>
@@ -221,9 +255,13 @@ function renderFixtureCard(item, index) {
           </div>
         </div>
         <div class="detail-column detail-column--wide">
-          <div class="detail-heading"><h3>Forma nazionale + europea</h3><span>${result.trainingMatches} partite</span></div>
+          <div class="detail-heading"><h3>Forma complessiva</h3><span>${result.trainingMatches} partite</span></div>
           <div class="comparison-table">${comparison}</div>
           ${contextLine ? `<p class="context-line">${contextLine}</p>` : ""}
+        </div>
+        <div class="detail-column detail-column--lineups">
+          <div class="detail-heading"><h3>Giocatori e probabili formazioni</h3><span>Dati inclusi nell’indice formazione</span></div>
+          <div class="lineups-grid">${lineupColumn(fixture.home_team)}${lineupColumn(fixture.away_team)}</div>
         </div>
       </div>
     </article>
@@ -289,11 +327,11 @@ async function init() {
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     payload = unpackMatches(await response.json());
     competitionCatalog = buildCompetitionCatalog(payload);
-    if (!competitionCatalog.length) throw new Error("Calendari UEFA non disponibili nel dataset.");
+    if (!competitionCatalog.length) throw new Error("Calendari non disponibili nel dataset.");
     populateCompetitions();
     loadSelectedCompetition();
   } catch {
-    $("error-message").textContent = "Impossibile caricare i dati europei. Riprova tra poco.";
+    $("error-message").textContent = "Impossibile caricare i dati delle competizioni. Riprova tra poco.";
     $("error-message").hidden = false;
     $("predict-button").disabled = true;
   }
@@ -307,8 +345,8 @@ $("competition-select").addEventListener("change", () => {
 });
 $("favorite-team-select").addEventListener("change", () => {
   if (globalSettings.forceFeaturedTeam) return;
-  setFavoriteTeam(favoriteTeam());
-  applyTeamPalette(favoriteTeam());
+  if (favoriteTeam()) setFavoriteTeam(favoriteTeam());
+  applyTeamPalette(favoriteTeam() || localStorage.getItem(FAVORITE_STORAGE_KEY));
   if (globalSettings.forceAppearance) applyGlobalSettings(globalSettings);
   if (lastMatchday && lastBatch) renderMatchday(lastMatchday, lastBatch, false);
 });
