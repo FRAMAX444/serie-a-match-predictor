@@ -53,9 +53,9 @@ function inferRoundsByBlocks(fixtures, teams) {
 }
 
 export function buildMatchdays(payload) {
-  const season = String(payload.latest_season ?? "");
+  const season = String(payload.target_season ?? "2627");
   const sourceFixtures = Array.isArray(payload.fixtures) && payload.fixtures.length
-    ? payload.fixtures
+    ? payload.fixtures.filter((fixture) => !season || String(fixture.season) === season)
     : (payload.matches ?? []).filter((match) => String(match.season) === season);
   const fixtures = sourceFixtures.map(normalizeFixture).filter((fixture) => fixture.home_team && fixture.away_team && fixture.date);
   const teams = payload.teams?.length
