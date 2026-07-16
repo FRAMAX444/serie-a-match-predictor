@@ -1,0 +1,17 @@
+.site-announcement {
+  position: relative;
+  z-index: 4;
+  padding: .7rem 1rem;
+  color: #fff;
+  background: var(--accent-dark);
+  font-size: .82rem;
+  font-weight: 760;
+  line-height: 1.45;
+  text-align: center;
+}
+.site-announcement[hidden] { display: none; }
+.footer-links { display: flex; flex-wrap: wrap; gap: .9rem; }
+.footer-links a { white-space: nowrap; }
+@media (max-width: 680px) {
+  .footer-links { flex-direction: column; gap: .45rem; }
+}
