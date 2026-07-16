@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a compact dataset for the five major European domestic leagues."""
+"""Build a compact dataset for the Big Five leagues and the three UEFA club competitions."""
 from __future__ import annotations
 
 import argparse
@@ -9,12 +9,22 @@ import sys
 from datetime import datetime, timezone
 
 import update_europe_data as base
+import update_uefa_data as uefa
 
 TOP_FIVE_LEAGUE_IDS = {"eng.1", "esp.1", "ita.1", "ger.1", "fra.1"}
 TOP_FIVE_LEAGUES = tuple(
     descriptor for descriptor in base.DOMESTIC_LEAGUES
     if str(descriptor.get("id")) in TOP_FIVE_LEAGUE_IDS
 )
+EUROPE_COMPETITIONS = tuple(base.EUROPE_COMPETITIONS)
+EUROPE_COMPETITION_IDS = {str(item["id"]) for item in EUROPE_COMPETITIONS}
+
+_existing_domestic_ids = {str(item["id"]) for item in base.DOMESTIC_LEAGUES}
+ALL_DOMESTIC_LEAGUES = tuple(base.DOMESTIC_LEAGUES) + tuple(
+    item for item in uefa.EXTRA_DOMESTIC_LEAGUES
+    if str(item["id"]) not in _existing_domestic_ids
+)
+
 MATCH_FIELDS = (
     "id", "season", "competition_id", "competition_name", "competition_type", "country",
     "league_strength", "date", "kickoff", "home_team", "away_team", "round", "round_label",
@@ -23,7 +33,7 @@ MATCH_FIELDS = (
 )
 
 
-def league_metadata(descriptor: dict[str, object], start_year: int) -> dict[str, str]:
+def competition_metadata(descriptor: dict[str, object], start_year: int) -> dict[str, str]:
     slug = str(descriptor.get("espn") or "")
     if not slug:
         return {}
@@ -37,14 +47,12 @@ def league_metadata(descriptor: dict[str, object], start_year: int) -> dict[str,
     if not isinstance(leagues, list) or not leagues or not isinstance(leagues[0], dict):
         return {}
     league = leagues[0]
-    logo = ""
     logos = league.get("logos")
     if isinstance(logos, list):
         for candidate in logos:
             if isinstance(candidate, dict) and str(candidate.get("href") or "").startswith("https://"):
-                logo = str(candidate["href"])
-                break
-    return {"logo": logo}
+                return {"logo": str(candidate["href"])}
+    return {}
 
 
 def compact_match(match: dict[str, object]) -> dict[str, object]:
@@ -56,18 +64,40 @@ def competition_payload(
     fixtures: list[dict[str, object]],
     source: str,
     start_year: int,
+    competition_type: str,
 ) -> dict[str, object]:
     item = base.competition_payload(descriptor, fixtures, source)
-    item["type"] = "domestic"
-    item["country"] = descriptor["country"]
+    item["type"] = competition_type
+    item["country"] = "Europe" if competition_type == "europe" else str(descriptor.get("country") or "")
+    if competition_type == "europe" and any(row.get("source") == "UEFA public match API" for row in fixtures):
+        item["source"] = "UEFA public match API"
     try:
-        metadata = league_metadata(descriptor, start_year)
-    except Exception as error:  # best-effort metadata only
+        metadata = competition_metadata(descriptor, start_year)
+    except Exception as error:
         print(f"Logo {descriptor['name']}: {error}", file=sys.stderr)
         metadata = {}
     if metadata.get("logo"):
         item["logo"] = metadata["logo"]
     return item
+
+
+def fetch_domestic_history(
+    descriptor: dict[str, object],
+    starts: list[int],
+) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    current: list[dict[str, object]] = []
+    history: list[dict[str, object]] = []
+    target_start = starts[-1]
+    for start in starts:
+        try:
+            rows = base.fetch_espn_events(descriptor, start, "domestic")
+        except Exception as error:
+            print(f"ESPN {descriptor['name']} {start}: {error}", file=sys.stderr)
+            rows = []
+        if start == target_start:
+            current = rows
+        history.extend(item for item in rows if item.get("completed"))
+    return current, history
 
 
 def main() -> None:
@@ -83,28 +113,19 @@ def main() -> None:
 
     competitions: list[dict[str, object]] = []
     matches: list[dict[str, object]] = []
+    target_european_fixtures: list[dict[str, object]] = []
     fixture_count = 0
 
+    # Keep the domestic collection path unchanged: complete Big Five history and statistics.
     for descriptor in TOP_FIVE_LEAGUES:
-        current: list[dict[str, object]] = []
-        espn_history: list[dict[str, object]] = []
-        for start in starts:
-            try:
-                rows = base.fetch_espn_events(descriptor, start, "domestic")
-            except Exception as error:
-                print(f"ESPN {descriptor['name']} {start}: {error}", file=sys.stderr)
-                rows = []
-            if start == target_start:
-                current = rows
-            espn_history.extend(item for item in rows if item.get("completed"))
-
+        current, espn_history = fetch_domestic_history(descriptor, starts)
         if not current:
             current = base.existing_competition_fixtures(existing, str(descriptor["id"]), target_code)
             source = "dataset precedente conservato" if current else "calendario non ancora disponibile"
         else:
             source = "ESPN public scoreboard"
 
-        competitions.append(competition_payload(descriptor, current, source, target_start))
+        competitions.append(competition_payload(descriptor, current, source, target_start, "domestic"))
         fixture_count += len(current)
 
         try:
@@ -122,9 +143,66 @@ def main() -> None:
         matches.extend(league_rows)
         print(f"{descriptor['name']}: {len(current)} fixture target, {len(league_rows)} gare storiche")
 
-    matches = [compact_match(item) for item in base.merge_matches(matches)]
+    # Add the three selectable UEFA competitions, preferring the official public match API.
+    for descriptor in EUROPE_COMPETITIONS:
+        current: list[dict[str, object]] = []
+        european_history: list[dict[str, object]] = []
+        for start in starts:
+            try:
+                rows = uefa.fetch_europe_then_espn(descriptor, start, "europe")
+            except Exception as error:
+                print(f"Europa {descriptor['name']} {start}: {error}", file=sys.stderr)
+                rows = []
+            if start == target_start:
+                current = rows
+            european_history.extend(item for item in rows if item.get("completed"))
+
+        if not current:
+            current = base.existing_competition_fixtures(existing, str(descriptor["id"]), target_code)
+            source = "dataset precedente conservato" if current else "calendario non ancora disponibile"
+        else:
+            source = "UEFA public match API; ESPN fallback"
+
+        competitions.append(competition_payload(descriptor, current, source, target_start, "europe"))
+        target_european_fixtures.extend(current)
+        fixture_count += len(current)
+        matches.extend(european_history)
+        print(f"{descriptor['name']}: {len(current)} fixture target, {len(european_history)} gare storiche")
+
+    # For UEFA predictions only, retain domestic form for participating clubs outside the Big Five.
+    participant_ids, participant_names = uefa.collect_team_keys(target_european_fixtures)
+    support_leagues = [
+        dict(descriptor) for descriptor in ALL_DOMESTIC_LEAGUES
+        if str(descriptor["id"]) not in TOP_FIVE_LEAGUE_IDS
+        and uefa.LEAGUE_COUNTRY_CODES.get(str(descriptor["id"]), set()) & uefa.PARTICIPANT_COUNTRY_CODES
+    ]
+    hidden_support_matches: list[dict[str, object]] = []
+    for descriptor in support_leagues:
+        _, espn_history = fetch_domestic_history(descriptor, starts)
+        espn_history = [
+            item for item in espn_history
+            if uefa.robust_participant_match(item, participant_ids, participant_names)
+        ]
+        try:
+            football_data = [
+                item for item in base.download_football_data(descriptor, starts)
+                if uefa.robust_participant_match(item, participant_ids, participant_names)
+            ]
+        except Exception as error:
+            print(f"Football-Data supporto {descriptor['name']}: {error}", file=sys.stderr)
+            football_data = []
+        league_rows = base.merge_matches([*espn_history, *football_data])
+        if not args.skip_understat and descriptor.get("understat"):
+            try:
+                base.enrich_xg(league_rows, descriptor, starts)
+            except Exception as error:
+                print(f"Understat supporto {descriptor['name']}: {error}", file=sys.stderr)
+        hidden_support_matches.extend(league_rows)
+        print(f"Supporto UEFA {descriptor['name']}: {len(league_rows)} gare dei club partecipanti")
+
+    matches = [compact_match(item) for item in base.merge_matches([*matches, *hidden_support_matches])]
     if len(matches) < 400:
-        raise SystemExit("Dati insufficienti per i cinque maggiori campionati: il dataset esistente non viene sovrascritto.")
+        raise SystemExit("Dati insufficienti per Big Five e coppe UEFA: il dataset esistente non viene sovrascritto.")
 
     teams = sorted({
         str(team)
@@ -141,7 +219,7 @@ def main() -> None:
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "target_season": target_code,
         "latest_season": target_code,
-        "model_inputs_version": "4.0-top5-core",
+        "model_inputs_version": "4.1-top5-uefa-core",
         "default_competition": default_competition,
         "competitions": competitions,
         "teams": teams,
@@ -150,18 +228,24 @@ def main() -> None:
             {key: descriptor[key] for key in ("id", "name", "country")}
             for descriptor in TOP_FIVE_LEAGUES
         ],
+        "training_support_leagues": [
+            {key: descriptor[key] for key in ("id", "name", "country") if key in descriptor}
+            for descriptor in support_leagues
+        ],
         "coverage": {
-            "supported_competitions": len(competitions),
+            "supported_competitions": len([item for item in competitions if item.get("fixtures")]),
             "training_matches": len(matches),
             "xg_actual_matches": xg_count,
             "teams": len(teams),
+            "hidden_uefa_support_matches": len(hidden_support_matches),
         },
         "source_health": {
             "target_fixtures": fixture_count,
             "completed_training_matches": len(matches),
+            "european_training_matches": sum(str(item.get("competition_id")) in EUROPE_COMPETITION_IDS for item in matches),
         },
         "sources": {
-            "fixtures_results": "ESPN public scoreboards",
+            "fixtures_results": "UEFA public match API for European cups; ESPN public scoreboards for domestic leagues and fallback",
             "match_statistics": "Football-Data.co.uk with ESPN fallback",
             "xg": "Understat where available; shot-based proxy otherwise",
             "model_inputs": "Goals/xG, shots, shots on target, form, Elo, venue and rest only",
@@ -171,7 +255,7 @@ def main() -> None:
     base.OUTPUT.parent.mkdir(parents=True, exist_ok=True)
     base.OUTPUT.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     print(
-        f"Scritto {base.OUTPUT}: {len(competitions)} campionati, {len(teams)} squadre, "
+        f"Scritto {base.OUTPUT}: {len(competitions)} competizioni, {len(teams)} squadre, "
         f"{len(matches)} partite training, {xg_count} con xG"
     )
 
