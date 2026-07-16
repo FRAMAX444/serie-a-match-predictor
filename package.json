@@ -1,6 +1,6 @@
 {
-  "name": "serie-a-match-predictor-pages",
-  "version": "2.1.0",
+  "name": "european-cups-match-predictor-pages",
+  "version": "3.0.0",
   "private": true,
   "type": "module",
   "scripts": {

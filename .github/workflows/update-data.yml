@@ -1,4 +1,4 @@
-name: Update Serie A 2026-27 data
+name: Update UEFA competition data
 
 on:
   schedule:
@@ -12,7 +12,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: serie-a-data-update
+  group: european-data-update
   cancel-in-progress: true
 
 jobs:
@@ -26,11 +26,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: Download results, fixtures, xG, Elo and player context
-        run: python scripts/update_data.py --target-season "$TARGET_SEASON"
+      - name: Download UEFA fixtures and relevant domestic form
+        run: python scripts/update_uefa_data.py --target-season "$TARGET_SEASON"
       - name: Validate generated inputs and model
         run: |
-          python -m py_compile scripts/update_data.py
+          python -m py_compile scripts/update_europe_data.py scripts/update_uefa_data.py
           npm test
           npm run check
       - name: Commit changed dataset
@@ -42,5 +42,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add data/matches.json
-          git commit -m "Update Serie A 2026-27 data"
+          git commit -m "Update UEFA competition data"
           git push

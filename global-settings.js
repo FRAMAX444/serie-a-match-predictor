@@ -7,7 +7,7 @@ const HEX = /^#[0-9a-f]{6}$/i;
 const HTTPS = /^https:\/\//i;
 
 export const DEFAULT_GLOBAL_SETTINGS = Object.freeze({
-  siteTitle: "Serie A Predictor",
+  siteTitle: "European Cups Predictor",
   announcement: "",
   featuredTeam: "Roma",
   primaryColor: "#1f4f8f",

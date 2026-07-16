@@ -1,5 +1,5 @@
 import { predictMatchdayFromMatches } from "./model.js";
-import { buildMatchdays, matchdayLabel } from "./matchdays.js";
+import { buildCompetitionCatalog, buildMatchdays, matchdayLabel } from "./matchdays.js";
 import { DEFAULT_GLOBAL_SETTINGS, applyGlobalSettings, initializeGlobalSettings } from "./global-settings.js";
 import {
   FAVORITE_STORAGE_KEY,
@@ -15,27 +15,13 @@ const number = (value, digits = 2) => Number(value).toFixed(digits);
 const fairOdds = (value) => value > 0 ? number(1 / value, 2) : "—";
 const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;",
-})[character]);
+}[character]));
 const formatDate = (value) => new Intl.DateTimeFormat("it-IT", {
-  weekday: "short",
-  day: "numeric",
-  month: "short",
+  weekday: "short", day: "numeric", month: "short",
 }).format(new Date(`${value}T12:00:00Z`));
 
-const OPENING_ROUND_2627 = [
-  ["Inter", "Monza"],
-  ["Roma", "Fiorentina"],
-  ["Napoli", "Genoa"],
-  ["Como", "Udinese"],
-  ["Atalanta", "Sassuolo"],
-  ["Bologna", "Lazio"],
-  ["Frosinone", "Juventus"],
-  ["Parma", "Cagliari"],
-  ["Torino", "Milan"],
-  ["Venezia", "Lecce"],
-];
-
 let payload;
+let competitionCatalog = [];
 let calendar;
 let lastMatchday;
 let lastBatch;
@@ -53,39 +39,30 @@ function teamInitials(team) {
 }
 
 function qualityClass(label) {
-  return `quality--${label.toLowerCase()}`;
+  return `quality--${String(label).toLowerCase()}`;
 }
 
 function favoriteTeam() {
   return $("favorite-team-select").value;
 }
 
-function openingRoundFallback(data) {
-  const season = String(data.target_season || data.latest_season || "2627");
-  if (season !== "2627") return null;
-  const fixtures = OPENING_ROUND_2627.map(([homeTeam, awayTeam], index) => ({
-    id: `2627-r1-${index + 1}`,
-    season: "2627",
-    round: 1,
-    date: "2026-08-23",
-    kickoff: null,
-    home_team: homeTeam,
-    away_team: awayTeam,
-    completed: false,
-    source: "Calendario pubblico 2026/27",
-  }));
-  return {
-    season: "2627",
-    teams: [...new Set(fixtures.flatMap((fixture) => [fixture.home_team, fixture.away_team]))].sort(),
-    matchdays: [{ round: 1, fixtures, startDate: "2026-08-23", endDate: "2026-08-23" }],
-    defaultRound: 1,
-    inferred: false,
-    fallback: true,
-  };
+function selectedCompetitionId() {
+  return $("competition-select").value;
+}
+
+function populateCompetitions() {
+  const requested = new URLSearchParams(window.location.search).get("competition");
+  const preferred = competitionCatalog.some((competition) => competition.id === requested)
+    ? requested
+    : payload.default_competition || competitionCatalog[0]?.id;
+  $("competition-select").innerHTML = competitionCatalog
+    .map((competition) => `<option value="${escapeHtml(competition.id)}">${escapeHtml(competition.name)}</option>`)
+    .join("");
+  $("competition-select").value = preferred;
 }
 
 function populateFavoriteTeams() {
-  const teams = calendar?.teams?.length ? calendar.teams : payload.teams || [];
+  const teams = calendar?.teams || [];
   const stored = localStorage.getItem(FAVORITE_STORAGE_KEY);
   const configured = teams.includes(globalSettings.featuredTeam) ? globalSettings.featuredTeam : null;
   const fallback = configured || (teams.includes("Roma") ? "Roma" : teams[0]);
@@ -103,19 +80,33 @@ function populateFavoriteTeams() {
 
 function populateMatchdays() {
   const select = $("matchday-select");
-  select.innerHTML = calendar.matchdays.map((matchday) => `
-    <option value="${matchday.round}">${matchdayLabel(matchday)}</option>
-  `).join("");
-  const params = new URLSearchParams(window.location.search);
-  const requested = Number(params.get("round"));
-  const validRound = calendar.matchdays.some((matchday) => matchday.round === requested);
-  select.value = String(validRound ? requested : calendar.defaultRound);
-  select.disabled = false;
+  select.innerHTML = calendar.matchdays
+    .map((matchday) => `<option value="${matchday.round}">${escapeHtml(matchdayLabel(matchday))}</option>`)
+    .join("");
+  const requested = Number(new URLSearchParams(window.location.search).get("round"));
+  const valid = calendar.matchdays.some((matchday) => matchday.round === requested);
+  select.value = String(valid ? requested : calendar.defaultRound);
+  select.disabled = !calendar.matchdays.length;
+}
+
+function loadSelectedCompetition() {
+  calendar = buildMatchdays(payload, selectedCompetitionId());
+  if (!calendar.competition || !calendar.matchdays.length) {
+    $("matchday-select").innerHTML = '<option value="">Calendario non disponibile</option>';
+    $("matchday-select").disabled = true;
+    $("favorite-team-select").innerHTML = '<option value="">Squadre non disponibili</option>';
+    $("favorite-team-select").disabled = true;
+    $("predict-button").disabled = true;
+    return;
+  }
+  populateMatchdays();
+  populateFavoriteTeams();
+  $("predict-button").disabled = false;
 }
 
 function selectedMatchday() {
   const round = Number($("matchday-select").value);
-  return calendar.matchdays.find((matchday) => matchday.round === round);
+  return calendar?.matchdays.find((matchday) => matchday.round === round);
 }
 
 function predictionOptions() {
@@ -128,6 +119,7 @@ function predictionOptions() {
     windowDays: model.windowDays,
     halfLifeDays: model.halfLifeDays,
     teamContext: payload.team_context || {},
+    competitionId: selectedCompetitionId(),
   };
 }
 
@@ -173,10 +165,9 @@ function renderFixtureCard(item, index) {
     comparisonRow(result.home.ppg5, "Forma (PPG)", result.away.ppg5),
     comparisonRow(result.home.xgFor5, "xG ultime 5", result.away.xgFor5),
     comparisonRow(result.home.xgAgainst5, "xGA ultime 5", result.away.xgAgainst5),
-    comparisonRow(result.home.elo, "Elo", result.away.elo, (value) => number(value, 0)),
+    comparisonRow(result.home.elo, "Elo europeo", result.away.elo, (value) => number(value, 0)),
     comparisonRow(result.home.marketPpg5, "Forza mercato", result.away.marketPpg5),
-    comparisonRow(result.homeContext.squadAttack, "Attacco rosa", result.awayContext.squadAttack),
-    comparisonRow(result.homeContext.squadContinuity, "Continuità", result.awayContext.squadContinuity, percent),
+    comparisonRow(result.home.restDays, "Giorni di riposo", result.away.restDays, (value) => number(value, 0)),
   ].join("");
   const qualityBadge = globalSettings.showDataQuality
     ? `<span class="quality ${qualityClass(result.quality.label)}">${result.quality.label}</span>`
@@ -198,10 +189,7 @@ function renderFixtureCard(item, index) {
             <span class="team-badge">${teamInitials(fixture.home_team)}</span>
             <strong>${escapeHtml(fixture.home_team)}</strong>
           </div>
-          <div class="predicted-score">
-            <strong>${top.home}–${top.away}</strong>
-            <small>${percent(top.probability)}</small>
-          </div>
+          <div class="predicted-score"><strong>${top.home}–${top.away}</strong><small>${percent(top.probability)}</small></div>
           <div class="team team--away ${fixture.away_team === preferred ? "team--favorite" : ""}">
             <strong>${escapeHtml(fixture.away_team)}</strong>
             <span class="team-badge">${teamInitials(fixture.away_team)}</span>
@@ -223,7 +211,7 @@ function renderFixtureCard(item, index) {
           <ol class="score-list">${exactScoreRows(p.scores)}</ol>
         </div>
         <div class="detail-column">
-          <div class="detail-heading"><h3>Indicatori</h3></div>
+          <div class="detail-heading"><h3>Indicatori</h3><span>${result.baselineMatches} gare coppa</span></div>
           <div class="metric-grid">
             <div><span>xG ${escapeHtml(fixture.home_team)}</span><strong>${number(result.lambdaHome)}</strong></div>
             <div><span>xG ${escapeHtml(fixture.away_team)}</span><strong>${number(result.lambdaAway)}</strong></div>
@@ -233,7 +221,7 @@ function renderFixtureCard(item, index) {
           </div>
         </div>
         <div class="detail-column detail-column--wide">
-          <div class="detail-heading"><h3>Confronto</h3><span>${result.trainingMatches} partite</span></div>
+          <div class="detail-heading"><h3>Forma nazionale + europea</h3><span>${result.trainingMatches} partite</span></div>
           <div class="comparison-table">${comparison}</div>
           ${contextLine ? `<p class="context-line">${contextLine}</p>` : ""}
         </div>
@@ -248,6 +236,7 @@ function renderMatchday(matchday, batch, shouldScroll = true) {
   $("results").hidden = false;
   $("fixtures-grid").innerHTML = batch.predictions.map(renderFixtureCard).join("");
   const url = new URL(window.location.href);
+  url.searchParams.set("competition", selectedCompetitionId());
   url.searchParams.set("round", String(matchday.round));
   history.replaceState({}, "", url);
   if (shouldScroll) $("results").scrollIntoView({ behavior: "smooth", block: "start" });
@@ -259,7 +248,7 @@ async function runMatchdayPrediction() {
   error.hidden = true;
   const matchday = selectedMatchday();
   if (!matchday?.fixtures.length) {
-    error.textContent = "Nessuna partita disponibile per questa giornata.";
+    error.textContent = "Nessuna partita disponibile per questo turno.";
     error.hidden = false;
     return;
   }
@@ -285,14 +274,6 @@ function toggleFixture(button) {
   panel.hidden = expanded;
 }
 
-function showPendingCalendar() {
-  populateFavoriteTeams();
-  $("matchday-select").innerHTML = '<option value="">Calendario in aggiornamento</option>';
-  $("matchday-select").disabled = true;
-  $("predict-button").disabled = true;
-  $("error-message").hidden = true;
-}
-
 function handleGlobalSettings(settings) {
   globalSettings = settings;
   if (!calendar) return;
@@ -307,21 +288,23 @@ async function init() {
     const response = await fetch("data/matches.json", { cache: "no-store" });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     payload = unpackMatches(await response.json());
-    calendar = buildMatchdays(payload);
-    if (!calendar.matchdays.length) calendar = openingRoundFallback(payload);
-    if (!calendar?.matchdays?.length) {
-      showPendingCalendar();
-      return;
-    }
-    populateFavoriteTeams();
-    populateMatchdays();
+    competitionCatalog = buildCompetitionCatalog(payload);
+    if (!competitionCatalog.length) throw new Error("Calendari UEFA non disponibili nel dataset.");
+    populateCompetitions();
+    loadSelectedCompetition();
   } catch {
-    $("error-message").textContent = "Impossibile caricare i dati. Riprova tra poco.";
+    $("error-message").textContent = "Impossibile caricare i dati europei. Riprova tra poco.";
     $("error-message").hidden = false;
     $("predict-button").disabled = true;
   }
 }
 
+$("competition-select").addEventListener("change", () => {
+  $("results").hidden = true;
+  lastMatchday = null;
+  lastBatch = null;
+  loadSelectedCompetition();
+});
 $("favorite-team-select").addEventListener("change", () => {
   if (globalSettings.forceFeaturedTeam) return;
   setFavoriteTeam(favoriteTeam());

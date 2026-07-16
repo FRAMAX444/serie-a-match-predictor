@@ -1,124 +1,86 @@
-# Serie A Matchday Predictor 2026/27
+# European Cups Match Predictor
 
-Web app statica per prevedere **tutta una giornata della Serie A 2026/27**. Il calcolo avviene nel browser, mentre GitHub Actions aggiorna automaticamente calendario, risultati, xG, rating Elo e contesto delle rose durante tutta la stagione.
+Web app statica per prevedere i turni delle tre competizioni UEFA per club:
 
-## Cosa cambia per la stagione 2026/27
+- UEFA Champions League;
+- UEFA Europa League;
+- UEFA Conference League.
 
-- la stagione target è esplicitamente `2627`, anche durante la pausa estiva;
-- il calendario viene cercato prima su Understat e poi sul feed pubblico ESPN; se le fonti sono temporaneamente indisponibili viene conservato l'ultimo calendario 2026/27 valido, senza inventare fixture;
-- il dataset viene aggiornato quattro volte al giorno e ogni deploy tenta comunque un refresh;
-- le previsioni di una giornata usano un unico cutoff precedente alla prima partita del turno;
-- risultati e contesto successivi al cutoff non vengono utilizzati, evitando leakage sulle giornate già disputate.
+Il menu mostra soltanto queste coppe. I campionati nazionali non sono pronosticabili: vengono scaricati e usati esclusivamente come dati di forma per le squadre presenti nelle competizioni europee.
 
-## Segnali usati dal modello
+## Flusso utente
 
-Il modello 2.0 combina:
+1. seleziona la competizione europea;
+2. seleziona il turno dal menu a tendina;
+3. seleziona la squadra da evidenziare;
+4. premi **Calcola** per ottenere tutte le partite del turno;
+5. apri una partita per vedere risultati esatti, 1X2, xG, Over 2.5, BTTS, Elo e confronto di forma.
 
-1. attacco e difesa recenti con shrinkage verso la media di Serie A;
-2. xG/xGA Understat, oppure proxy trasparente da tiri e tiri in porta;
-3. forma a 3, 5 e 10 gare, rendimento casa/trasferta, possesso e finalizzazione;
-4. Elo dinamico con vantaggio casa e continuità tra Serie B e Serie A per le neopromosse;
-5. forza implicita delle quote storiche disponibili nei CSV, usata come segnale debole e non come verità;
-6. prior di promozione costruiti sull'ultima stagione di Serie B;
-7. forza offensiva e creatività della rosa, continuità, nuovi giocatori e partenze rilevate nei dati Understat;
-8. disponibilità, forza formazione e cambi allenatore inseribili solo tramite override verificati;
-9. riposo, congestione del calendario e disciplina;
-10. Poisson con correzione Dixon–Coles per i punteggi bassi;
-11. qualità dati basata su profondità, freschezza, copertura xG e affidabilità del contesto rosa.
+L'interfaccia è responsive per mobile e desktop.
 
-Il peso dei dati sui giocatori è volutamente contenuto: migliora il prior pre-stagionale e reagisce ai nuovi ingressi, ma non sovrascrive la forma reale osservata sul campo.
+## Dati usati
 
-## Aggiornamento continuo
+`scripts/update_uefa_data.py` aggiorna il dataset quattro volte al giorno e usa `scripts/update_europe_data.py` come pipeline di base.
 
-`.github/workflows/update-data.yml` viene eseguito alle 02:23, 08:23, 14:23 e 20:23 UTC. `scripts/update_data.py`:
+La pipeline:
 
-- scarica cinque stagioni di Serie A da Football-Data.co.uk;
-- scarica Serie B per stimare correttamente le neopromosse;
-- importa calendario, xG e produzione giocatori da Understat;
-- usa il feed pubblico ESPN come fallback del calendario;
-- calcola un Elo aggiornato cronologicamente;
-- aggrega i giocatori chiave, i nuovi giocatori rilevati, continuità e creatività della rosa;
-- conserva il precedente calendario 2026/27 se le fonti esterne falliscono;
-- pubblica `data/matches.json` solo dopo i controlli automatici.
+1. scarica calendario e risultati di Champions, Europa League e Conference League dall'API pubblica ufficiale UEFA;
+2. usa i feed ESPN come fallback europeo e come fonte per i campionati nazionali disponibili;
+3. identifica automaticamente le squadre presenti nella stagione target e i relativi codici paese UEFA;
+4. individua tutti i campionati nazionali pertinenti alle federazioni rappresentate;
+5. normalizza i nomi dei club per collegare correttamente dati UEFA, ESPN e Football-Data;
+6. conserva soltanto le partite nazionali dei club europei, evitando di appesantire il dataset con gare irrilevanti;
+7. usa Football-Data.co.uk per statistiche, tiri e quote quando il campionato è supportato;
+8. arricchisce con xG Understat i principali campionati supportati;
+9. collega campionati diversi attraverso un Elo globale aggiornato anche con le partite UEFA.
 
-Nessuna chiave API è necessaria per i dati sportivi. Le fonti esterne sono best-effort e la provenienza viene salvata nel payload in `sources` e `source_health`.
+I campionati nazionali vengono quindi usati per forma, riposo, rendimento casa/trasferta, finalizzazione, disciplina ed Elo, ma non compaiono nel menu delle previsioni. La copertura mancante di alcuni campionati minori viene dichiarata in `coverage.teams_without_domestic_feed` e compensata con storico UEFA, Elo e prior di forza del campionato.
+
+## Modello 3.0 Europa
+
+Il modello usa:
+
+- forma recente nazionale ed europea, con peso maggiore alle gare UEFA;
+- xG/xGA reali quando disponibili e proxy prudente negli altri casi;
+- tiri, tiri in porta, possesso, finalizzazione e disciplina;
+- rendimento casa/trasferta;
+- giorni di riposo e congestione del calendario;
+- Elo globale con connessioni tra campionati tramite le coppe;
+- informazioni verificate in `data/context_overrides.json`;
+- Poisson con correzione Dixon–Coles per i punteggi bassi.
+
+Ogni coppa usa una propria baseline gol storica. Le medie dei campionati nazionali non vengono usate direttamente come media di Champions o Europa League.
+
+Tutte le partite dello stesso turno condividono il medesimo cutoff precedente alla prima gara, evitando leakage tra anticipi e partite successive.
+
+## Struttura del dataset
+
+`data/matches.json` contiene:
+
+- `competitions`: le tre coppe con fixture, turni e calendario;
+- `matches`: risultati UEFA storici e partite nazionali delle sole squadre partecipanti;
+- `team_context`: Elo e override verificati;
+- `domestic_leagues`: i campionati individuati automaticamente come rilevanti;
+- `coverage` e `source_health`: indicatori di copertura e qualità delle fonti.
 
 ## Admin page e impostazioni globali
 
-`admin.html` permette agli account autorizzati di pubblicare una configurazione condivisa da tutti i visitatori. Il pannello usa Firebase Authentication con email/password e Firestore; il sito può restare su GitHub Pages.
+`admin.html` continua a funzionare con la versione europea. Gli account autorizzati possono pubblicare per tutti:
 
-Dal pannello è possibile cambiare:
-
-- titolo della pagina e avviso globale;
-- squadra da evidenziare;
-- colori principali e immagine di sfondo HTTPS;
-- opacità dello sfondo;
-- finestra dati ed emivita del modello;
+- titolo e avviso globale;
+- colori e sfondo HTTPS;
+- squadra da evidenziare, scelta tra i club presenti nelle coppe;
+- finestra temporale e recenza del modello;
 - visibilità della qualità dati e delle quote teoriche;
-- quali preferenze devono essere obbligatorie per tutti.
+- blocco delle preferenze personali per imporre una configurazione comune.
 
-Le impostazioni personali in `settings.html` continuano a funzionare quando l'amministratore non le rende obbligatorie. Il documento globale è `public/settings`; gli aggiornamenti vengono ricevuti in tempo reale e memorizzati anche in cache per il fallback offline.
+L'accesso usa Firebase Authentication con email/password e richiede anche `admins/<UID>` con `enabled: true` in Firestore. Le impostazioni condivise sono salvate in `public/settings`; password e chiavi private non devono mai essere inserite nella repository.
 
-### Configurazione Firebase
+Le pagine disponibili sono:
 
-1. Crea un progetto nella Firebase Console e registra una web app.
-2. Copia la configurazione pubblica della web app in `firebase-config.js`:
-
-```js
-export const FIREBASE_CONFIG = Object.freeze({
-  apiKey: "...",
-  authDomain: "...firebaseapp.com",
-  projectId: "...",
-  appId: "...",
-});
-```
-
-La configurazione web Firebase non è una password. Non inserire nella repository password, service account, chiavi private o file JSON amministrativi.
-
-3. In **Authentication → Sign-in method** abilita **Email/Password**.
-4. Crea da Firebase Console gli account delle persone che possono accedere alla pagina admin.
-5. Per ogni account, copia il relativo UID e crea in Firestore:
-
-```text
-admins/<UID>
-  enabled: true
-```
-
-La sola conoscenza di email e password non basta: il documento `admins/<UID>` deve essere presente e abilitato. Per revocare l'accesso imposta `enabled: false`, elimina il documento oppure disabilita l'account Authentication.
-
-6. Pubblica le Security Rules incluse nella repository:
-
-```bash
-npx firebase-tools login
-npx firebase-tools use --add
-npx firebase-tools deploy --only firestore:rules
-```
-
-Le regole consentono la lettura pubblica soltanto di `public/settings`, permettono la scrittura esclusivamente agli UID amministratori e negano tutto il resto per impostazione predefinita.
-
-## Informazioni verificate dell'ultimo minuto
-
-Infortuni, squalifiche, probabili formazioni, trasferimenti appena ufficializzati e cambi allenatore non devono essere dedotti da rumor. Possono essere aggiunti in `data/context_overrides.json`:
-
-```json
-{
-  "teams": {
-    "Roma": {
-      "as_of": "2026-08-20",
-      "availability_attack": 0.94,
-      "availability_defense": 1.0,
-      "lineup_strength": 0.98,
-      "manager_change_days": null,
-      "arrivals": [
-        { "name": "Nome giocatore", "position": "F", "impact": 0.03 }
-      ],
-      "notes": ["Fonte ufficiale del club"]
-    }
-  }
-}
-```
-
-Gli override vengono applicati soltanto se `as_of` è precedente al cutoff della partita.
+- `index.html`: pronostici europei;
+- `settings.html`: preferenze personali;
+- `admin.html`: configurazione globale protetta.
 
 ## Avvio locale
 
@@ -126,25 +88,28 @@ Gli override vengono applicati soltanto se `as_of` è precedente al cutoff della
 python -m http.server 8000
 ```
 
-Aprire `http://localhost:8000`. Le pagine di configurazione sono:
-
-- `http://localhost:8000/settings.html` per le preferenze personali;
-- `http://localhost:8000/admin.html` per le impostazioni globali.
+Aprire `http://localhost:8000`.
 
 ## Test
 
 ```bash
+python -m py_compile scripts/update_europe_data.py scripts/update_uefa_data.py
 npm test
 npm run check
-python -m py_compile scripts/update_data.py
 ```
 
-I test coprono normalizzazione delle probabilità, cutoff comune, stagione target 2026/27, prior delle neopromosse, influenza del contesto rosa, blocco del leakage temporale e validazione delle impostazioni globali.
+I test coprono il catalogo multi-competizione, il cutoff comune, le baseline UEFA separate, il modello cross-campionato e la validazione delle impostazioni globali.
+
+## Aggiornamento e deploy
+
+- `.github/workflows/update-data.yml` aggiorna il dataset quattro volte al giorno;
+- `.github/workflows/pages.yml` valida e pubblica GitHub Pages;
+- `.github/workflows/validate-pr.yml` verifica ogni pull request e richiede che la pipeline riesca a costruire un dataset reale dalle fonti pubbliche.
 
 ## Limiti
 
-Le previsioni sono probabilistiche. Quote di mercato, meteo, tattica, formazioni ufficiali e notizie dell'ultimo minuto possono aggiungere informazione non presente nelle fonti gratuite. Il progetto non è una promessa di rendimento economico.
+Le previsioni sono probabilistiche. Formazioni ufficiali, infortuni, squalifiche, meteo, viaggi, tattica e notizie dell'ultimo minuto possono aggiungere informazione non presente nelle fonti gratuite. Il progetto non costituisce una promessa di rendimento economico.
 
-## Licenza e attribuzione
+## Licenza e fonti
 
-Codice MIT. I dati restano soggetti alle condizioni delle fonti: Football-Data.co.uk, Understat ed ESPN per il fallback calendario.
+Codice MIT. I dati restano soggetti alle condizioni delle fonti utilizzate: UEFA public match API, ESPN, Football-Data.co.uk e Understat.
