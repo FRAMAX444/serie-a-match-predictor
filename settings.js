@@ -1,3 +1,4 @@
+import { DEFAULT_GLOBAL_SETTINGS, applyGlobalSettings, initializeGlobalSettings } from "./global-settings.js";
 import {
   BACKGROUND_STORAGE_KEY,
   TEAM_NAMES,
@@ -16,19 +17,65 @@ import {
 } from "./preferences.js";
 
 const $ = (id) => document.getElementById(id);
+let globalSettings = { ...DEFAULT_GLOBAL_SETTINGS };
 
 function setStatus(message) {
   $("settings-status").textContent = message;
 }
 
 function showTeamPalette() {
+  if (globalSettings.forceAppearance) {
+    $("primary-color").value = globalSettings.primaryColor;
+    $("secondary-color").value = globalSettings.secondaryColor;
+    applyGlobalSettings(globalSettings);
+    return;
+  }
   const team = $("settings-team").value;
   const palette = applyTeamPalette(team);
   $("primary-color").value = palette.primary;
   $("secondary-color").value = palette.secondary;
 }
 
-function init() {
+function setDisabled(ids, disabled) {
+  ids.forEach((id) => { $(id).disabled = disabled; });
+}
+
+function renderGlobalPolicy(settings, meta = {}) {
+  globalSettings = settings;
+  const locks = [];
+  if (settings.forceAppearance) locks.push("Aspetto e sfondo globali");
+  if (settings.forceModelSettings) locks.push("Parametri modello globali");
+  if (settings.forceFeaturedTeam) locks.push(`Squadra fissata: ${settings.featuredTeam}`);
+  $("global-policy-list").innerHTML = (locks.length ? locks : ["Nessuna preferenza personale bloccata"])
+    .map((label) => `<span class="global-policy-chip">${label}</span>`)
+    .join("");
+  $("global-policy-status").textContent = meta.connected
+    ? "Policy globali sincronizzate con il pannello amministratore."
+    : "Uso della configurazione globale disponibile in cache o dei valori iniziali.";
+
+  if (settings.forceFeaturedTeam && TEAM_NAMES.includes(settings.featuredTeam)) {
+    $("settings-team").value = settings.featuredTeam;
+  }
+  $("settings-team").disabled = settings.forceFeaturedTeam || settings.forceAppearance;
+  setDisabled(["primary-color", "secondary-color", "save-palette", "reset-palette", "background-image", "remove-background"], settings.forceAppearance);
+  setDisabled(["window-days", "half-life"], settings.forceModelSettings);
+
+  if (settings.forceModelSettings) {
+    $("window-days").value = String(settings.defaultWindowDays);
+    $("half-life").value = String(settings.defaultHalfLifeDays);
+  } else {
+    const model = getModelSettings();
+    $("window-days").value = String(model.windowDays);
+    $("half-life").value = String(model.halfLifeDays);
+  }
+
+  showTeamPalette();
+  if (!settings.forceAppearance) {
+    $("remove-background").disabled = !localStorage.getItem(BACKGROUND_STORAGE_KEY);
+  }
+}
+
+async function init() {
   applyStoredAppearance();
   const favorite = getFavoriteTeam(TEAM_NAMES[0]);
   $("settings-team").innerHTML = TEAM_NAMES
@@ -41,15 +88,19 @@ function init() {
   $("window-days").value = String(model.windowDays);
   $("half-life").value = String(model.halfLifeDays);
   $("remove-background").disabled = !localStorage.getItem(BACKGROUND_STORAGE_KEY);
+
+  await initializeGlobalSettings(renderGlobalPolicy);
 }
 
 $("settings-team").addEventListener("change", () => {
+  if (globalSettings.forceFeaturedTeam || globalSettings.forceAppearance) return;
   setFavoriteTeam($("settings-team").value);
   showTeamPalette();
   setStatus(`Squadra preferita: ${$("settings-team").value}.`);
 });
 
 $("save-palette").addEventListener("click", () => {
+  if (globalSettings.forceAppearance) return;
   const team = $("settings-team").value;
   savePalette(team, {
     primary: $("primary-color").value,
@@ -60,6 +111,7 @@ $("save-palette").addEventListener("click", () => {
 });
 
 $("reset-palette").addEventListener("click", () => {
+  if (globalSettings.forceAppearance) return;
   const team = $("settings-team").value;
   resetPalette(team);
   const palette = paletteForTeam(team);
@@ -71,6 +123,7 @@ $("reset-palette").addEventListener("click", () => {
 
 for (const id of ["window-days", "half-life"]) {
   $(id).addEventListener("change", () => {
+    if (globalSettings.forceModelSettings) return;
     saveModelSettings({
       windowDays: $("window-days").value,
       halfLifeDays: $("half-life").value,
@@ -80,6 +133,7 @@ for (const id of ["window-days", "half-life"]) {
 }
 
 $("background-image").addEventListener("change", async (event) => {
+  if (globalSettings.forceAppearance) return;
   const [file] = event.target.files;
   if (!file) return;
   if (!file.type.startsWith("image/")) {
@@ -104,6 +158,7 @@ $("background-image").addEventListener("change", async (event) => {
 });
 
 $("remove-background").addEventListener("click", () => {
+  if (globalSettings.forceAppearance) return;
   removeBackground();
   $("remove-background").disabled = true;
   setStatus("Sfondo rimosso.");
