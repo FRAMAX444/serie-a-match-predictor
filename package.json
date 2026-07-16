@@ -1,10 +1,10 @@
 {
   "name": "serie-a-match-predictor-pages",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node tests/model.test.js",
-    "check": "node --check app.js && node --check model.js && node --check matchdays.js"
+    "test": "node tests/model.test.js && node tests/settings.test.js",
+    "check": "node --check app.js && node --check model.js && node --check matchdays.js && node --check firebase-config.js && node --check firebase-client.js && node --check site-settings.js && node --check admin.js"
   }
 }
