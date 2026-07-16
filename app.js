@@ -27,6 +27,7 @@ let competitionCatalog = [];
 let calendar;
 let lastMatchday;
 let lastBatch;
+let previousModalFocus = null;
 let globalSettings = { ...DEFAULT_GLOBAL_SETTINGS };
 
 function unpackMatches(data) {
@@ -210,13 +211,14 @@ function comparisonRow(home, label, away, formatter = (value) => number(value, 2
   return `<div class="comparison-row"><strong>${formatter(home)}</strong><span>${label}</span><strong>${formatter(away)}</strong></div>`;
 }
 
-function renderFixtureCard(item, index) {
-  const { fixture, result } = item;
+function qualityBadgeMarkup(result) {
+  return globalSettings.showDataQuality
+    ? `<span class="quality ${qualityClass(result.quality.label)}">${escapeHtml(result.quality.label)}</span>`
+    : "";
+}
+
+function fixtureDetailsMarkup(fixture, result) {
   const probabilities = result.probabilities;
-  const top = probabilities.scores[0];
-  const preferred = favoriteTeam();
-  const isFavoriteMatch = fixture.home_team === preferred || fixture.away_team === preferred;
-  const cardId = `fixture-${index}`;
   const comparison = [
     comparisonRow(result.home.ppg5, "Forma (PPG)", result.away.ppg5),
     comparisonRow(result.home.xgFor5, "xG ultime 5", result.away.xgFor5),
@@ -225,9 +227,6 @@ function renderFixtureCard(item, index) {
     comparisonRow(result.home.elo, "Elo", result.away.elo, (value) => number(value, 0)),
     comparisonRow(result.home.restDays, "Giorni di riposo", result.away.restDays, (value) => number(value, 0)),
   ].join("");
-  const qualityBadge = globalSettings.showDataQuality
-    ? `<span class="quality ${qualityClass(result.quality.label)}">${result.quality.label}</span>`
-    : "";
   const fairOddsMetrics = globalSettings.showFairOdds ? `
     <div><span>Quota 1</span><strong>${fairOdds(probabilities.homeWin)}</strong></div>
     <div><span>Quota X</span><strong>${fairOdds(probabilities.draw)}</strong></div>
@@ -235,11 +234,83 @@ function renderFixtureCard(item, index) {
   ` : "";
 
   return `
+    <div class="fixture-details fixture-modal__details">
+      <div class="detail-column">
+        <div class="detail-heading"><h3>Risultati esatti</h3><span>${escapeHtml(result.cutoffDate)}</span></div>
+        <ol class="score-list">${exactScoreRows(probabilities.scores)}</ol>
+      </div>
+      <div class="detail-column">
+        <div class="detail-heading"><h3>Indicatori</h3><span>${result.baselineMatches} gare baseline</span></div>
+        <div class="metric-grid">
+          <div><span>xG ${escapeHtml(fixture.home_team)}</span><strong>${number(result.lambdaHome)}</strong></div>
+          <div><span>xG ${escapeHtml(fixture.away_team)}</span><strong>${number(result.lambdaAway)}</strong></div>
+          <div><span>Over 2.5</span><strong>${percent(probabilities.over25)}</strong></div>
+          <div><span>BTTS</span><strong>${percent(probabilities.bothScore)}</strong></div>
+          ${fairOddsMetrics}
+        </div>
+      </div>
+      <div class="detail-column detail-column--wide">
+        <div class="detail-heading"><h3>Indicatori usati dal modello</h3><span>${result.trainingMatches} partite</span></div>
+        <div class="comparison-table">${comparison}</div>
+        <p class="context-line">Modello core: xG/gol, tiri, forma recente, Elo, rendimento casa/trasferta e riposo.</p>
+      </div>
+    </div>
+  `;
+}
+
+function fixtureModalMarkup(item) {
+  const { fixture, result } = item;
+  const probabilities = result.probabilities;
+  const top = probabilities.scores[0];
+  const preferred = favoriteTeam();
+
+  return `
+    <header class="fixture-modal__header">
+      <div>
+        <div class="fixture-modal__meta">
+          <span>${formatDate(fixture.date)}</span>
+          ${qualityBadgeMarkup(result)}
+        </div>
+        <h2 id="fixture-modal-title">${escapeHtml(fixture.home_team)} – ${escapeHtml(fixture.away_team)}</h2>
+      </div>
+      <button class="icon-button fixture-modal__close" type="button" data-modal-close aria-label="Chiudi dettagli partita">×</button>
+    </header>
+    <div class="fixture-modal__hero">
+      <div class="fixture-main">
+        <div class="team team--home ${fixture.home_team === preferred ? "team--favorite" : ""}">
+          ${teamBadgeMarkup(fixture, "home")}
+          <strong>${escapeHtml(fixture.home_team)}</strong>
+        </div>
+        <div class="predicted-score"><strong>${top.home}–${top.away}</strong><small>${percent(top.probability)}</small></div>
+        <div class="team team--away ${fixture.away_team === preferred ? "team--favorite" : ""}">
+          <strong>${escapeHtml(fixture.away_team)}</strong>
+          ${teamBadgeMarkup(fixture, "away")}
+        </div>
+      </div>
+      <div class="probability-strip">
+        <span><b>1</b>${percent(probabilities.homeWin)}</span>
+        <span><b>X</b>${percent(probabilities.draw)}</span>
+        <span><b>2</b>${percent(probabilities.awayWin)}</span>
+      </div>
+      <p class="fixture-modal__outcome">Esito più probabile: <strong>${result.mostLikelyOutcome.key} · ${escapeHtml(result.mostLikelyOutcome.name)}</strong></p>
+    </div>
+    ${fixtureDetailsMarkup(fixture, result)}
+  `;
+}
+
+function renderFixtureCard(item, index) {
+  const { fixture, result } = item;
+  const probabilities = result.probabilities;
+  const top = probabilities.scores[0];
+  const preferred = favoriteTeam();
+  const isFavoriteMatch = fixture.home_team === preferred || fixture.away_team === preferred;
+
+  return `
     <article class="fixture-card ${isFavoriteMatch ? "fixture-card--favorite" : ""}">
-      <button class="fixture-toggle" type="button" aria-expanded="false" aria-controls="${cardId}">
+      <button class="fixture-toggle" type="button" data-fixture-index="${index}" aria-haspopup="dialog" aria-label="Apri analisi ${escapeHtml(fixture.home_team)} contro ${escapeHtml(fixture.away_team)}">
         <div class="fixture-meta">
           <span>${formatDate(fixture.date)}</span>
-          ${qualityBadge}
+          ${qualityBadgeMarkup(result)}
         </div>
         <div class="fixture-main">
           <div class="team team--home ${fixture.home_team === preferred ? "team--favorite" : ""}">
@@ -259,35 +330,49 @@ function renderFixtureCard(item, index) {
         </div>
         <div class="fixture-footer">
           <span>${result.mostLikelyOutcome.key} · ${escapeHtml(result.mostLikelyOutcome.name)}</span>
-          <span class="expand-label">Dettagli <i>⌄</i></span>
+          <span class="expand-label">Apri analisi <i>↗</i></span>
         </div>
       </button>
-      <div id="${cardId}" class="fixture-details" hidden>
-        <div class="detail-column">
-          <div class="detail-heading"><h3>Risultati esatti</h3><span>${result.cutoffDate}</span></div>
-          <ol class="score-list">${exactScoreRows(probabilities.scores)}</ol>
-        </div>
-        <div class="detail-column">
-          <div class="detail-heading"><h3>Indicatori</h3><span>${result.baselineMatches} gare baseline</span></div>
-          <div class="metric-grid">
-            <div><span>xG ${escapeHtml(fixture.home_team)}</span><strong>${number(result.lambdaHome)}</strong></div>
-            <div><span>xG ${escapeHtml(fixture.away_team)}</span><strong>${number(result.lambdaAway)}</strong></div>
-            <div><span>Over 2.5</span><strong>${percent(probabilities.over25)}</strong></div>
-            <div><span>BTTS</span><strong>${percent(probabilities.bothScore)}</strong></div>
-            ${fairOddsMetrics}
-          </div>
-        </div>
-        <div class="detail-column detail-column--wide">
-          <div class="detail-heading"><h3>Indicatori usati dal modello</h3><span>${result.trainingMatches} partite</span></div>
-          <div class="comparison-table">${comparison}</div>
-          <p class="context-line">Modello core: xG/gol, tiri, forma recente, Elo, rendimento casa/trasferta e riposo.</p>
-        </div>
-      </div>
     </article>
   `;
 }
 
+function modalFocusableElements() {
+  const panel = $("fixture-modal-panel");
+  if (!panel) return [];
+  return [...panel.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')]
+    .filter((element) => !element.disabled && element.offsetParent !== null);
+}
+
+function openFixtureModal(index, trigger) {
+  const item = lastBatch?.predictions?.[index];
+  const modal = $("fixture-modal");
+  const content = $("fixture-modal-content");
+  if (!item || !modal || !content) return;
+
+  previousModalFocus = trigger || document.activeElement;
+  content.innerHTML = fixtureModalMarkup(item);
+  hydrateTeamBadges(content);
+  modal.hidden = false;
+  document.body.classList.add("fixture-modal-open");
+  content.querySelector("[data-modal-close]")?.focus();
+}
+
+function closeFixtureModal(restoreFocus = true) {
+  const modal = $("fixture-modal");
+  if (!modal || modal.hidden) return;
+
+  modal.hidden = true;
+  document.body.classList.remove("fixture-modal-open");
+  $("fixture-modal-content").replaceChildren();
+  if (restoreFocus && previousModalFocus instanceof HTMLElement && document.contains(previousModalFocus)) {
+    previousModalFocus.focus();
+  }
+  previousModalFocus = null;
+}
+
 function renderMatchday(matchday, batch, shouldScroll = true) {
+  closeFixtureModal(false);
   lastMatchday = matchday;
   lastBatch = batch;
   $("results").hidden = false;
@@ -325,13 +410,6 @@ async function runMatchdayPrediction() {
   }
 }
 
-function toggleFixture(button) {
-  const panel = document.getElementById(button.getAttribute("aria-controls"));
-  const expanded = button.getAttribute("aria-expanded") === "true";
-  button.setAttribute("aria-expanded", String(!expanded));
-  panel.hidden = expanded;
-}
-
 function handleGlobalSettings(settings) {
   globalSettings = settings;
   if (!calendar) return;
@@ -358,6 +436,7 @@ async function init() {
 }
 
 $("competition-select").addEventListener("change", () => {
+  closeFixtureModal(false);
   $("results").hidden = true;
   lastMatchday = null;
   lastBatch = null;
@@ -373,7 +452,40 @@ $("favorite-team-select").addEventListener("change", () => {
 $("predict-button").addEventListener("click", runMatchdayPrediction);
 $("fixtures-grid").addEventListener("click", (event) => {
   const button = event.target.closest(".fixture-toggle");
-  if (button) toggleFixture(button);
+  if (!button) return;
+  openFixtureModal(Number(button.dataset.fixtureIndex), button);
+});
+$("fixture-modal").addEventListener("click", (event) => {
+  if (event.target === $("fixture-modal") || event.target.closest("[data-modal-close]")) {
+    closeFixtureModal();
+  }
+});
+document.addEventListener("keydown", (event) => {
+  const modal = $("fixture-modal");
+  if (!modal || modal.hidden) return;
+
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closeFixtureModal();
+    return;
+  }
+  if (event.key !== "Tab") return;
+
+  const focusable = modalFocusableElements();
+  if (!focusable.length) {
+    event.preventDefault();
+    $("fixture-modal-panel").focus();
+    return;
+  }
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
 });
 
 init();
