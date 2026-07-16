@@ -5,6 +5,6 @@
   "type": "module",
   "scripts": {
     "test": "node tests/model.test.js",
-    "check": "node --check app.js && node --check model.js && node --check matchdays.js"
+    "check": "node --check app.js && node --check preferences.js && node --check settings.js && node --check model.js && node --check matchdays.js"
   }
 }
