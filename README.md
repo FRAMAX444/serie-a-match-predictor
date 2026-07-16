@@ -62,6 +62,25 @@ Tutte le partite dello stesso turno condividono il medesimo cutoff precedente al
 - `domestic_leagues`: i campionati individuati automaticamente come rilevanti;
 - `coverage` e `source_health`: indicatori di copertura e qualità delle fonti.
 
+## Admin page e impostazioni globali
+
+`admin.html` continua a funzionare con la versione europea. Gli account autorizzati possono pubblicare per tutti:
+
+- titolo e avviso globale;
+- colori e sfondo HTTPS;
+- squadra da evidenziare, scelta tra i club presenti nelle coppe;
+- finestra temporale e recenza del modello;
+- visibilità della qualità dati e delle quote teoriche;
+- blocco delle preferenze personali per imporre una configurazione comune.
+
+L'accesso usa Firebase Authentication con email/password e richiede anche `admins/<UID>` con `enabled: true` in Firestore. Le impostazioni condivise sono salvate in `public/settings`; password e chiavi private non devono mai essere inserite nella repository.
+
+Le pagine disponibili sono:
+
+- `index.html`: pronostici europei;
+- `settings.html`: preferenze personali;
+- `admin.html`: configurazione globale protetta.
+
 ## Avvio locale
 
 ```bash
@@ -77,6 +96,8 @@ python -m py_compile scripts/update_europe_data.py
 npm test
 npm run check
 ```
+
+I test coprono il catalogo multi-competizione, il cutoff comune, le baseline UEFA separate, il modello cross-campionato e la validazione delle impostazioni globali.
 
 ## Aggiornamento e deploy
 
