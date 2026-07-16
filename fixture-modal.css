@@ -1,0 +1,172 @@
+body.fixture-modal-open {
+  overflow: hidden;
+}
+
+.fixture-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: grid;
+  place-items: center;
+  padding: clamp(10px, 3vw, 28px);
+  overflow-y: auto;
+  background: rgba(9, 16, 29, .68);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.fixture-modal[hidden] {
+  display: none;
+}
+
+.fixture-modal__panel {
+  width: min(920px, 100%);
+  max-height: calc(100vh - clamp(20px, 6vw, 56px));
+  overflow: auto;
+  border: 1px solid rgba(255, 255, 255, .72);
+  border-radius: 20px;
+  outline: none;
+  background: var(--surface);
+  box-shadow: 0 26px 90px rgba(3, 8, 18, .36);
+}
+
+.fixture-modal__header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 18px 20px 14px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(255, 255, 255, .96);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.fixture-modal__header h2 {
+  margin: 4px 0 0;
+  font-size: clamp(1.2rem, 4vw, 1.65rem);
+  line-height: 1.15;
+  letter-spacing: -.035em;
+}
+
+.fixture-modal__meta {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--text-soft);
+  font-size: .72rem;
+  text-transform: capitalize;
+}
+
+.fixture-modal__close {
+  flex: 0 0 auto;
+  width: 38px;
+  min-height: 38px;
+  font-size: 1.3rem;
+}
+
+.fixture-modal__hero {
+  padding: 18px 20px 20px;
+  background: linear-gradient(180deg, rgb(var(--primary-rgb) / .055), transparent);
+}
+
+.fixture-modal__hero .fixture-main {
+  margin: .45rem 0 1.1rem;
+}
+
+.fixture-modal__hero .team-badge {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+}
+
+.fixture-modal__hero .team strong {
+  font-size: clamp(.92rem, 2.5vw, 1.08rem);
+}
+
+.fixture-modal__hero .predicted-score {
+  min-width: 92px;
+  padding: .65rem .8rem;
+}
+
+.fixture-modal__hero .predicted-score strong {
+  font-size: 1.75rem;
+}
+
+.fixture-modal__outcome {
+  margin: 12px 0 0;
+  color: var(--text-soft);
+  font-size: .78rem;
+  text-align: center;
+}
+
+.fixture-modal__outcome strong {
+  color: var(--text);
+}
+
+.fixture-modal__details {
+  border-top: 1px solid var(--line);
+  padding: 20px;
+  background: var(--surface-subtle);
+}
+
+.fixture-toggle {
+  transition: background .16s ease, transform .16s ease;
+}
+
+.fixture-toggle:hover {
+  background: rgb(var(--primary-rgb) / .035);
+}
+
+.fixture-card--favorite .fixture-toggle:hover {
+  background: var(--result-accent-strong);
+}
+
+@media (max-width: 620px) {
+  .fixture-modal {
+    place-items: end stretch;
+    padding: 8px;
+  }
+
+  .fixture-modal__panel {
+    width: 100%;
+    max-height: calc(100vh - 16px);
+    border-radius: 18px;
+  }
+
+  .fixture-modal__header,
+  .fixture-modal__hero,
+  .fixture-modal__details {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+
+  .fixture-modal__hero .fixture-main {
+    gap: .5rem;
+  }
+
+  .fixture-modal__hero .team-badge {
+    width: 40px;
+    height: 40px;
+  }
+
+  .fixture-modal__hero .predicted-score {
+    min-width: 74px;
+    padding: .5rem .55rem;
+  }
+
+  .fixture-modal__hero .predicted-score strong {
+    font-size: 1.35rem;
+  }
+
+  .fixture-modal__details {
+    grid-template-columns: 1fr;
+  }
+
+  .fixture-modal__details .detail-column--wide {
+    grid-column: auto;
+  }
+}
