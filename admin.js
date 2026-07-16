@@ -1,12 +1,14 @@
-import { firebasePaths, getFirebaseServices } from "./firebase-client.js";
-import { isFirebaseConfigured } from "./firebase-config.js";
-import { DEFAULT_GLOBAL_SETTINGS, normalizeGlobalSettings } from "./global-settings.js";
+import { DEFAULT_GLOBAL_SETTINGS, applyGlobalSettings, normalizeGlobalSettings } from "./global-settings.js";
 import { TEAM_NAMES } from "./preferences.js";
+
+const ADMIN_USERNAME = "RC25M";
+const ADMIN_PASSWORD_SHA256 = "ba8a8700eed325f42283bae17c64cff6957735c049991fb33ee2e3d4e5c59eb4";
+const ADMIN_SESSION_KEY = "serie-a-predictor-local-admin-session";
+const SETTINGS_STORAGE_KEY = "serie-a-predictor-global-settings-v1";
 
 const $ = (id) => document.getElementById(id);
 const form = $("admin-settings-form");
-let services;
-let currentUser;
+let authenticated = false;
 let lastSavedSettings = { ...DEFAULT_GLOBAL_SETTINGS };
 
 function setLoginError(message = "") {
@@ -69,55 +71,43 @@ function updatePreview() {
   $("overlay-output").value = `${Math.round(settings.backgroundOverlay * 100)}%`;
 }
 
-async function verifyAdmin(user) {
-  const reference = services.firestoreApi.doc(services.db, firebasePaths.adminsCollection, user.uid);
-  const snapshot = await services.firestoreApi.getDoc(reference);
-  return snapshot.exists() && snapshot.data().enabled === true;
+function readLocalSettings() {
+  try {
+    return JSON.parse(localStorage.getItem(SETTINGS_STORAGE_KEY) || "{}");
+  } catch {
+    return DEFAULT_GLOBAL_SETTINGS;
+  }
 }
 
-async function loadSettings() {
-  const reference = services.firestoreApi.doc(
-    services.db,
-    firebasePaths.settingsCollection,
-    firebasePaths.settingsDocument,
-  );
-  const snapshot = await services.firestoreApi.getDoc(reference);
-  populateForm(snapshot.exists() ? snapshot.data() : DEFAULT_GLOBAL_SETTINGS);
-  setSaveStatus(snapshot.exists()
-    ? "Configurazione globale caricata."
-    : "Documento non ancora creato: salva per pubblicare la configurazione iniziale.");
+function loadSettings() {
+  const stored = readLocalSettings();
+  const hasStoredSettings = Object.keys(stored).length > 0;
+  populateForm(hasStoredSettings ? stored : DEFAULT_GLOBAL_SETTINGS);
+  setSaveStatus(hasStoredSettings
+    ? "Configurazione locale caricata da questo browser."
+    : "Nessuna configurazione locale salvata.");
 }
 
 function showLogin() {
-  currentUser = null;
+  authenticated = false;
   $("login-panel").hidden = false;
   $("editor-panel").hidden = true;
+  $("login-password").value = "";
 }
 
-async function showEditor(user) {
-  currentUser = user;
+function showEditor() {
+  authenticated = true;
   $("login-panel").hidden = true;
   $("editor-panel").hidden = false;
-  $("admin-identity").textContent = `Accesso effettuato come ${user.email}`;
-  await loadSettings();
+  $("admin-identity").textContent = `Accesso locale effettuato come ${ADMIN_USERNAME}`;
+  loadSettings();
 }
 
-async function handleAuthState(user) {
-  if (!user) {
-    showLogin();
-    return;
-  }
-  try {
-    if (!(await verifyAdmin(user))) {
-      await services.authApi.signOut(services.auth);
-      setLoginError("Account riconosciuto, ma non autorizzato come amministratore.");
-      return;
-    }
-    await showEditor(user);
-  } catch {
-    await services.authApi.signOut(services.auth);
-    setLoginError("Impossibile verificare i permessi dell'account.");
-  }
+async function sha256(value) {
+  if (!globalThis.crypto?.subtle) throw new Error("Hash non disponibile");
+  const bytes = new TextEncoder().encode(value);
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", bytes);
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 async function availableTeams() {
@@ -142,36 +132,31 @@ async function init() {
     .join("");
   populateForm(DEFAULT_GLOBAL_SETTINGS);
 
-  if (!isFirebaseConfigured()) {
-    $("setup-panel").hidden = false;
-    $("login-panel").hidden = true;
-    return;
-  }
-
   try {
-    services = await getFirebaseServices({ includeAuth: true });
-    services.authApi.onAuthStateChanged(services.auth, handleAuthState);
-  } catch (error) {
-    $("setup-panel").hidden = false;
-    $("setup-panel").querySelector("p").textContent = `Configurazione Firebase non utilizzabile: ${error.message}`;
-    $("login-panel").hidden = true;
+    if (sessionStorage.getItem(ADMIN_SESSION_KEY) === "1") showEditor();
+    else showLogin();
+  } catch {
+    showLogin();
   }
 }
 
 $("login-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   setLoginError();
-  const button = event.submitter;
+  const button = event.submitter || $("login-form").querySelector("button[type='submit']");
   button.disabled = true;
   button.querySelector("span").textContent = "Accesso…";
   try {
-    await services.authApi.signInWithEmailAndPassword(
-      services.auth,
-      $("login-email").value.trim(),
-      $("login-password").value,
-    );
+    const usernameMatches = $("login-email").value.trim().toLowerCase() === ADMIN_USERNAME.toLowerCase();
+    const passwordMatches = await sha256($("login-password").value) === ADMIN_PASSWORD_SHA256;
+    if (!usernameMatches || !passwordMatches) {
+      setLoginError("Username o password non validi.");
+      return;
+    }
+    try { sessionStorage.setItem(ADMIN_SESSION_KEY, "1"); } catch { /* sessione valida solo in memoria */ }
+    showEditor();
   } catch {
-    setLoginError("Credenziali non valide oppure accesso temporaneamente non disponibile.");
+    setLoginError("Accesso locale non disponibile in questo browser.");
   } finally {
     button.disabled = false;
     button.querySelector("span").textContent = "Accedi";
@@ -180,44 +165,39 @@ $("login-form").addEventListener("submit", async (event) => {
 
 form.addEventListener("input", () => {
   updatePreview();
-  setSaveStatus("Modifiche non ancora pubblicate.");
+  setSaveStatus("Modifiche locali non ancora salvate.");
 });
 
-form.addEventListener("submit", async (event) => {
+form.addEventListener("submit", (event) => {
   event.preventDefault();
-  if (!currentUser) return;
+  if (!authenticated) return;
   const button = event.submitter;
   button.disabled = true;
   button.querySelector("span").textContent = "Salvataggio…";
   try {
     const settings = settingsFromForm();
-    const reference = services.firestoreApi.doc(
-      services.db,
-      firebasePaths.settingsCollection,
-      firebasePaths.settingsDocument,
-    );
-    await services.firestoreApi.setDoc(reference, {
-      ...settings,
-      updatedAt: services.firestoreApi.serverTimestamp(),
-    });
+    localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
     lastSavedSettings = settings;
-    setSaveStatus("Configurazione pubblicata per tutti gli utenti.");
-  } catch (error) {
-    setSaveStatus(error.code === "permission-denied"
-      ? "Salvataggio negato: controlla UID amministratore e Security Rules."
-      : "Errore durante il salvataggio. Riprova.");
+    applyGlobalSettings(settings);
+    setSaveStatus("Configurazione salvata solo su questo browser.");
+  } catch {
+    setSaveStatus("Impossibile salvare nel browser.");
   } finally {
     button.disabled = false;
-    button.querySelector("span").textContent = "Salva per tutti";
+    button.querySelector("span").textContent = "Salva su questo browser";
   }
 });
 
 $("reset-button").addEventListener("click", () => {
   populateForm(lastSavedSettings);
-  setSaveStatus("Form ripristinato all'ultima configurazione caricata.");
+  setSaveStatus("Form ripristinato all'ultima configurazione locale.");
 });
 
-$("logout-button").addEventListener("click", () => services?.authApi.signOut(services.auth));
+$("logout-button").addEventListener("click", () => {
+  try { sessionStorage.removeItem(ADMIN_SESSION_KEY); } catch { /* nessuna sessione persistente */ }
+  showLogin();
+});
+
 $("toggle-password").addEventListener("click", () => {
   const input = $("login-password");
   const visible = input.type === "text";
