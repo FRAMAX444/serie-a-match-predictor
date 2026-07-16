@@ -8,30 +8,9 @@
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <header class="app-header">
-    <div class="app-header__inner">
-      <a class="brand" href="./" aria-label="Serie A Predictor, home">
-        <span class="brand-mark" aria-hidden="true">A</span>
-        <span>
-          <strong>Serie A Predictor</strong>
-          <small>Stagione 2026/27</small>
-        </span>
-      </a>
-      <div class="data-status" aria-live="polite">
-        <span id="data-status">Caricamento dati…</span>
-        <span class="status-separator" aria-hidden="true"></span>
-        <span id="coverage-status">—</span>
-      </div>
-    </div>
-  </header>
-
   <main class="page-shell">
     <section class="page-heading">
-      <div>
-        <h1>Pronostici per giornata</h1>
-        <p>Probabilità, risultato previsto e indicatori principali.</p>
-      </div>
-      <span id="season-label" class="season-badge">—</span>
+      <h1>Pronostici per giornata</h1>
     </section>
 
     <section class="filters-card" aria-label="Selezione pronostici">
@@ -50,7 +29,7 @@
           <select id="favorite-team-select"></select>
           <span aria-hidden="true">⌄</span>
         </div>
-        <small>Evidenziata nei risultati</small>
+        <small>La palette segue automaticamente i colori della squadra</small>
       </div>
 
       <button id="predict-button" class="primary-button" type="button">
@@ -78,6 +57,29 @@
             </select>
           </label>
         </div>
+      </details>
+
+      <details class="customization-settings">
+        <summary>Personalizzazione grafica</summary>
+        <div class="customization-grid">
+          <label class="color-control">
+            <span>Colore principale</span>
+            <input id="primary-color" type="color" value="#1f4f8f" />
+          </label>
+          <label class="color-control">
+            <span>Colore secondario</span>
+            <input id="secondary-color" type="color" value="#172033" />
+          </label>
+          <label class="background-control">
+            <span>Immagine di sfondo</span>
+            <input id="background-image" type="file" accept="image/*" />
+          </label>
+          <div class="customization-actions">
+            <button id="reset-palette" class="secondary-button" type="button">Colori squadra</button>
+            <button id="remove-background" class="secondary-button" type="button">Rimuovi sfondo</button>
+          </div>
+        </div>
+        <small id="customization-status" class="customization-status" aria-live="polite"></small>
       </details>
 
       <p id="error-message" class="error" role="alert" hidden></p>
