@@ -3,60 +3,74 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="description" content="Pronostici probabilistici di un'intera giornata di Serie A, con Roma in evidenza e distribuzione dei risultati esatti." />
-  <title>Serie A Matchday Predictor</title>
+  <meta name="description" content="Pronostici probabilistici della Serie A 2026/27 per giornata." />
+  <title>Serie A Predictor</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <header class="hero">
-    <div class="hero__inner">
-      <div class="hero-copy">
-        <p class="eyebrow">SERIE A · MATCHDAY INTELLIGENCE</p>
-        <h1>Una giornata.<br /><span>Dieci pronostici.</span></h1>
-        <p class="lead">Seleziona solo la giornata: il modello calcola tutte le partite con lo stesso cutoff pre-giornata e mostra probabilità, xG e risultati esatti.</p>
-      </div>
-      <div class="status-row" aria-live="polite">
-        <span id="data-status" class="pill">Caricamento dati…</span>
-        <span id="coverage-status" class="pill pill--muted">Copertura avanzata…</span>
+  <header class="app-header">
+    <div class="app-header__inner">
+      <a class="brand" href="./" aria-label="Serie A Predictor, home">
+        <span class="brand-mark" aria-hidden="true">A</span>
+        <span>
+          <strong>Serie A Predictor</strong>
+          <small>Stagione 2026/27</small>
+        </span>
+      </a>
+      <div class="data-status" aria-live="polite">
+        <span id="data-status">Caricamento dati…</span>
+        <span class="status-separator" aria-hidden="true"></span>
+        <span id="coverage-status">—</span>
       </div>
     </div>
   </header>
 
-  <main class="layout">
-    <section class="control-panel panel" aria-labelledby="input-title">
-      <div class="control-copy">
-        <p class="kicker">INPUT UNICO</p>
-        <h2 id="input-title">Scegli la giornata</h2>
-        <p id="schedule-status" class="hint">Caricamento calendario…</p>
+  <main class="page-shell">
+    <section class="page-heading">
+      <div>
+        <h1>Pronostici per giornata</h1>
+        <p>Probabilità, risultato previsto e indicatori principali.</p>
       </div>
+      <span id="season-label" class="season-badge">—</span>
+    </section>
 
-      <div class="round-control">
-        <label for="matchday-select">Giornata di Serie A</label>
+    <section class="filters-card" aria-label="Selezione pronostici">
+      <div class="field">
+        <label for="matchday-select">Giornata</label>
         <div class="select-wrap">
           <select id="matchday-select" aria-describedby="selected-round-summary"></select>
           <span aria-hidden="true">⌄</span>
         </div>
-        <p id="selected-round-summary" class="selected-round-summary">—</p>
+        <small id="selected-round-summary">—</small>
       </div>
 
-      <div class="season-chip">
-        <span>Campionato</span>
-        <strong id="season-label">—</strong>
+      <div class="field">
+        <label for="favorite-team-select">Squadra preferita</label>
+        <div class="select-wrap">
+          <select id="favorite-team-select"></select>
+          <span aria-hidden="true">⌄</span>
+        </div>
+        <small>Evidenziata nei risultati</small>
       </div>
 
-      <details class="advanced">
-        <summary>Impostazioni del modello</summary>
-        <div class="advanced-grid">
+      <button id="predict-button" class="primary-button" type="button">
+        <span>Calcola pronostici</span>
+        <span aria-hidden="true">→</span>
+      </button>
+
+      <details class="model-settings">
+        <summary>Impostazioni modello</summary>
+        <div class="settings-grid">
           <label>
             <span>Finestra dati</span>
             <select id="window-days">
-              <option value="365">Ultimi 12 mesi</option>
-              <option value="540" selected>Ultimi 18 mesi</option>
-              <option value="730">Ultimi 24 mesi</option>
+              <option value="365">12 mesi</option>
+              <option value="540" selected>18 mesi</option>
+              <option value="730">24 mesi</option>
             </select>
           </label>
           <label>
-            <span>Emivita recenza</span>
+            <span>Recenza</span>
             <select id="half-life">
               <option value="75">75 giorni</option>
               <option value="120" selected>120 giorni</option>
@@ -66,44 +80,28 @@
         </div>
       </details>
 
-      <button id="predict-button" class="button button--primary" type="button">
-        <span>Calcola tutta la giornata</span>
-        <b aria-hidden="true">→</b>
-      </button>
       <p id="error-message" class="error" role="alert" hidden></p>
     </section>
 
     <section id="results" class="results" aria-live="polite" hidden>
-      <div class="round-hero panel">
+      <div class="results-header">
         <div>
-          <p class="kicker">PRONOSTICI COMPLETI</p>
           <h2 id="round-title">Giornata —</h2>
-          <p id="round-subtitle" class="lead-small">—</p>
+          <p id="round-subtitle">—</p>
         </div>
-        <div class="roma-callout">
-          <span class="roma-dot"></span>
-          <div>
-            <small>Focus Roma</small>
-            <strong id="roma-summary">—</strong>
-          </div>
+        <div id="favorite-summary" class="favorite-summary" hidden>
+          <span class="favorite-summary__label">Squadra preferita</span>
+          <strong>—</strong>
         </div>
       </div>
 
       <div id="fixtures-grid" class="fixtures-grid"></div>
-
-      <aside class="method-panel panel">
-        <div>
-          <p class="kicker">CREDIBILITÀ DEL MODELLO</p>
-          <h3>Nessun dato della giornata entra nelle altre previsioni</h3>
-        </div>
-        <p id="method-note">—</p>
-      </aside>
     </section>
   </main>
 
-  <footer>
-    <p>Dati risultati: Football-Data.co.uk. xG: Understat quando disponibile; altrimenti proxy trasparente da tiri e tiri in porta.</p>
-    <a href="https://github.com/FRAMAX444/serie-a-match-predictor" rel="noreferrer">Codice sorgente</a>
+  <footer class="app-footer">
+    <span>Fonti: Football-Data.co.uk e Understat.</span>
+    <a href="https://github.com/FRAMAX444/serie-a-match-predictor" rel="noreferrer">GitHub</a>
   </footer>
 
   <script type="module" src="app.js"></script>
