@@ -6,9 +6,11 @@
   <meta name="description" content="Pronostici probabilistici per Champions League, Europa League e Conference League, basati sulla forma nazionale ed europea dei club." />
   <title>European Cups Predictor</title>
   <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="global.css" />
   <link rel="stylesheet" href="europe.css" />
 </head>
 <body>
+  <div id="global-announcement" class="global-announcement" hidden></div>
   <main class="page-shell page-shell--predictor">
     <section class="control-bar control-bar--europe" aria-label="Selezione pronostici europei">
       <div class="select-wrap">
@@ -34,7 +36,10 @@
         <span aria-hidden="true">→</span>
       </button>
 
-      <a class="icon-button" href="settings.html" aria-label="Impostazioni" title="Impostazioni">⚙</a>
+      <div class="control-links">
+        <a class="icon-button" href="settings.html" aria-label="Impostazioni personali" title="Impostazioni personali">⚙</a>
+        <a class="icon-button" href="admin.html" aria-label="Amministrazione" title="Amministrazione">🔐</a>
+      </div>
       <p id="error-message" class="error" role="alert" hidden></p>
     </section>
 
