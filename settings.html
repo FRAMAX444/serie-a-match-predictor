@@ -31,6 +31,21 @@
 
       <section class="settings-card">
         <div class="settings-card__heading">
+          <h2>Pronostici</h2>
+          <p>La competizione scelta viene aperta automaticamente nella pagina principale.</p>
+        </div>
+        <div class="settings-grid">
+          <label>
+            <span>Competizione predefinita</span>
+            <select id="settings-competition" disabled>
+              <option value="">Caricamento competizioni…</option>
+            </select>
+          </label>
+        </div>
+      </section>
+
+      <section class="settings-card">
+        <div class="settings-card__heading">
           <h2>Squadra e palette</h2>
           <p>I colori personalizzano soltanto controlli e navigazione. I risultati restano neutri.</p>
         </div>
@@ -97,6 +112,7 @@
     </form>
   </main>
 
+  <script type="module" src="competition-preference.js"></script>
   <script type="module" src="settings.js"></script>
 </body>
 </html>

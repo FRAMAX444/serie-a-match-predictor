@@ -16,7 +16,7 @@ Il menu mostra soltanto queste coppe. I campionati nazionali non sono pronostica
 4. premi **Calcola** per ottenere tutte le partite del turno;
 5. apri una partita per vedere risultati esatti, 1X2, xG, Over 2.5, BTTS, Elo e confronto di forma.
 
-L'interfaccia è responsive per mobile e desktop.
+L'interfaccia è responsive per mobile e desktop. La competizione predefinita può essere salvata nelle impostazioni personali e viene riaperta automaticamente.
 
 ## Dati usati
 
@@ -63,24 +63,26 @@ Tutte le partite dello stesso turno condividono il medesimo cutoff precedente al
 - `domestic_leagues`: i campionati individuati automaticamente come rilevanti;
 - `coverage` e `source_health`: indicatori di copertura e qualità delle fonti.
 
-## Admin page e impostazioni globali
+## Admin locale
 
-`admin.html` continua a funzionare con la versione europea. Gli account autorizzati possono pubblicare per tutti:
+`admin.html` usa un controllo locale con un solo username autorizzato e una password verificata tramite hash SHA-256. La password non è presente in chiaro nel JavaScript.
 
-- titolo e avviso globale;
+Questo controllo non costituisce sicurezza reale: il progetto è una web app statica pubblica e chiunque possa leggere o modificare il codice nel browser può aggirarlo. Non usare il pannello per proteggere segreti o dati sensibili.
+
+Dal pannello si possono salvare, esclusivamente nel browser corrente:
+
+- titolo e avviso locale;
 - colori e sfondo HTTPS;
-- squadra da evidenziare, scelta tra i club presenti nelle coppe;
+- squadra da evidenziare;
 - finestra temporale e recenza del modello;
 - visibilità della qualità dati e delle quote teoriche;
-- blocco delle preferenze personali per imporre una configurazione comune.
-
-L'accesso usa Firebase Authentication con email/password e richiede anche `admins/<UID>` con `enabled: true` in Firestore. Le impostazioni condivise sono salvate in `public/settings`; password e chiavi private non devono mai essere inserite nella repository.
+- preferenze locali da applicare al predictor.
 
 Le pagine disponibili sono:
 
 - `index.html`: pronostici europei;
-- `settings.html`: preferenze personali;
-- `admin.html`: configurazione globale protetta.
+- `settings.html`: preferenze personali e competizione predefinita;
+- `admin.html`: configurazione locale protetta solo lato browser.
 
 ## Avvio locale
 

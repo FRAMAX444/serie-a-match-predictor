@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="robots" content="noindex,nofollow" />
-  <title>Admin · Serie A Predictor</title>
+  <title>Admin locale · Serie A Predictor</title>
   <link rel="stylesheet" href="styles.css" />
   <link rel="stylesheet" href="global.css" />
   <link rel="stylesheet" href="admin.css" />
@@ -14,24 +14,24 @@
     <header class="admin-header">
       <a class="back-link" href="index.html">← Pronostici</a>
       <div>
-        <span class="admin-badge">ACCESSO RISERVATO</span>
-        <h1>Amministrazione globale</h1>
-        <p>Modifica aspetto e impostazioni condivise da tutti i visitatori.</p>
+        <span class="admin-badge">ACCESSO LOCALE</span>
+        <h1>Amministrazione locale</h1>
+        <p>Modifica aspetto e impostazioni salvate su questo browser.</p>
       </div>
     </header>
 
-    <section id="setup-panel" class="settings-card admin-warning" hidden>
-      <h2>Firebase non configurato</h2>
-      <p>Compila <code>firebase-config.js</code>, abilita l'accesso Email/Password e pubblica <code>firestore.rules</code>. Le istruzioni complete sono nel README.</p>
+    <section id="setup-panel" class="settings-card admin-warning">
+      <h2>Protezione solo lato browser</h2>
+      <p>Questo accesso non è un sistema di sicurezza reale: il sito è statico e il codice è pubblico. Le modifiche restano esclusivamente su questo dispositivo e browser.</p>
     </section>
 
     <section id="login-panel" class="settings-card admin-login">
       <div>
         <h2>Accedi</h2>
-        <p>Non è prevista registrazione pubblica. Gli account autorizzati vengono creati dal proprietario del progetto.</p>
+        <p>Inserisci lo username locale autorizzato e la relativa password.</p>
       </div>
       <form id="login-form" class="admin-form">
-        <label><span>Email</span><input id="login-email" type="email" autocomplete="username" required /></label>
+        <label><span>Username</span><input id="login-email" type="text" autocomplete="username" maxlength="40" spellcheck="false" required /></label>
         <label>
           <span>Password</span>
           <div class="password-field">
@@ -46,58 +46,58 @@
 
     <section id="editor-panel" class="admin-editor" hidden>
       <div class="settings-card admin-toolbar">
-        <div><h2>Configurazione pubblica</h2><p id="admin-identity">—</p></div>
+        <div><h2>Configurazione del browser</h2><p id="admin-identity">—</p></div>
         <button id="logout-button" class="secondary-button" type="button">Esci</button>
       </div>
 
       <form id="admin-settings-form" class="admin-settings-layout">
         <div class="admin-settings-main">
           <section class="settings-card">
-            <div class="settings-card__heading"><h2>Contenuti</h2><p>Titolo del sito, comunicazione globale e squadra predefinita.</p></div>
+            <div class="settings-card__heading"><h2>Contenuti</h2><p>Titolo del sito, comunicazione locale e squadra predefinita.</p></div>
             <div class="admin-field-grid">
               <label><span>Titolo scheda browser</span><input name="siteTitle" maxlength="80" required /></label>
               <label><span>Squadra in evidenza</span><select name="featuredTeam"></select></label>
-              <label class="admin-field-wide"><span>Avviso globale</span><textarea name="announcement" rows="3" maxlength="220" placeholder="Lascia vuoto per non mostrare avvisi"></textarea></label>
+              <label class="admin-field-wide"><span>Avviso locale</span><textarea name="announcement" rows="3" maxlength="220" placeholder="Lascia vuoto per non mostrare avvisi"></textarea></label>
             </div>
           </section>
 
           <section class="settings-card">
-            <div class="settings-card__heading"><h2>Aspetto globale</h2><p>Lo sfondo deve essere raggiungibile tramite URL HTTPS.</p></div>
+            <div class="settings-card__heading"><h2>Aspetto locale</h2><p>Lo sfondo deve essere raggiungibile tramite URL HTTPS.</p></div>
             <div class="admin-field-grid">
               <label class="color-control"><span>Colore principale</span><input name="primaryColor" type="color" /></label>
               <label class="color-control"><span>Colore secondario</span><input name="secondaryColor" type="color" /></label>
               <label class="admin-field-wide"><span>URL immagine di sfondo</span><input name="backgroundImageUrl" type="url" maxlength="1200" placeholder="https://..." /></label>
               <label class="admin-field-wide"><span>Opacità sfondo <output id="overlay-output">78%</output></span><input name="backgroundOverlay" type="range" min="0.1" max="0.95" step="0.01" /></label>
-              <label class="admin-toggle admin-field-wide"><input name="forceAppearance" type="checkbox" /><span>Imponi colori e sfondo a tutti</span></label>
+              <label class="admin-toggle admin-field-wide"><input name="forceAppearance" type="checkbox" /><span>Usa sempre colori e sfondo locali</span></label>
             </div>
           </section>
 
           <section class="settings-card">
-            <div class="settings-card__heading"><h2>Modello e risultati</h2><p>Imposta i valori condivisi e scegli quali dettagli mostrare.</p></div>
+            <div class="settings-card__heading"><h2>Modello e risultati</h2><p>Imposta i valori salvati su questo browser e scegli quali dettagli mostrare.</p></div>
             <div class="admin-field-grid">
               <label><span>Finestra dati</span><select name="defaultWindowDays"><option value="365">12 mesi</option><option value="540">18 mesi</option><option value="730">24 mesi</option></select></label>
               <label><span>Recenza</span><select name="defaultHalfLifeDays"><option value="75">75 giorni</option><option value="120">120 giorni</option><option value="180">180 giorni</option></select></label>
               <label class="admin-toggle"><input name="showDataQuality" type="checkbox" /><span>Mostra qualità dati</span></label>
               <label class="admin-toggle"><input name="showFairOdds" type="checkbox" /><span>Mostra quote teoriche</span></label>
-              <label class="admin-toggle"><input name="forceModelSettings" type="checkbox" /><span>Imponi parametri modello</span></label>
-              <label class="admin-toggle"><input name="forceFeaturedTeam" type="checkbox" /><span>Imponi squadra evidenziata</span></label>
+              <label class="admin-toggle"><input name="forceModelSettings" type="checkbox" /><span>Usa sempre questi parametri</span></label>
+              <label class="admin-toggle"><input name="forceFeaturedTeam" type="checkbox" /><span>Usa sempre la squadra evidenziata</span></label>
             </div>
           </section>
         </div>
 
         <aside class="admin-side">
           <section class="settings-card admin-preview-card">
-            <div class="settings-card__heading"><h2>Anteprima</h2><p>Rappresentazione sintetica dell'aspetto pubblico.</p></div>
+            <div class="settings-card__heading"><h2>Anteprima</h2><p>Rappresentazione sintetica dell'aspetto locale.</p></div>
             <div id="admin-preview" class="admin-preview">
               <span id="preview-team">Roma</span>
               <strong id="preview-title">Serie A Predictor</strong>
-              <p id="preview-announcement">Nessun avviso globale</p>
+              <p id="preview-announcement">Nessun avviso locale</p>
               <div><b>1</b><b>X</b><b>2</b></div>
             </div>
           </section>
           <section class="settings-card admin-save-card">
             <p id="save-status" aria-live="polite">Configurazione non modificata.</p>
-            <button class="primary-button admin-submit" type="submit"><span>Salva per tutti</span><span>✓</span></button>
+            <button class="primary-button admin-submit" type="submit"><span>Salva su questo browser</span><span>✓</span></button>
             <button id="reset-button" class="secondary-button" type="button">Ripristina il form</button>
           </section>
         </aside>
