@@ -18,8 +18,8 @@ export const DEFAULT_GLOBAL_SETTINGS = Object.freeze({
   defaultHalfLifeDays: 120,
   showDataQuality: true,
   showFairOdds: true,
-  forceAppearance: true,
-  forceModelSettings: true,
+  forceAppearance: false,
+  forceModelSettings: false,
   forceFeaturedTeam: false,
 });
 
