@@ -1,0 +1,21 @@
+.team-badge {
+  overflow: hidden;
+}
+
+.team-badge__image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 2px;
+  object-fit: contain;
+}
+
+.team-badge__fallback {
+  place-self: center;
+}
+
+.team-badge:not(.team-badge--fallback),
+.team--favorite .team-badge:not(.team-badge--fallback) {
+  color: var(--text-soft);
+  background: var(--surface);
+}
