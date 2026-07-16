@@ -15,6 +15,19 @@ const formatDate = (value) => new Intl.DateTimeFormat("it-IT", {
 }).format(new Date(`${value}T12:00:00Z`));
 
 const FAVORITE_STORAGE_KEY = "serie-a-predictor-favorite-team";
+const OPENING_ROUND_2627 = [
+  ["Inter", "Monza"],
+  ["Roma", "Fiorentina"],
+  ["Napoli", "Genoa"],
+  ["Como", "Udinese"],
+  ["Atalanta", "Sassuolo"],
+  ["Bologna", "Lazio"],
+  ["Frosinone", "Juventus"],
+  ["Parma", "Cagliari"],
+  ["Torino", "Milan"],
+  ["Venezia", "Lecce"],
+];
+
 let payload;
 let calendar;
 let lastMatchday;
@@ -45,8 +58,32 @@ function favoriteTeam() {
   return $("favorite-team-select").value;
 }
 
+function openingRoundFallback(data) {
+  const season = String(data.target_season || data.latest_season || "2627");
+  if (season !== "2627") return null;
+  const fixtures = OPENING_ROUND_2627.map(([homeTeam, awayTeam], index) => ({
+    id: `2627-r1-${index + 1}`,
+    season: "2627",
+    round: 1,
+    date: "2026-08-23",
+    kickoff: null,
+    home_team: homeTeam,
+    away_team: awayTeam,
+    completed: false,
+    source: "Calendario pubblico 2026/27",
+  }));
+  return {
+    season: "2627",
+    teams: [...new Set(fixtures.flatMap((fixture) => [fixture.home_team, fixture.away_team]))].sort(),
+    matchdays: [{ round: 1, fixtures, startDate: "2026-08-23", endDate: "2026-08-23" }],
+    defaultRound: 1,
+    inferred: false,
+    fallback: true,
+  };
+}
+
 function populateFavoriteTeams() {
-  const teams = calendar.teams?.length ? calendar.teams : payload.teams || [];
+  const teams = calendar?.teams?.length ? calendar.teams : payload.teams || [];
   const stored = localStorage.getItem(FAVORITE_STORAGE_KEY);
   const fallback = teams.includes("Roma") ? "Roma" : teams[0];
   const selected = teams.includes(stored) ? stored : fallback;
@@ -54,6 +91,7 @@ function populateFavoriteTeams() {
     .map((team) => `<option value="${escapeHtml(team)}">${escapeHtml(team)}</option>`)
     .join("");
   $("favorite-team-select").value = selected || "";
+  $("favorite-team-select").disabled = !teams.length;
 }
 
 function populateMatchdays() {
@@ -65,6 +103,7 @@ function populateMatchdays() {
   const requested = Number(params.get("round"));
   const validRound = calendar.matchdays.some((matchday) => matchday.round === requested);
   select.value = String(validRound ? requested : calendar.defaultRound);
+  select.disabled = false;
   $("season-label").textContent = `${calendar.season.slice(0, 2)}/${calendar.season.slice(2)}`;
   syncSelectedMatchday();
 }
@@ -76,9 +115,14 @@ function selectedMatchday() {
 
 function syncSelectedMatchday() {
   const matchday = selectedMatchday();
-  $("selected-round-summary").textContent = matchday
-    ? `${matchday.fixtures.length} partite · ${matchdayLabel(matchday).replace(`Giornata ${matchday.round} · `, "")}`
-    : "Nessuna partita";
+  if (!matchday) {
+    $("selected-round-summary").textContent = "Calendario in aggiornamento";
+    return;
+  }
+  const dateLabel = matchdayLabel(matchday).replace(`Giornata ${matchday.round} · `, "");
+  $("selected-round-summary").textContent = calendar.fallback
+    ? `${matchday.fixtures.length} partite · ${dateLabel} · calendario completo in aggiornamento`
+    : `${matchday.fixtures.length} partite · ${dateLabel}`;
 }
 
 function predictionOptions() {
@@ -255,22 +299,39 @@ function toggleFixture(button) {
   panel.hidden = expanded;
 }
 
+function showPendingCalendar() {
+  populateFavoriteTeams();
+  $("matchday-select").innerHTML = '<option value="">Calendario in aggiornamento</option>';
+  $("matchday-select").disabled = true;
+  $("selected-round-summary").textContent = "Dati storici pronti";
+  $("predict-button").disabled = true;
+  $("data-status").textContent = `Aggiornato ${String(payload.generated_at || "").slice(0, 10) || "—"}`;
+  $("coverage-status").textContent = "Calendario in aggiornamento";
+  $("error-message").hidden = true;
+}
+
 async function init() {
   try {
     const response = await fetch("data/matches.json", { cache: "no-store" });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     payload = unpackMatches(await response.json());
     calendar = buildMatchdays(payload);
-    if (!calendar.matchdays.length) throw new Error(`Calendario ${calendar.season || "target"} non disponibile.`);
+    if (!calendar.matchdays.length) calendar = openingRoundFallback(payload);
+    if (!calendar?.matchdays?.length) {
+      showPendingCalendar();
+      return;
+    }
     populateFavoriteTeams();
     populateMatchdays();
     const actualXg = payload.coverage?.xg_actual_matches || 0;
     $("data-status").textContent = `Aggiornato ${payload.generated_at.slice(0, 10)}`;
-    $("coverage-status").textContent = `${payload.matches.length} partite · ${actualXg ? "xG + Elo" : "Elo + xG stimati"}`;
+    $("coverage-status").textContent = calendar.fallback
+      ? "1ª giornata disponibile · calendario in aggiornamento"
+      : `${payload.matches.length} partite · ${actualXg ? "xG + Elo" : "Elo + xG stimati"}`;
   } catch (error) {
     $("data-status").textContent = "Dati non disponibili";
     $("coverage-status").textContent = "—";
-    $("error-message").textContent = `Impossibile caricare il dataset: ${error.message}`;
+    $("error-message").textContent = "Impossibile caricare i dati. Riprova tra poco.";
     $("error-message").hidden = false;
     $("predict-button").disabled = true;
   }
