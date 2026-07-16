@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex,nofollow" />
+  <title>Admin · Serie A Predictor</title>
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="admin.css" />
+</head>
+<body class="admin-body">
+  <header class="admin-header">
+    <a class="admin-back" href="index.html">← Torna al sito</a>
+    <div>
+      <p class="eyebrow">SERIE A PREDICTOR</p>
+      <h1>Admin page</h1>
+      <p>Le modifiche salvate vengono applicate a tutti gli utenti, anche in tempo reale.</p>
+    </div>
+  </header>
+
+  <main class="admin-layout">
+    <section id="setup-panel" class="admin-card admin-alert" hidden>
+      <h2>Firebase da configurare</h2>
+      <p>Inserisci i valori della tua web app in <code>firebase-config.js</code>, abilita Email/Password e pubblica <code>firestore.rules</code>.</p>
+      <p>Le istruzioni complete sono nel README della repository.</p>
+    </section>
+
+    <section id="login-panel" class="admin-card auth-card">
+      <div>
+        <p class="kicker">ACCESSO RISERVATO</p>
+        <h2>Accedi come amministratore</h2>
+        <p class="admin-muted">Non esiste registrazione pubblica. Gli account vengono creati dal proprietario su Firebase.</p>
+      </div>
+      <form id="login-form" class="admin-form">
+        <label>
+          <span>Email</span>
+          <input id="login-email" type="email" autocomplete="username" required />
+        </label>
+        <label>
+          <span>Password</span>
+          <div class="password-field">
+            <input id="login-password" type="password" autocomplete="current-password" required />
+            <button id="toggle-password" type="button" aria-label="Mostra o nascondi password">Mostra</button>
+          </div>
+        </label>
+        <button class="button button--primary admin-primary" type="submit"><span>Accedi</span><b>→</b></button>
+        <p id="login-error" class="error" role="alert" hidden></p>
+      </form>
+    </section>
+
+    <section id="editor-panel" class="admin-editor" hidden>
+      <div class="admin-toolbar admin-card">
+        <div>
+          <p class="kicker">CONFIGURAZIONE GLOBALE</p>
+          <h2>Personalizza il sito</h2>
+          <p id="admin-identity" class="admin-muted">—</p>
+        </div>
+        <button id="logout-button" class="admin-secondary" type="button">Esci</button>
+      </div>
+
+      <form id="settings-form" class="settings-grid">
+        <div class="settings-main">
+          <section class="admin-card settings-section">
+            <div class="section-title"><span>01</span><div><h3>Testi e brand</h3><p>Contenuti visibili nella testata pubblica.</p></div></div>
+            <div class="field-grid">
+              <label><span>Titolo scheda browser</span><input name="siteTitle" maxlength="80" required /></label>
+              <label><span>Squadra in evidenza</span><input name="featuredTeam" maxlength="50" required /></label>
+              <label><span>Prima riga titolo</span><input name="heroTitle" maxlength="80" required /></label>
+              <label><span>Riga evidenziata</span><input name="heroHighlight" maxlength="80" required /></label>
+              <label class="field-wide"><span>Descrizione</span><textarea name="heroDescription" maxlength="260" rows="4" required></textarea></label>
+              <label class="field-wide"><span>Avviso globale facoltativo</span><textarea name="announcement" maxlength="220" rows="3" placeholder="Es. Dati in aggiornamento questa sera"></textarea></label>
+            </div>
+          </section>
+
+          <section class="admin-card settings-section">
+            <div class="section-title"><span>02</span><div><h3>Sfondo e colori</h3><p>Puoi usare un'immagine HTTPS oppure soltanto colori e gradienti.</p></div></div>
+            <div class="field-grid colors-grid">
+              <label><span>Colore principale</span><input name="accentColor" type="color" /></label>
+              <label><span>Colore principale scuro</span><input name="accentDarkColor" type="color" /></label>
+              <label><span>Colore oro</span><input name="goldColor" type="color" /></label>
+              <label><span>Sfondo pagina</span><input name="pageBackgroundColor" type="color" /></label>
+              <label><span>Hero inizio</span><input name="heroStartColor" type="color" /></label>
+              <label><span>Hero centro</span><input name="heroMiddleColor" type="color" /></label>
+              <label><span>Hero fine</span><input name="heroEndColor" type="color" /></label>
+              <label><span>Opacità sopra immagine <output id="overlay-output">78%</output></span><input name="backgroundOverlay" type="range" min="0.1" max="0.95" step="0.01" /></label>
+              <label class="field-wide"><span>URL immagine di sfondo HTTPS</span><input name="backgroundImageUrl" type="url" maxlength="1200" placeholder="https://..." /></label>
+            </div>
+          </section>
+
+          <section class="admin-card settings-section">
+            <div class="section-title"><span>03</span><div><h3>Impostazioni predefinite</h3><p>Valori iniziali del modello e informazioni mostrate nelle card.</p></div></div>
+            <div class="field-grid">
+              <label><span>Finestra dati predefinita</span><select name="defaultWindowDays"><option value="365">12 mesi</option><option value="540">18 mesi</option><option value="730">24 mesi</option></select></label>
+              <label><span>Emivita predefinita</span><select name="defaultHalfLifeDays"><option value="75">75 giorni</option><option value="120">120 giorni</option><option value="180">180 giorni</option></select></label>
+              <label class="toggle-field"><input name="showDataQuality" type="checkbox" /><span>Mostra qualità dati</span></label>
+              <label class="toggle-field"><input name="showFairOdds" type="checkbox" /><span>Mostra quote teoriche</span></label>
+            </div>
+          </section>
+        </div>
+
+        <aside class="settings-side">
+          <section class="admin-card preview-card">
+            <p class="kicker">ANTEPRIMA</p>
+            <div id="settings-preview" class="settings-preview">
+              <small>SERIE A · MATCHDAY INTELLIGENCE</small>
+              <h3><span id="preview-title">Una giornata.</span><strong id="preview-highlight">Dieci pronostici.</strong></h3>
+              <p id="preview-description">—</p>
+              <div id="preview-announcement" class="preview-announcement" hidden></div>
+            </div>
+          </section>
+          <section class="admin-card save-card">
+            <p id="save-status" class="admin-muted" aria-live="polite">Nessuna modifica salvata in questa sessione.</p>
+            <button class="button button--primary admin-primary" type="submit"><span>Salva per tutti</span><b>✓</b></button>
+            <button id="reset-button" class="admin-secondary admin-secondary--full" type="button">Ripristina valori iniziali nel form</button>
+          </section>
+        </aside>
+      </form>
+    </section>
+  </main>
+
+  <script type="module" src="admin.js"></script>
+</body>
+</html>
