@@ -1,0 +1,70 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isAdmin() {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+        && get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.enabled == true;
+    }
+
+    function validColor(value) {
+      return value is string && value.matches('^#[0-9a-fA-F]{6}$');
+    }
+
+    function validSettings() {
+      return request.resource.data.keys().hasAll([
+          'siteTitle', 'announcement', 'featuredTeam', 'primaryColor',
+          'secondaryColor', 'backgroundImageUrl', 'backgroundOverlay',
+          'defaultWindowDays', 'defaultHalfLifeDays', 'showDataQuality',
+          'showFairOdds', 'forceAppearance', 'forceModelSettings',
+          'forceFeaturedTeam', 'updatedAt'
+        ])
+        && request.resource.data.keys().hasOnly([
+          'siteTitle', 'announcement', 'featuredTeam', 'primaryColor',
+          'secondaryColor', 'backgroundImageUrl', 'backgroundOverlay',
+          'defaultWindowDays', 'defaultHalfLifeDays', 'showDataQuality',
+          'showFairOdds', 'forceAppearance', 'forceModelSettings',
+          'forceFeaturedTeam', 'updatedAt'
+        ])
+        && request.resource.data.siteTitle is string
+        && request.resource.data.siteTitle.size() > 0
+        && request.resource.data.siteTitle.size() <= 80
+        && request.resource.data.announcement is string
+        && request.resource.data.announcement.size() <= 220
+        && request.resource.data.featuredTeam is string
+        && request.resource.data.featuredTeam.size() > 0
+        && request.resource.data.featuredTeam.size() <= 50
+        && validColor(request.resource.data.primaryColor)
+        && validColor(request.resource.data.secondaryColor)
+        && request.resource.data.backgroundImageUrl is string
+        && request.resource.data.backgroundImageUrl.size() <= 1200
+        && (request.resource.data.backgroundImageUrl == '' || request.resource.data.backgroundImageUrl.matches('^https://.*'))
+        && request.resource.data.backgroundOverlay is number
+        && request.resource.data.backgroundOverlay >= 0.1
+        && request.resource.data.backgroundOverlay <= 0.95
+        && request.resource.data.defaultWindowDays in [365, 540, 730]
+        && request.resource.data.defaultHalfLifeDays in [75, 120, 180]
+        && request.resource.data.showDataQuality is bool
+        && request.resource.data.showFairOdds is bool
+        && request.resource.data.forceAppearance is bool
+        && request.resource.data.forceModelSettings is bool
+        && request.resource.data.forceFeaturedTeam is bool
+        && request.resource.data.updatedAt == request.time;
+    }
+
+    match /public/settings {
+      allow read: if true;
+      allow create, update: if isAdmin() && validSettings();
+      allow delete: if false;
+    }
+
+    match /admins/{uid} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+      allow write: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
