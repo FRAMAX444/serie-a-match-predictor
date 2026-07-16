@@ -45,47 +45,54 @@ function showFallback(badge, image, fallback) {
   badge.classList.add("team-badge--fallback");
 }
 
+function uniqueSources(...groups) {
+  return [...new Set(groups.flat().map((source) => String(source || "").trim()).filter(Boolean))];
+}
+
 function attachCrest(teamElement) {
   const badge = teamElement.querySelector(".team-badge");
   const team = teamElement.querySelector("strong")?.textContent?.trim();
   if (!badge || !team || badge.dataset.crestHydrated === "true") return;
 
-  const candidates = crestCandidates.get(team) || [];
   const existing = badge.querySelector(".team-badge__image");
-  if (existing) {
-    badge.dataset.crestHydrated = "true";
-    return;
-  }
-  if (!candidates.length) return;
+  const sources = uniqueSources(existing?.getAttribute("src"), crestCandidates.get(team) || []);
+  if (!sources.length) return;
 
   badge.dataset.crestHydrated = "true";
   const fallback = badge.querySelector(".team-badge__fallback");
-  let candidateIndex = 0;
-  const image = document.createElement("img");
+  const image = existing || document.createElement("img");
+  let candidateIndex = existing ? 1 : 0;
+
   image.className = "team-badge__image";
   image.alt = `Stemma ${team}`;
   image.loading = "lazy";
   image.decoding = "async";
   image.referrerPolicy = "no-referrer";
-  image.hidden = true;
 
-  const loadCandidate = () => {
-    if (candidateIndex >= candidates.length) {
-      showFallback(badge, image, fallback);
-      return;
-    }
-    image.src = candidates[candidateIndex];
-    candidateIndex += 1;
-  };
-
-  image.addEventListener("load", () => {
+  const showImage = () => {
     image.hidden = false;
     if (fallback) fallback.hidden = true;
     badge.classList.remove("team-badge--fallback");
-  }, { once: true });
+  };
+  const loadCandidate = () => {
+    if (candidateIndex >= sources.length) {
+      showFallback(badge, image, fallback);
+      return;
+    }
+    image.hidden = true;
+    image.src = sources[candidateIndex];
+    candidateIndex += 1;
+  };
+
+  image.addEventListener("load", showImage, { once: true });
   image.addEventListener("error", loadCandidate);
-  badge.prepend(image);
-  loadCandidate();
+  if (!existing) {
+    badge.prepend(image);
+    loadCandidate();
+  } else if (image.complete) {
+    if (image.naturalWidth) showImage();
+    else loadCandidate();
+  }
 }
 
 function hydrateCrests(root = document) {
