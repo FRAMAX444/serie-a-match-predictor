@@ -110,6 +110,15 @@ async function sha256(value) {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
+function safeEqual(left, right) {
+  if (left.length !== right.length) return false;
+  let difference = 0;
+  for (let index = 0; index < left.length; index += 1) {
+    difference |= left.charCodeAt(index) ^ right.charCodeAt(index);
+  }
+  return difference === 0;
+}
+
 async function availableTeams() {
   try {
     const response = await fetch("data/matches.json", { cache: "no-store" });
@@ -148,7 +157,8 @@ $("login-form").addEventListener("submit", async (event) => {
   button.querySelector("span").textContent = "Accesso…";
   try {
     const usernameMatches = $("login-email").value.trim().toLowerCase() === ADMIN_USERNAME.toLowerCase();
-    const passwordMatches = await sha256($("login-password").value) === ADMIN_PASSWORD_SHA256;
+    const suppliedHash = await sha256($("login-password").value);
+    const passwordMatches = safeEqual(suppliedHash, ADMIN_PASSWORD_SHA256);
     if (!usernameMatches || !passwordMatches) {
       setLoginError("Username o password non validi.");
       return;
