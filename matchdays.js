@@ -1,6 +1,7 @@
 const DAY_MS = 86400000;
 const toDate = (value) => new Date(`${String(value).slice(0, 10)}T12:00:00Z`);
 const validRound = (value) => Number.isInteger(Number(value)) && Number(value) > 0;
+const EUROPE_IDS = new Set(["ucl", "uel", "uecl"]);
 
 function normalizeFixture(item, index = 0, competition = {}) {
   const homeTeam = item.home_team ?? item.homeTeam;
@@ -70,27 +71,18 @@ function inferRounds(fixtures) {
 }
 
 export function buildCompetitionCatalog(payload) {
-  if (Array.isArray(payload.competitions) && payload.competitions.length) {
-    return payload.competitions
-      .filter((competition) => competition && Array.isArray(competition.fixtures) && competition.fixtures.length)
-      .map((competition) => ({
-        id: String(competition.id),
-        name: String(competition.name || competition.id),
-        season: String(competition.season || payload.target_season || ""),
-        fixtures: competition.fixtures,
-        defaultRound: Number(competition.default_round) || 1,
-        source: competition.source || "",
-      }));
-  }
-  const legacyFixtures = Array.isArray(payload.fixtures) ? payload.fixtures : [];
-  return legacyFixtures.length ? [{
-    id: "serie-a",
-    name: "Serie A",
-    season: String(payload.target_season || ""),
-    fixtures: legacyFixtures,
-    defaultRound: Number(payload.default_round) || 1,
-    source: payload.sources?.schedule || "",
-  }] : [];
+  if (!Array.isArray(payload.competitions)) return [];
+  return payload.competitions
+    .filter((competition) => competition && EUROPE_IDS.has(String(competition.id))
+      && Array.isArray(competition.fixtures) && competition.fixtures.length)
+    .map((competition) => ({
+      id: String(competition.id),
+      name: String(competition.name || competition.id),
+      season: String(competition.season || payload.target_season || ""),
+      fixtures: competition.fixtures,
+      defaultRound: Number(competition.default_round) || 1,
+      source: competition.source || "",
+    }));
 }
 
 export function buildMatchdays(payload, competitionId = null) {
