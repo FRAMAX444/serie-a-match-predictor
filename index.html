@@ -3,17 +3,19 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="description" content="Pronostici probabilistici di un'intera giornata di Serie A, con Roma in evidenza e distribuzione dei risultati esatti." />
+  <meta name="description" content="Pronostici probabilistici di un'intera giornata di Serie A, con squadra preferita in evidenza e distribuzione dei risultati esatti." />
   <title>Serie A Matchday Predictor</title>
   <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="theme.css" />
 </head>
 <body>
+  <div id="site-announcement" class="site-announcement" hidden></div>
   <header class="hero">
     <div class="hero__inner">
       <div class="hero-copy">
         <p class="eyebrow">SERIE A · MATCHDAY INTELLIGENCE</p>
-        <h1>Una giornata.<br /><span>Dieci pronostici.</span></h1>
-        <p class="lead">Seleziona solo la giornata: il modello calcola tutte le partite con lo stesso cutoff pre-giornata e mostra probabilità, xG e risultati esatti.</p>
+        <h1><span id="site-title-line">Una giornata.</span><br /><span id="site-title-highlight">Dieci pronostici.</span></h1>
+        <p id="site-description" class="lead">Seleziona solo la giornata: il modello calcola tutte le partite con lo stesso cutoff pre-giornata e mostra probabilità, xG e risultati esatti.</p>
       </div>
       <div class="status-row" aria-live="polite">
         <span id="data-status" class="pill">Caricamento dati…</span>
@@ -83,8 +85,8 @@
         <div class="roma-callout">
           <span class="roma-dot"></span>
           <div>
-            <small>Focus Roma</small>
-            <strong id="roma-summary">—</strong>
+            <small id="featured-team-kicker">Focus Roma</small>
+            <strong id="featured-summary">—</strong>
           </div>
         </div>
       </div>
@@ -103,7 +105,10 @@
 
   <footer>
     <p>Dati risultati: Football-Data.co.uk. xG: Understat quando disponibile; altrimenti proxy trasparente da tiri e tiri in porta.</p>
-    <a href="https://github.com/FRAMAX444/serie-a-match-predictor" rel="noreferrer">Codice sorgente</a>
+    <div class="footer-links">
+      <a href="admin.html" rel="nofollow">Area admin</a>
+      <a href="https://github.com/FRAMAX444/serie-a-match-predictor" rel="noreferrer">Codice sorgente</a>
+    </div>
   </footer>
 
   <script type="module" src="app.js"></script>
