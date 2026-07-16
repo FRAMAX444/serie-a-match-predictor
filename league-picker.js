@@ -86,7 +86,7 @@ function competitionCard(competition) {
   const title = document.createElement("strong");
   title.textContent = competition.name;
   const meta = document.createElement("small");
-  meta.textContent = competition.country || "Campionato";
+  meta.textContent = competition.type === "europe" ? "Coppa europea" : competition.country || "Campionato";
   copy.append(title, meta);
   card.append(copy);
 
@@ -99,12 +99,31 @@ function competitionCard(competition) {
   return card;
 }
 
+function competitionGroup(title, items) {
+  const section = document.createElement("section");
+  section.className = "competition-group";
+  const heading = document.createElement("h2");
+  heading.className = "competition-group__title";
+  heading.textContent = title;
+  const grid = document.createElement("div");
+  grid.className = "competition-group__grid";
+  grid.setAttribute("role", "list");
+  grid.replaceChildren(...items.map(competitionCard));
+  section.append(heading, grid);
+  return section;
+}
+
 function renderPicker() {
   const grid = $("league-picker-grid");
   if (!grid || !competitions.length) return;
   competitions = rankCompetitions(competitions, getFavoriteTeam(""));
-  grid.replaceChildren(...competitions.map(competitionCard));
-  $("league-picker-description").textContent = `${competitions.length} campionati disponibili`;
+  const european = competitions.filter((competition) => competition.type === "europe");
+  const domestic = competitions.filter((competition) => competition.type !== "europe");
+  grid.replaceChildren(
+    ...(european.length ? [competitionGroup("Coppe europee", european)] : []),
+    ...(domestic.length ? [competitionGroup("Campionati", domestic)] : []),
+  );
+  $("league-picker-description").textContent = `${competitions.length} competizioni disponibili`;
 }
 
 async function init() {
@@ -117,7 +136,7 @@ async function init() {
     competitions = buildCompetitionCatalog(payload);
     renderPicker();
   } catch {
-    $("league-picker-description").textContent = "Campionati non disponibili.";
+    $("league-picker-description").textContent = "Competizioni non disponibili.";
   }
 }
 
