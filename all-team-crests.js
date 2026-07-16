@@ -1,27 +1,39 @@
 const ROMA_LATEST_LOGO = "https://upload.wikimedia.org/wikipedia/fr/thumb/b/b7/Logo_AS_Roma_2026.svg/240px-Logo_AS_Roma_2026.svg.png";
 const crestCandidates = new Map();
 
-function addCandidate(team, url, prioritize = false) {
-  const name = String(team || "").trim();
-  const source = String(url || "").trim();
-  if (!name || !source) return;
+function teamKey(team) {
+  return String(team || "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLocaleLowerCase("it")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
 
-  const candidates = crestCandidates.get(name) || [];
+function addCandidate(team, url, prioritize = false) {
+  const key = teamKey(team);
+  const source = String(url || "").trim();
+  if (!key || !source) return;
+
+  const candidates = crestCandidates.get(key) || [];
   if (candidates.includes(source)) return;
   if (prioritize) candidates.unshift(source);
   else candidates.push(source);
-  crestCandidates.set(name, candidates);
+  crestCandidates.set(key, candidates);
 }
 
-function providerLogo(fixture, side) {
+function providerLogos(fixture, side) {
   const teamId = String(fixture?.[`${side}_team_id`] || "").trim();
-  if (!teamId) return "";
+  if (!teamId) return [];
 
   const source = String(fixture?.source || "").toLowerCase();
-  if (source.includes("uefa")) {
-    return `https://img.uefa.com/imgml/TP/teams/logos/240x240/${encodeURIComponent(teamId)}.png`;
-  }
-  return `https://a.espncdn.com/i/teamlogos/soccer/500/${encodeURIComponent(teamId)}.png`;
+  const competitionType = String(fixture?.competition_type || "").toLowerCase();
+  const espn = `https://a.espncdn.com/i/teamlogos/soccer/500/${encodeURIComponent(teamId)}.png`;
+  const uefa = `https://img.uefa.com/imgml/TP/teams/logos/240x240/${encodeURIComponent(teamId)}.png`;
+
+  if (source.includes("uefa") || competitionType === "europe") return [uefa];
+  if (source.includes("espn") || competitionType === "domestic") return [espn];
+  return [espn, uefa];
 }
 
 function buildCrestCatalog(data) {
@@ -30,10 +42,16 @@ function buildCrestCatalog(data) {
 
   for (const competition of data?.competitions || []) {
     for (const fixture of competition?.fixtures || []) {
+      const enrichedFixture = {
+        ...fixture,
+        competition_type: fixture?.competition_type || competition?.type,
+        source: fixture?.source || competition?.source,
+      };
+
       for (const side of ["home", "away"]) {
-        const team = fixture?.[`${side}_team`];
-        addCandidate(team, fixture?.[`${side}_team_logo`], true);
-        addCandidate(team, providerLogo(fixture, side));
+        const team = enrichedFixture?.[`${side}_team`];
+        addCandidate(team, enrichedFixture?.[`${side}_team_logo`], true);
+        providerLogos(enrichedFixture, side).forEach((url) => addCandidate(team, url));
       }
     }
   }
@@ -45,29 +63,37 @@ function showFallback(badge, image, fallback) {
   badge.classList.add("team-badge--fallback");
 }
 
+function showCrest(badge, image, fallback) {
+  image.hidden = false;
+  if (fallback) fallback.hidden = true;
+  badge.classList.remove("team-badge--fallback");
+}
+
 function attachCrest(teamElement) {
   const badge = teamElement.querySelector(".team-badge");
   const team = teamElement.querySelector("strong")?.textContent?.trim();
   if (!badge || !team || badge.dataset.crestHydrated === "true") return;
 
-  const candidates = crestCandidates.get(team) || [];
-  const existing = badge.querySelector(".team-badge__image");
-  if (existing) {
-    badge.dataset.crestHydrated = "true";
-    return;
-  }
+  const catalogCandidates = crestCandidates.get(teamKey(team)) || [];
+  let image = badge.querySelector(".team-badge__image");
+  const existingSource = String(image?.getAttribute("src") || "").trim();
+  const candidates = [...new Set([existingSource, ...catalogCandidates].filter(Boolean))];
   if (!candidates.length) return;
 
   badge.dataset.crestHydrated = "true";
   const fallback = badge.querySelector(".team-badge__fallback");
-  let candidateIndex = 0;
-  const image = document.createElement("img");
-  image.className = "team-badge__image";
-  image.alt = `Stemma ${team}`;
-  image.loading = "lazy";
-  image.decoding = "async";
-  image.referrerPolicy = "no-referrer";
-  image.hidden = true;
+  let candidateIndex = existingSource ? 1 : 0;
+
+  if (!image) {
+    image = document.createElement("img");
+    image.className = "team-badge__image";
+    image.alt = `Stemma ${team}`;
+    image.loading = "lazy";
+    image.decoding = "async";
+    image.referrerPolicy = "no-referrer";
+    image.hidden = true;
+    badge.prepend(image);
+  }
 
   const loadCandidate = () => {
     if (candidateIndex >= candidates.length) {
@@ -78,14 +104,15 @@ function attachCrest(teamElement) {
     candidateIndex += 1;
   };
 
-  image.addEventListener("load", () => {
-    image.hidden = false;
-    if (fallback) fallback.hidden = true;
-    badge.classList.remove("team-badge--fallback");
-  }, { once: true });
+  image.addEventListener("load", () => showCrest(badge, image, fallback), { once: true });
   image.addEventListener("error", loadCandidate);
-  badge.prepend(image);
-  loadCandidate();
+
+  if (!existingSource) {
+    loadCandidate();
+  } else if (image.complete) {
+    if (image.naturalWidth) showCrest(badge, image, fallback);
+    else loadCandidate();
+  }
 }
 
 function hydrateCrests(root = document) {
