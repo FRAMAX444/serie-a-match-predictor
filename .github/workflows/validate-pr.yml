@@ -1,0 +1,27 @@
+name: Validate pull request
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Validate application
+        run: |
+          python -m py_compile scripts/update_europe_data.py
+          npm test
+          npm run check
+      - name: Smoke-test public data sources
+        continue-on-error: true
+        run: python scripts/update_europe_data.py --target-season "2627" --history-seasons 3 --skip-understat
