@@ -3,6 +3,8 @@
 
 This post-processing step is intentionally best-effort. The core match dataset remains
 usable when ESPN metadata or individual match summaries are temporarily unavailable.
+Player context is accumulated across scheduled runs so leagues with many clubs can be
+covered without sending an excessive number of requests in a single execution.
 """
 from __future__ import annotations
 
@@ -37,11 +39,10 @@ def league_metadata(descriptor: dict[str, object], start_year: int) -> dict[str,
     slug = str(descriptor.get("espn") or "")
     if not slug:
         return {}
-    url = (
-        f"https://site.api.espn.com/apis/site/v2/sports/soccer/{slug}/scoreboard"
-        f"?dates={start_year}&limit=5"
+    payload = base.fetch_json(
+        f"https://site.api.espn.com/apis/site/v2/sports/soccer/{slug}/scoreboard?dates={start_year}&limit=5",
+        timeout=18,
     )
-    payload = base.fetch_json(url, timeout=18)
     if not isinstance(payload, dict):
         return {}
     leagues = payload.get("leagues")
@@ -61,7 +62,11 @@ def league_metadata(descriptor: dict[str, object], start_year: int) -> dict[str,
     }
 
 
-def add_competition_metadata(item: dict[str, object], descriptor: dict[str, object], metadata: dict[str, str]) -> dict[str, object]:
+def add_competition_metadata(
+    item: dict[str, object],
+    descriptor: dict[str, object],
+    metadata: dict[str, str],
+) -> dict[str, object]:
     result = dict(item)
     competition_id = str(result.get("id") or descriptor.get("id") or "")
     result["type"] = "europe" if competition_id in {"ucl", "uel", "uecl"} else "domestic"
@@ -171,11 +176,23 @@ def choose_summary_events(
     events: Iterable[tuple[str, dict[str, object]]],
     max_events: int,
     samples_per_team: int = 2,
+    priority_teams: set[str] | None = None,
 ) -> list[tuple[str, dict[str, object]]]:
     needs: defaultdict[str, int] = defaultdict(int)
     chosen: list[tuple[str, dict[str, object]]] = []
     seen: set[str] = set()
-    ordered = sorted(events, key=lambda pair: str(pair[1].get("date") or ""), reverse=True)
+    priority = priority_teams or set()
+    ordered = sorted(
+        events,
+        key=lambda pair: (
+            int(
+                str(pair[1].get("home_team") or "") in priority
+                or str(pair[1].get("away_team") or "") in priority
+            ),
+            str(pair[1].get("date") or ""),
+        ),
+        reverse=True,
+    )
     for slug, event in ordered:
         event_id = str(event.get("id") or "")
         if not event_id or event_id in seen:
@@ -196,10 +213,11 @@ def choose_summary_events(
 def fetch_player_samples(
     events: Iterable[tuple[str, dict[str, object]]],
     max_events: int,
+    priority_teams: set[str] | None = None,
 ) -> tuple[dict[str, dict[str, dict[str, object]]], dict[str, int]]:
     aggregates: dict[str, dict[str, dict[str, object]]] = defaultdict(dict)
     team_samples: defaultdict[str, int] = defaultdict(int)
-    for slug, event in choose_summary_events(events, max_events):
+    for slug, event in choose_summary_events(events, max_events, priority_teams=priority_teams):
         event_id = str(event["id"])
         try:
             summary = base.fetch_json(
@@ -273,7 +291,10 @@ def probable_lineup(players: list[dict[str, object]]) -> list[dict[str, object]]
     goalkeepers = [player for player in ordered if player.get("position") == "GK"]
     selected = goalkeepers[:1]
     selected_ids = {str(player["id"]) for player in selected}
-    selected.extend(player for player in ordered if str(player["id"]) not in selected_ids and len(selected) < 11)
+    selected.extend(
+        player for player in ordered
+        if str(player["id"]) not in selected_ids and len(selected) < 11
+    )
     return [rounded_player(player) for player in selected[:11]]
 
 
@@ -379,12 +400,25 @@ def apply_player_context(
         context["source"] = f"{context.get('source') or 'Contesto squadra'} + formazioni ESPN"
 
 
+def read_previous_context(path: str | None) -> dict[str, dict[str, object]]:
+    if not path:
+        return {}
+    try:
+        previous = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        print(f"Cache giocatori precedente non leggibile: {error}", file=sys.stderr)
+        return {}
+    context = previous.get("player_context") if isinstance(previous, dict) else None
+    return context if isinstance(context, dict) else {}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--target-season", default=os.environ.get("TARGET_SEASON"))
     parser.add_argument("--history-seasons", type=int, default=3)
     parser.add_argument("--max-summary-events", type=int, default=80)
     parser.add_argument("--skip-player-data", action="store_true")
+    parser.add_argument("--previous-data")
     args = parser.parse_args()
 
     payload = json.loads(OUTPUT.read_text(encoding="utf-8"))
@@ -434,8 +468,9 @@ def main() -> None:
                 rows = []
             if start == target_start:
                 current = rows
-            espn_history.extend(completed(rows))
-            summary_candidates.extend((str(descriptor["espn"]), item) for item in completed(rows))
+            finished = completed(rows)
+            espn_history.extend(finished)
+            summary_candidates.extend((str(descriptor["espn"]), item) for item in finished)
         if not current:
             continue
         if competition_id not in metadata_cache:
@@ -464,12 +499,21 @@ def main() -> None:
     elo, elo_as_of, counts = base.compute_elo(matches)
     team_context = base.build_team_context(teams, elo, counts, elo_as_of, base.load_overrides())
 
-    player_context = payload.get("player_context") if isinstance(payload.get("player_context"), dict) else {}
+    current_context = payload.get("player_context") if isinstance(payload.get("player_context"), dict) else {}
+    player_context = {**read_previous_context(args.previous_data), **current_context}
+    player_context = {
+        team: item for team, item in player_context.items()
+        if team in teams and isinstance(item, dict)
+    }
     if not args.skip_player_data:
-        aggregates, team_samples = fetch_player_samples(summary_candidates, max(0, args.max_summary_events))
-        fresh_player_context = build_player_context(aggregates, team_samples)
-        if fresh_player_context:
-            player_context = fresh_player_context
+        missing_teams = set(teams) - set(player_context)
+        priority_teams = missing_teams or set(teams)
+        aggregates, team_samples = fetch_player_samples(
+            summary_candidates,
+            max(0, args.max_summary_events),
+            priority_teams=priority_teams,
+        )
+        player_context.update(build_player_context(aggregates, team_samples))
     apply_player_context(team_context, player_context)
 
     ordered_competitions = sorted(
@@ -497,10 +541,11 @@ def main() -> None:
             for item in player_context.values()
             if isinstance(item, dict)
         )
+        coverage["player_context_missing_teams"] = sorted(set(teams) - set(player_context))
     sources = payload.setdefault("sources", {})
     if isinstance(sources, dict):
         sources["competition_logos"] = "ESPN public league metadata; initials fallback in the UI"
-        sources["players_lineups"] = "ESPN public match summaries; recent-start inference, best effort"
+        sources["players_lineups"] = "ESPN public match summaries; incremental recent-start inference, best effort"
 
     OUTPUT.write_text(
         json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
