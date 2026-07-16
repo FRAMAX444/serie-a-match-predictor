@@ -28,6 +28,7 @@ function normalizeFixture(item, index = 0, competition = {}) {
     id: item.id ?? `${competition.id ?? item.competition_id ?? "competition"}-${item.season ?? "season"}-${item.round ?? "r"}-${index}`,
     competition_id: item.competition_id ?? competition.id ?? "",
     competition_name: item.competition_name ?? competition.name ?? "",
+    competition_type: item.competition_type ?? competition.type ?? "",
     season: String(item.season ?? competition.season ?? ""),
     round: validRound(item.round) ? Number(item.round) : null,
     round_label: String(item.round_label ?? "").trim(),
@@ -35,6 +36,11 @@ function normalizeFixture(item, index = 0, competition = {}) {
     kickoff: item.kickoff ?? null,
     home_team: homeTeam,
     away_team: awayTeam,
+    home_team_id: item.home_team_id ?? null,
+    away_team_id: item.away_team_id ?? null,
+    home_team_logo: item.home_team_logo ?? null,
+    away_team_logo: item.away_team_logo ?? null,
+    source: item.source ?? competition.source ?? "",
     completed: Boolean(item.completed ?? (item.home_goals !== null && item.home_goals !== undefined)),
     home_goals: item.home_goals ?? null,
     away_goals: item.away_goals ?? null,
@@ -91,15 +97,16 @@ function inferRounds(fixtures) {
 export function buildCompetitionCatalog(payload) {
   if (!Array.isArray(payload.competitions)) return [];
   return payload.competitions
-    .filter((competition) => competition && COMPETITION_BY_ID.has(String(competition.id))
-      && Array.isArray(competition.fixtures) && competition.fixtures.length)
+    .filter((competition) => competition && COMPETITION_BY_ID.has(String(competition.id)))
     .map((competition) => {
       const supported = COMPETITION_BY_ID.get(String(competition.id));
+      const fixtures = Array.isArray(competition.fixtures) ? competition.fixtures : [];
       return {
         id: supported.id,
         name: supported.name,
         season: String(competition.season || payload.target_season || ""),
-        fixtures: competition.fixtures,
+        fixtures,
+        available: fixtures.length > 0,
         defaultRound: Number(competition.default_round) || 1,
         source: competition.source || "",
         type: supported.type,
@@ -116,6 +123,7 @@ export function buildMatchdays(payload, competitionId = null) {
   const catalog = buildCompetitionCatalog(payload);
   const selected = catalog.find((competition) => competition.id === competitionId)
     || catalog.find((competition) => competition.id === payload.default_competition)
+    || catalog.find((competition) => competition.available)
     || catalog[0];
   if (!selected) return { competition: null, season: "", teams: [], matchdays: [], defaultRound: 1, inferred: false };
   const fixtures = selected.fixtures
