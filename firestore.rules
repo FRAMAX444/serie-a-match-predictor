@@ -1,0 +1,72 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isAdmin() {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+        && get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.enabled == true;
+    }
+
+    function hasValidColor(value) {
+      return value is string && value.matches('^#[0-9a-fA-F]{6}$');
+    }
+
+    function validSettings() {
+      return request.resource.data.keys().hasAll([
+          'siteTitle', 'heroTitle', 'heroHighlight', 'heroDescription',
+          'announcement', 'featuredTeam', 'accentColor', 'accentDarkColor',
+          'goldColor', 'pageBackgroundColor', 'heroStartColor',
+          'heroMiddleColor', 'heroEndColor', 'backgroundImageUrl',
+          'backgroundOverlay', 'defaultWindowDays', 'defaultHalfLifeDays',
+          'showDataQuality', 'showFairOdds', 'updatedAt'
+        ])
+        && request.resource.data.keys().hasOnly([
+          'siteTitle', 'heroTitle', 'heroHighlight', 'heroDescription',
+          'announcement', 'featuredTeam', 'accentColor', 'accentDarkColor',
+          'goldColor', 'pageBackgroundColor', 'heroStartColor',
+          'heroMiddleColor', 'heroEndColor', 'backgroundImageUrl',
+          'backgroundOverlay', 'defaultWindowDays', 'defaultHalfLifeDays',
+          'showDataQuality', 'showFairOdds', 'updatedAt'
+        ])
+        && request.resource.data.siteTitle is string && request.resource.data.siteTitle.size() <= 80
+        && request.resource.data.heroTitle is string && request.resource.data.heroTitle.size() <= 80
+        && request.resource.data.heroHighlight is string && request.resource.data.heroHighlight.size() <= 80
+        && request.resource.data.heroDescription is string && request.resource.data.heroDescription.size() <= 260
+        && request.resource.data.announcement is string && request.resource.data.announcement.size() <= 220
+        && request.resource.data.featuredTeam is string && request.resource.data.featuredTeam.size() <= 50
+        && hasValidColor(request.resource.data.accentColor)
+        && hasValidColor(request.resource.data.accentDarkColor)
+        && hasValidColor(request.resource.data.goldColor)
+        && hasValidColor(request.resource.data.pageBackgroundColor)
+        && hasValidColor(request.resource.data.heroStartColor)
+        && hasValidColor(request.resource.data.heroMiddleColor)
+        && hasValidColor(request.resource.data.heroEndColor)
+        && request.resource.data.backgroundImageUrl is string
+        && request.resource.data.backgroundImageUrl.size() <= 1200
+        && (request.resource.data.backgroundImageUrl == '' || request.resource.data.backgroundImageUrl.matches('^https://.*'))
+        && request.resource.data.backgroundOverlay is number
+        && request.resource.data.backgroundOverlay >= 0.1
+        && request.resource.data.backgroundOverlay <= 0.95
+        && request.resource.data.defaultWindowDays in [365, 540, 730]
+        && request.resource.data.defaultHalfLifeDays in [75, 120, 180]
+        && request.resource.data.showDataQuality is bool
+        && request.resource.data.showFairOdds is bool
+        && request.resource.data.updatedAt == request.time;
+    }
+
+    match /public/settings {
+      allow read: if true;
+      allow create, update: if isAdmin() && validSettings();
+      allow delete: if false;
+    }
+
+    match /admins/{uid} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+      allow write: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
