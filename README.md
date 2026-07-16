@@ -65,7 +65,7 @@ Tutte le partite dello stesso turno condividono il medesimo cutoff precedente al
 
 ## Admin locale
 
-`admin.html` usa un controllo locale con username e password. La password viene confrontata tramite un hash SHA-256 incorporato nel JavaScript e non è salvata in chiaro.
+`admin.html` usa un controllo locale con un solo username autorizzato e una password verificata tramite hash SHA-256. La password non è presente in chiaro nel JavaScript.
 
 Questo controllo non costituisce sicurezza reale: il progetto è una web app statica pubblica e chiunque possa leggere o modificare il codice nel browser può aggirarlo. Non usare il pannello per proteggere segreti o dati sensibili.
 
