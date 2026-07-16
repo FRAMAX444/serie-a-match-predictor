@@ -5,6 +5,9 @@ const $ = (id) => document.getElementById(id);
 const percent = (value) => `${(100 * value).toFixed(1)}%`;
 const number = (value, digits = 2) => Number(value).toFixed(digits);
 const fairOdds = (value) => value > 0 ? number(1 / value, 2) : "—";
+const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
+  "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;",
+}[character]));
 const formatDate = (value) => new Intl.DateTimeFormat("it-IT", {
   weekday: "short",
   day: "numeric",
@@ -45,9 +48,9 @@ function populateMatchdays() {
   const validRound = calendar.matchdays.some((matchday) => matchday.round === requested);
   select.value = String(validRound ? requested : calendar.defaultRound);
   $("season-label").textContent = `Stagione ${calendar.season.slice(0, 2)}/${calendar.season.slice(2)}`;
-  $("schedule-status").textContent = calendar.inferred
-    ? "Giornate ricostruite dal calendario disponibile"
-    : "Calendario ufficiale importato nel dataset";
+  $("schedule-status").textContent = payload.sources?.schedule
+    ? `Calendario: ${payload.sources.schedule}`
+    : (calendar.inferred ? "Giornate ricostruite dal calendario disponibile" : "Calendario importato nel dataset");
   syncSelectedMatchday();
 }
 
@@ -67,6 +70,7 @@ function predictionOptions() {
   return {
     windowDays: Number($("window-days").value),
     halfLifeDays: Number($("half-life").value),
+    teamContext: payload.team_context || {},
   };
 }
 
@@ -85,6 +89,16 @@ function comparisonRow(home, label, away, formatter = (value) => number(value, 2
   return `<div class="comparison-row"><strong>${formatter(home)}</strong><span>${label}</span><strong>${formatter(away)}</strong></div>`;
 }
 
+function playerSummary(context) {
+  if (!context?.used) return "contesto rosa non disponibile";
+  const top = context.topPlayers.map((item) => escapeHtml(item.name || item)).slice(0, 3);
+  const newcomers = context.newPlayers.map((item) => escapeHtml(item.name || item)).slice(0, 3);
+  const parts = [];
+  if (top.length) parts.push(`giocatori chiave: ${top.join(", ")}`);
+  if (newcomers.length) parts.push(`nuovi rilevati: ${newcomers.join(", ")}`);
+  return parts.join("; ") || "rosa aggregata disponibile";
+}
+
 function renderFixtureCard(item, index) {
   const { fixture, result } = item;
   const p = result.probabilities;
@@ -97,7 +111,11 @@ function renderFixtureCard(item, index) {
     comparisonRow(result.home.xgAgainst5, "xGA ultime 5", result.away.xgAgainst5),
     comparisonRow(result.home.sot5, "Tiri in porta", result.away.sot5),
     comparisonRow(result.home.possession5, "Possesso", result.away.possession5, (value) => `${number(value, 1)}%`),
-    comparisonRow(result.home.elo, "Rating Elo", result.away.elo, (value) => number(value, 0)),
+    comparisonRow(result.home.elo, "Elo combinato", result.away.elo, (value) => number(value, 0)),
+    comparisonRow(result.home.marketPpg5, "Forza quote storiche", result.away.marketPpg5),
+    comparisonRow(result.homeContext.squadAttack, "Forza offensiva rosa", result.awayContext.squadAttack),
+    comparisonRow(result.homeContext.squadCreativity, "Creatività rosa", result.awayContext.squadCreativity),
+    comparisonRow(result.homeContext.squadContinuity, "Continuità rosa", result.awayContext.squadContinuity, percent),
   ].join("");
   return `
     <article class="fixture-card ${romaMatch ? "fixture-card--roma" : ""}">
@@ -110,7 +128,7 @@ function renderFixtureCard(item, index) {
         <div class="fixture-main">
           <div class="team team--home ${fixture.home_team === "Roma" ? "team--roma" : ""}">
             <span class="team-badge">${teamInitials(fixture.home_team)}</span>
-            <strong>${fixture.home_team}</strong>
+            <strong>${escapeHtml(fixture.home_team)}</strong>
           </div>
           <div class="predicted-score">
             <span>Pronostico</span>
@@ -118,7 +136,7 @@ function renderFixtureCard(item, index) {
             <small>${percent(top.probability)}</small>
           </div>
           <div class="team team--away ${fixture.away_team === "Roma" ? "team--roma" : ""}">
-            <strong>${fixture.away_team}</strong>
+            <strong>${escapeHtml(fixture.away_team)}</strong>
             <span class="team-badge">${teamInitials(fixture.away_team)}</span>
           </div>
         </div>
@@ -128,7 +146,7 @@ function renderFixtureCard(item, index) {
           <span><b>2</b>${percent(p.awayWin)}</span>
         </div>
         <div class="fixture-footer">
-          <span class="outcome ${outcomeClass(result.mostLikelyOutcome.key)}">Esito: ${result.mostLikelyOutcome.key} · ${result.mostLikelyOutcome.name}</span>
+          <span class="outcome ${outcomeClass(result.mostLikelyOutcome.key)}">Esito: ${result.mostLikelyOutcome.key} · ${escapeHtml(result.mostLikelyOutcome.name)}</span>
           <span class="expand-label">Risultati esatti e dettagli <i>⌄</i></span>
         </div>
       </button>
@@ -143,8 +161,8 @@ function renderFixtureCard(item, index) {
         <div class="detail-column">
           <div class="detail-heading"><div><p class="kicker">MODELLO</p><h3>Indicatori chiave</h3></div></div>
           <div class="metric-grid">
-            <div><span>xG ${fixture.home_team}</span><strong>${number(result.lambdaHome)}</strong></div>
-            <div><span>xG ${fixture.away_team}</span><strong>${number(result.lambdaAway)}</strong></div>
+            <div><span>xG ${escapeHtml(fixture.home_team)}</span><strong>${number(result.lambdaHome)}</strong></div>
+            <div><span>xG ${escapeHtml(fixture.away_team)}</span><strong>${number(result.lambdaAway)}</strong></div>
             <div><span>Over 2.5</span><strong>${percent(p.over25)}</strong></div>
             <div><span>Goal / BTTS</span><strong>${percent(p.bothScore)}</strong></div>
             <div><span>Quota teorica 1</span><strong>${fairOdds(p.homeWin)}</strong></div>
@@ -152,9 +170,9 @@ function renderFixtureCard(item, index) {
           </div>
         </div>
         <div class="detail-column detail-column--wide">
-          <div class="detail-heading"><div><p class="kicker">CONFRONTO</p><h3>Forma e forza pre-partita</h3></div></div>
+          <div class="detail-heading"><div><p class="kicker">CONFRONTO</p><h3>Forma, Elo e rosa pre-partita</h3></div></div>
           <div class="comparison-table">${comparison}</div>
-          <p class="model-note">Riposo: ${result.home.restDays} giorni ${fixture.home_team}, ${result.away.restDays} giorni ${fixture.away_team}. Modello allenato su ${result.trainingMatches} partite (${result.firstTrainingDate} → ${result.lastTrainingDate}). Correzione Dixon–Coles applicata ai punteggi bassi.</p>
+          <p class="model-note">Riposo: ${result.home.restDays} giorni ${escapeHtml(fixture.home_team)}, ${result.away.restDays} giorni ${escapeHtml(fixture.away_team)}. ${escapeHtml(fixture.home_team)} — ${playerSummary(result.homeContext)}. ${escapeHtml(fixture.away_team)} — ${playerSummary(result.awayContext)}. Modello ${result.modelVersion}, allenato su ${result.trainingMatches} partite (${result.firstTrainingDate} → ${result.lastTrainingDate}); contesto online usato solo se antecedente al cutoff.</p>
         </div>
       </div>
     </article>
@@ -170,7 +188,7 @@ function renderMatchday(matchday, batch) {
     ? `Roma: ${romaPrediction.fixture.home_team}–${romaPrediction.fixture.away_team}, risultato più probabile ${romaPrediction.result.probabilities.scores[0].home}–${romaPrediction.result.probabilities.scores[0].away}`
     : "La Roma non gioca in questa giornata.";
   $("fixtures-grid").innerHTML = batch.predictions.map(renderFixtureCard).join("");
-  $("method-note").textContent = `Tutte le ${batch.predictions.length} previsioni usano dati antecedenti al ${batch.cutoffDate}: nessuna gara della stessa giornata entra nell'allenamento delle altre. Le probabilità sono stime statistiche, non risultati garantiti.`;
+  $("method-note").textContent = `Tutte le ${batch.predictions.length} previsioni usano dati antecedenti al ${batch.cutoffDate}. Risultati, Elo e rosa vengono aggiornati automaticamente durante la stagione; nessuna gara della stessa giornata entra nell'allenamento delle altre.`;
   const url = new URL(window.location.href);
   url.searchParams.set("round", String(matchday.round));
   history.replaceState({}, "", url);
@@ -188,7 +206,7 @@ async function runMatchdayPrediction() {
     return;
   }
   button.disabled = true;
-  button.querySelector("span").textContent = "Calcolo delle 10 partite…";
+  button.querySelector("span").textContent = `Calcolo delle ${matchday.fixtures.length} partite…`;
   await new Promise((resolve) => setTimeout(resolve, 30));
   try {
     const batch = predictMatchdayFromMatches(payload.matches, matchday.fixtures, predictionOptions());
@@ -218,11 +236,14 @@ async function init() {
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     payload = unpackMatches(await response.json());
     calendar = buildMatchdays(payload);
-    if (!calendar.matchdays.length) throw new Error("Calendario non disponibile nel dataset.");
+    if (!calendar.matchdays.length) throw new Error(`Calendario ${calendar.season || "target"} non ancora disponibile nel dataset.`);
     populateMatchdays();
-    $("data-status").textContent = `${payload.matches.length} partite storiche · aggiornato ${payload.generated_at.slice(0, 10)}`;
+    const contextCount = Object.values(payload.team_context || {}).filter((item) => item.reliability > 0).length;
+    $("data-status").textContent = `${payload.matches.length} partite storiche · ${contextCount} rose contestualizzate · aggiornato ${payload.generated_at.slice(0, 10)}`;
     const actualXg = payload.coverage?.xg_actual_matches || 0;
-    $("coverage-status").textContent = actualXg ? `xG reali: ${actualXg} gare` : "xG proxy da tiri e tiri in porta";
+    $("coverage-status").textContent = actualXg
+      ? `xG reali: ${actualXg} gare · Elo dinamico + rosa giocatori`
+      : "xG proxy · Elo dinamico + rosa giocatori";
   } catch (error) {
     $("data-status").textContent = "Dati non disponibili";
     $("error-message").textContent = `Impossibile caricare il dataset: ${error.message}`;

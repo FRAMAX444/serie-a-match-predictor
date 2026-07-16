@@ -80,6 +80,23 @@ function possessionValues(match) {
   return { home, away: 100 - home, actual: false };
 }
 
+function marketExpectedPoints(match) {
+  const homeOdds = safe(match.home_odds, NaN);
+  const drawOdds = safe(match.draw_odds, NaN);
+  const awayOdds = safe(match.away_odds, NaN);
+  if (![homeOdds, drawOdds, awayOdds].every((value) => Number.isFinite(value) && value > 1)) {
+    return { home: 1.35, away: 1.35, actual: false };
+  }
+  const rawHome = 1 / homeOdds;
+  const rawDraw = 1 / drawOdds;
+  const rawAway = 1 / awayOdds;
+  const total = rawHome + rawDraw + rawAway;
+  const home = rawHome / total;
+  const draw = rawDraw / total;
+  const away = rawAway / total;
+  return { home: 3 * home + draw, away: 3 * away + draw, actual: true };
+}
+
 function emptyState() {
   return { elo: 1475, matches: [], homeMatches: [], awayMatches: [], lastDate: null };
 }
@@ -112,6 +129,7 @@ function applyMatch(states, match) {
   const homeXg = xgValue(match, "home");
   const awayXg = xgValue(match, "away");
   const possession = possessionValues(match);
+  const market = marketExpectedPoints(match);
   const homeRecord = {
     date: match.date,
     points: homePoints,
@@ -127,6 +145,8 @@ function applyMatch(states, match) {
     yellow: safe(match.home_yellow, 2.3),
     red: safe(match.home_red, 0.08),
     xgActual: homeXg.actual,
+    marketExpectedPoints: market.home,
+    marketActual: market.actual,
   };
   const awayRecord = {
     date: match.date,
@@ -143,15 +163,17 @@ function applyMatch(states, match) {
     yellow: safe(match.away_yellow, 2.3),
     red: safe(match.away_red, 0.08),
     xgActual: awayXg.actual,
+    marketExpectedPoints: market.away,
+    marketActual: market.actual,
   };
   homeState.matches.push(homeRecord);
   homeState.homeMatches.push(homeRecord);
   awayState.matches.push(awayRecord);
   awayState.awayMatches.push(awayRecord);
-  homeState.matches = homeState.matches.slice(-24);
-  homeState.homeMatches = homeState.homeMatches.slice(-14);
-  awayState.matches = awayState.matches.slice(-24);
-  awayState.awayMatches = awayState.awayMatches.slice(-14);
+  homeState.matches = homeState.matches.slice(-28);
+  homeState.homeMatches = homeState.homeMatches.slice(-16);
+  awayState.matches = awayState.matches.slice(-28);
+  awayState.awayMatches = awayState.awayMatches.slice(-16);
 
   const expectedHome = 1 / (1 + Math.pow(10, (awayState.elo - (homeState.elo + 58)) / 400));
   const actualHome = homeGoals > awayGoals ? 1 : homeGoals === awayGoals ? 0.5 : 0;
@@ -163,7 +185,60 @@ function applyMatch(states, match) {
   awayState.lastDate = match.date;
 }
 
-function stateMetrics(state, venue, predictionDate) {
+function neutralContext(team) {
+  return {
+    team,
+    used: false,
+    asOf: null,
+    reliability: 0,
+    externalElo: null,
+    squadAttack: 1,
+    squadCreativity: 1,
+    squadContinuity: 0.85,
+    newcomerImpact: 0,
+    departureImpact: 0,
+    availabilityAttack: 1,
+    availabilityDefense: 1,
+    lineupStrength: 1,
+    promotionAttack: 1,
+    promotionDefense: 1,
+    managerChangeDays: null,
+    topPlayers: [],
+    newPlayers: [],
+    source: "Nessun contesto rosa disponibile",
+  };
+}
+
+function teamContextFor(contextMap, team, cutoffDate) {
+  const raw = contextMap?.[team];
+  if (!raw) return neutralContext(team);
+  const asOf = String(raw.as_of || raw.updated_at || "").slice(0, 10);
+  if (asOf && dateAtNoon(asOf) > cutoffDate) return neutralContext(team);
+  const reliability = clamp(safe(raw.reliability ?? raw.player_data_reliability, 0), 0, 1);
+  return {
+    team,
+    used: true,
+    asOf: asOf || null,
+    reliability,
+    externalElo: Number.isFinite(safe(raw.elo, NaN)) ? safe(raw.elo) : null,
+    squadAttack: clamp(safe(raw.squad_attack, 1), 0.72, 1.30),
+    squadCreativity: clamp(safe(raw.squad_creativity, 1), 0.72, 1.30),
+    squadContinuity: clamp(safe(raw.squad_continuity, 0.85), 0.35, 1),
+    newcomerImpact: clamp(safe(raw.newcomer_impact, 0), -0.25, 0.35),
+    departureImpact: clamp(safe(raw.departure_impact, 0), 0, 0.40),
+    availabilityAttack: clamp(safe(raw.availability_attack, 1), 0.70, 1.08),
+    availabilityDefense: clamp(safe(raw.availability_defense, 1), 0.70, 1.08),
+    lineupStrength: clamp(safe(raw.lineup_strength, 1), 0.75, 1.08),
+    promotionAttack: clamp(safe(raw.promotion_attack, 1), 0.70, 1.18),
+    promotionDefense: clamp(safe(raw.promotion_defense, 1), 0.82, 1.42),
+    managerChangeDays: Number.isFinite(safe(raw.manager_change_days, NaN)) ? safe(raw.manager_change_days) : null,
+    topPlayers: Array.isArray(raw.top_players) ? raw.top_players.slice(0, 5) : [],
+    newPlayers: Array.isArray(raw.new_players) ? raw.new_players.slice(0, 5) : [],
+    source: raw.source || "Understat + risultati pubblici",
+  };
+}
+
+function stateMetrics(state, venue, predictionDate, context) {
   const r3 = recent(state.matches, 3);
   const r5 = recent(state.matches, 5);
   const r10 = recent(state.matches, 10);
@@ -173,6 +248,8 @@ function stateMetrics(state, venue, predictionDate) {
   const restDays = state.lastDate
     ? Math.max(1, Math.round((predictionDate - dateAtNoon(state.lastDate)) / DAY_MS))
     : 8;
+  const dynamicElo = blend(state.elo, 1475, sampleReliability);
+  const contextEloWeight = context.externalElo === null ? 0 : 0.28 * context.reliability;
   return {
     ppg3: weightedAverage(r3, "points", 1.35),
     ppg5: weightedAverage(r5, "points", 1.35),
@@ -191,9 +268,13 @@ function stateMetrics(state, venue, predictionDate) {
     venueGa5: weightedAverage(venue5, "ga", 1.30),
     yellow5: weightedAverage(r5, "yellow", 2.3),
     red10: weightedAverage(r10, "red", 0.08, 5),
+    marketPpg5: weightedAverage(r5, "marketExpectedPoints", 1.35),
+    marketCoverage: r10.length ? r10.filter((item) => item.marketActual).length / r10.length : 0,
     finishing: blend(clamp(finishingRaw, 0.60, 1.45), 1, sampleReliability * 0.55),
     xgCoverage: r10.length ? r10.filter((item) => item.xgActual).length / r10.length : 0,
-    elo: blend(state.elo, 1475, sampleReliability),
+    elo: context.externalElo === null ? dynamicElo : blend(context.externalElo, dynamicElo, contextEloWeight),
+    dynamicElo,
+    externalElo: context.externalElo,
     matches: state.matches.length,
     sampleReliability,
     restDays,
@@ -246,12 +327,34 @@ function restFactor(days) {
   return 1;
 }
 
-function dataQuality(home, away, trainingMatches) {
+function squadAttackFactor(context) {
+  const continuity = Math.exp(clamp((context.squadContinuity - 0.82) * 0.12, -0.06, 0.025));
+  const transferNet = Math.exp(clamp(0.10 * context.newcomerImpact - 0.12 * context.departureImpact, -0.08, 0.05));
+  return Math.pow(context.squadAttack, 0.34)
+    * Math.pow(context.squadCreativity, 0.22)
+    * continuity * transferNet
+    * context.availabilityAttack * context.lineupStrength;
+}
+
+function squadDefenseFactor(context) {
+  const continuity = Math.exp(clamp((context.squadContinuity - 0.82) * -0.08, -0.025, 0.05));
+  const departures = Math.exp(clamp(0.10 * context.departureImpact, 0, 0.05));
+  return continuity * departures / context.availabilityDefense;
+}
+
+function applyManagerUncertainty(lambda, leagueBaseline, context) {
+  if (context.managerChangeDays === null || context.managerChangeDays >= 90) return lambda;
+  const uncertainty = 0.10 * Math.exp(-Math.max(0, context.managerChangeDays) / 38);
+  return leagueBaseline + (lambda - leagueBaseline) * (1 - uncertainty);
+}
+
+function dataQuality(home, away, trainingMatches, homeContext, awayContext) {
   const depth = clamp((home.matches + away.matches) / 20, 0, 1);
   const leagueDepth = clamp(trainingMatches / 300, 0, 1);
   const xg = (home.xgCoverage + away.xgCoverage) / 2;
   const freshness = Math.exp(-Math.max(0, Math.max(home.freshnessDays, away.freshnessDays) - 21) / 75);
-  const score = clamp(0.38 * depth + 0.27 * leagueDepth + 0.20 * freshness + 0.15 * (0.45 + 0.55 * xg), 0, 1);
+  const context = (homeContext.reliability + awayContext.reliability) / 2;
+  const score = clamp(0.34 * depth + 0.24 * leagueDepth + 0.17 * freshness + 0.14 * (0.45 + 0.55 * xg) + 0.11 * context, 0, 1);
   const label = score >= 0.78 ? "Alta" : score >= 0.58 ? "Media" : "Bassa";
   return { score, label };
 }
@@ -274,6 +377,7 @@ export function predictFromMatches(matches, rawOptions) {
     awayDefenseAbsence: 0,
     homeLineup: 1,
     awayLineup: 1,
+    teamContext: {},
     ...rawOptions,
   };
   const predictionDate = dateAtNoon(options.date);
@@ -291,31 +395,33 @@ export function predictFromMatches(matches, rawOptions) {
   const training = chronological.filter((match) => dateAtNoon(match.date) >= windowStart);
   if (training.length < 120) throw new Error("Dati recenti insufficienti per questa giornata e finestra temporale.");
 
+  const homeContext = teamContextFor(options.teamContext, options.homeTeam, cutoffDate);
+  const awayContext = teamContextFor(options.teamContext, options.awayTeam, cutoffDate);
   const states = new Map();
   chronological.forEach((match) => applyMatch(states, match));
   const homeState = states.get(options.homeTeam) || emptyState();
   const awayState = states.get(options.awayTeam) || emptyState();
-  const home = stateMetrics(homeState, "home", predictionDate);
-  const away = stateMetrics(awayState, "away", predictionDate);
+  const home = stateMetrics(homeState, "home", predictionDate, homeContext);
+  const away = stateMetrics(awayState, "away", predictionDate, awayContext);
   const league = weightedLeagueAverages(training, cutoffDate, options.halfLifeDays);
 
-  const homeGf = blend(home.gf5, league.homeGoals, home.sampleReliability);
-  const homeXg = blend(home.xgFor5, league.homeXg, home.sampleReliability);
+  const homeGf = blend(home.gf5, league.homeGoals * homeContext.promotionAttack, home.sampleReliability);
+  const homeXg = blend(home.xgFor5, league.homeXg * homeContext.promotionAttack, home.sampleReliability);
   const homeSot = blend(home.sot5, league.homeSot, home.sampleReliability);
   const homeShots = blend(home.shots5, league.homeShots, home.sampleReliability);
   const homeVenueGf = blend(home.venueGf5, league.homeGoals, home.sampleReliability * 0.8);
-  const awayGa = blend(away.ga5, league.homeGoals, away.sampleReliability);
-  const awayXga = blend(away.xgAgainst5, league.homeXg, away.sampleReliability);
+  const awayGa = blend(away.ga5, league.homeGoals * awayContext.promotionDefense, away.sampleReliability);
+  const awayXga = blend(away.xgAgainst5, league.homeXg * awayContext.promotionDefense, away.sampleReliability);
   const awaySotAgainst = blend(away.sotAgainst5, league.homeSot, away.sampleReliability);
   const awayShotsAgainst = blend(away.shotsAgainst5, league.homeShots, away.sampleReliability);
 
-  const awayGf = blend(away.gf5, league.awayGoals, away.sampleReliability);
-  const awayXg = blend(away.xgFor5, league.awayXg, away.sampleReliability);
+  const awayGf = blend(away.gf5, league.awayGoals * awayContext.promotionAttack, away.sampleReliability);
+  const awayXg = blend(away.xgFor5, league.awayXg * awayContext.promotionAttack, away.sampleReliability);
   const awaySot = blend(away.sot5, league.awaySot, away.sampleReliability);
   const awayShots = blend(away.shots5, league.awayShots, away.sampleReliability);
   const awayVenueGf = blend(away.venueGf5, league.awayGoals, away.sampleReliability * 0.8);
-  const homeGa = blend(home.ga5, league.awayGoals, home.sampleReliability);
-  const homeXga = blend(home.xgAgainst5, league.awayXg, home.sampleReliability);
+  const homeGa = blend(home.ga5, league.awayGoals * homeContext.promotionDefense, home.sampleReliability);
+  const homeXga = blend(home.xgAgainst5, league.awayXg * homeContext.promotionDefense, home.sampleReliability);
   const homeSotAgainst = blend(home.sotAgainst5, league.awaySot, home.sampleReliability);
   const homeShotsAgainst = blend(home.shotsAgainst5, league.awayShots, home.sampleReliability);
 
@@ -346,8 +452,9 @@ export function predictFromMatches(matches, rawOptions) {
   const eloHome = Math.exp(clamp(eloDiff / 1150, -0.30, 0.30));
   const eloAway = Math.exp(clamp(-eloDiff / 1150, -0.30, 0.30));
   const homeMomentum = (0.65 * home.ppg3 + 0.35 * home.ppg10) - (0.65 * away.ppg3 + 0.35 * away.ppg10);
-  const formHome = Math.exp(clamp(homeMomentum * 0.065, -0.17, 0.17));
-  const formAway = Math.exp(clamp(-homeMomentum * 0.065, -0.17, 0.17));
+  const marketMomentum = home.marketPpg5 - away.marketPpg5;
+  const formHome = Math.exp(clamp(homeMomentum * 0.055 + marketMomentum * 0.035, -0.17, 0.17));
+  const formAway = Math.exp(clamp(-homeMomentum * 0.055 - marketMomentum * 0.035, -0.17, 0.17));
   const possessionHome = Math.exp(clamp((home.possession5 - away.possession5) / 250, -0.10, 0.10));
   const possessionAway = Math.exp(clamp((away.possession5 - home.possession5) / 250, -0.10, 0.10));
   const disciplineHome = Math.exp(clamp(-0.016 * (home.yellow5 - 2.3) - 0.13 * (home.red10 - 0.08), -0.07, 0.04));
@@ -357,13 +464,17 @@ export function predictFromMatches(matches, rawOptions) {
   let lambdaAway = league.awayGoals * awayAttack * homeDefense * eloAway * formAway * possessionAway;
   lambdaHome *= restFactor(home.restDays) * disciplineHome;
   lambdaAway *= restFactor(away.restDays) * disciplineAway;
+  lambdaHome *= squadAttackFactor(homeContext) * squadDefenseFactor(awayContext);
+  lambdaAway *= squadAttackFactor(awayContext) * squadDefenseFactor(homeContext);
   lambdaHome *= (1 - options.homeAttackAbsence) * (1 + 0.72 * options.awayDefenseAbsence) * options.homeLineup;
   lambdaAway *= (1 - options.awayAttackAbsence) * (1 + 0.72 * options.homeDefenseAbsence) * options.awayLineup;
+  lambdaHome = applyManagerUncertainty(lambdaHome, league.homeGoals, homeContext);
+  lambdaAway = applyManagerUncertainty(lambdaAway, league.awayGoals, awayContext);
   lambdaHome = clamp(lambdaHome, 0.18, 4.25);
   lambdaAway = clamp(lambdaAway, 0.15, 4.0);
 
   const probabilities = matrixProbabilities(scoreMatrix(lambdaHome, lambdaAway, 8));
-  const quality = dataQuality(home, away, training.length);
+  const quality = dataQuality(home, away, training.length, homeContext, awayContext);
   const mostLikelyOutcome = outcomeName(probabilities, options.homeTeam, options.awayTeam);
   return {
     lambdaHome,
@@ -371,6 +482,8 @@ export function predictFromMatches(matches, rawOptions) {
     probabilities,
     home,
     away,
+    homeContext,
+    awayContext,
     league,
     quality,
     mostLikelyOutcome,
@@ -379,6 +492,7 @@ export function predictFromMatches(matches, rawOptions) {
     lastTrainingDate: training.at(-1).date,
     cutoffDate: String(options.cutoffDate || options.date).slice(0, 10),
     xgCoverage: (home.xgCoverage + away.xgCoverage) / 2,
+    modelVersion: "2.0-context-elo",
   };
 }
 

@@ -1,12 +1,19 @@
-name: Update Serie A data
+name: Update Serie A 2026-27 data
 
 on:
   schedule:
-    - cron: "23 5 * * *"
+    - cron: "23 2,8,14,20 * * *"
   workflow_dispatch:
+
+env:
+  TARGET_SEASON: "2627"
 
 permissions:
   contents: write
+
+concurrency:
+  group: serie-a-data-update
+  cancel-in-progress: true
 
 jobs:
   update:
@@ -16,8 +23,16 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Download recent results and xG
-        run: python scripts/update_data.py
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Download results, fixtures, xG, Elo and player context
+        run: python scripts/update_data.py --target-season "$TARGET_SEASON"
+      - name: Validate generated inputs and model
+        run: |
+          python -m py_compile scripts/update_data.py
+          npm test
+          npm run check
       - name: Commit changed dataset
         run: |
           if git diff --quiet -- data/matches.json; then
@@ -27,5 +42,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add data/matches.json
-          git commit -m "Update Serie A data"
+          git commit -m "Update Serie A 2026-27 data"
           git push
