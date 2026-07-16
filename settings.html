@@ -6,16 +6,29 @@
   <meta name="description" content="Impostazioni di Serie A Predictor." />
   <title>Impostazioni · Serie A Predictor</title>
   <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="global.css" />
 </head>
 <body>
+  <div id="global-announcement" class="global-announcement" hidden></div>
   <main class="settings-shell">
     <header class="settings-header">
-      <a class="back-link" href="index.html">← Pronostici</a>
-      <h1>Impostazioni</h1>
-      <p>Qui sono raccolte tutte le opzioni grafiche e del modello.</p>
+      <div class="settings-header__links">
+        <a class="back-link" href="index.html">← Pronostici</a>
+        <a class="back-link" href="admin.html">Area admin →</a>
+      </div>
+      <h1>Impostazioni personali</h1>
+      <p>Queste preferenze valgono su questo browser, salvo opzioni rese obbligatorie dall'amministratore.</p>
     </header>
 
     <form class="settings-stack" id="settings-form">
+      <section id="global-policy-card" class="settings-card global-policy-card">
+        <div class="settings-card__heading">
+          <h2>Configurazione globale</h2>
+          <p id="global-policy-status">Caricamento delle policy…</p>
+          <div id="global-policy-list" class="global-policy-list"></div>
+        </div>
+      </section>
+
       <section class="settings-card">
         <div class="settings-card__heading">
           <h2>Squadra e palette</h2>
