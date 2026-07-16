@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="description" content="Pronostici probabilistici multi-lega basati su forma, statistiche di squadra, giocatori e probabili formazioni." />
-  <title>Football Match Predictor</title>
+  <meta name="description" content="Pronostici probabilistici per Premier League, LaLiga, Serie A, Bundesliga e Ligue 1 basati su xG, forma, Elo e rendimento casa/trasferta." />
+  <title>Top Five Match Predictor</title>
   <link rel="stylesheet" href="styles.css" />
   <link rel="stylesheet" href="global.css" />
   <link rel="stylesheet" href="europe.css" />
@@ -17,21 +17,21 @@
       <div class="league-picker__heading">
         <div>
           <span class="league-picker__eyebrow">MATCH PREDICTOR</span>
-          <h1 id="league-picker-title">Scegli la competizione</h1>
-          <p id="league-picker-description">Caricamento delle leghe supportate…</p>
+          <h1 id="league-picker-title">Scegli il campionato</h1>
+          <p id="league-picker-description">Caricamento dei cinque campionati supportati…</p>
         </div>
         <button id="close-league-picker" class="icon-button league-picker__close" type="button" aria-label="Chiudi selezione lega">×</button>
       </div>
       <div id="league-picker-grid" class="league-picker__grid" role="list"></div>
-      <p class="league-picker__hint">Puoi cambiare l’ordine e la lega preferita nelle impostazioni.</p>
+      <p class="league-picker__hint">Puoi cambiare l’ordine e il campionato preferito nelle impostazioni.</p>
     </div>
   </section>
 
   <main class="page-shell page-shell--predictor">
     <section class="control-bar control-bar--europe" aria-label="Selezione pronostici">
       <div class="select-wrap">
-        <label class="sr-only" for="competition-select">Competizione</label>
-        <select id="competition-select" aria-label="Competizione"></select>
+        <label class="sr-only" for="competition-select">Campionato</label>
+        <select id="competition-select" aria-label="Campionato"></select>
         <span aria-hidden="true">⌄</span>
       </div>
 
@@ -53,7 +53,7 @@
       </button>
 
       <div class="control-links">
-        <button id="open-league-picker" class="icon-button" type="button" aria-label="Cambia competizione" title="Cambia competizione">🏆</button>
+        <button id="open-league-picker" class="icon-button" type="button" aria-label="Cambia campionato" title="Cambia campionato">🏆</button>
         <a class="icon-button" href="settings.html" aria-label="Impostazioni personali" title="Impostazioni personali">⚙</a>
         <a class="icon-button" href="admin.html" aria-label="Amministrazione" title="Amministrazione">🔐</a>
       </div>

@@ -54,7 +54,9 @@ function populateCompetitions() {
   const requested = new URLSearchParams(window.location.search).get("competition");
   const preferred = competitionCatalog.some((competition) => competition.id === requested)
     ? requested
-    : payload.default_competition || competitionCatalog[0]?.id;
+    : competitionCatalog.some((competition) => competition.id === payload.default_competition)
+      ? payload.default_competition
+      : competitionCatalog[0]?.id;
   $("competition-select").innerHTML = competitionCatalog
     .map((competition) => `<option value="${escapeHtml(competition.id)}">${escapeHtml(competition.name)}</option>`)
     .join("");
@@ -119,7 +121,6 @@ function predictionOptions() {
   return {
     windowDays: model.windowDays,
     halfLifeDays: model.halfLifeDays,
-    teamContext: payload.team_context || {},
     competitionId: selectedCompetitionId(),
   };
 }
@@ -139,76 +140,28 @@ function comparisonRow(home, label, away, formatter = (value) => number(value, 2
   return `<div class="comparison-row"><strong>${formatter(home)}</strong><span>${label}</span><strong>${formatter(away)}</strong></div>`;
 }
 
-function playerNames(context) {
-  if (!context?.used) return "";
-  const keyPlayers = context.topPlayers.map((item) => escapeHtml(item.name || item)).slice(0, 3);
-  const newcomers = context.newPlayers.map((item) => escapeHtml(item.name || item)).slice(0, 2);
-  const parts = [];
-  if (keyPlayers.length) parts.push(`Chiave: ${keyPlayers.join(", ")}`);
-  if (newcomers.length) parts.push(`Nuovi: ${newcomers.join(", ")}`);
-  return parts.join(" · ");
-}
-
-function rawPlayerContext(team) {
-  return payload.player_context?.[team] || payload.team_context?.[team] || null;
-}
-
-function playerStat(player) {
-  const parts = [];
-  if (Number(player.starts) > 0) parts.push(`${player.starts} tit.`);
-  if (Number(player.goals) > 0) parts.push(`${player.goals} gol`);
-  if (Number(player.assists) > 0) parts.push(`${player.assists} assist`);
-  return parts.join(" · ") || player.position || "Rosa";
-}
-
-function lineupColumn(team) {
-  const context = rawPlayerContext(team);
-  const lineup = Array.isArray(context?.probable_lineup) ? context.probable_lineup : [];
-  if (!lineup.length) {
-    return `<div class="lineup-team"><h4>${escapeHtml(team)}</h4><p class="lineup-empty">Formazione probabile non disponibile nel feed corrente.</p></div>`;
-  }
-  const formation = context.formation ? ` · ${escapeHtml(context.formation)}` : "";
-  const reliability = Number(context.lineup_reliability);
-  const confidence = Number.isFinite(reliability) ? ` · affidabilità ${percent(reliability)}` : "";
-  return `
-    <div class="lineup-team">
-      <h4>${escapeHtml(team)}${formation}</h4>
-      <p class="lineup-source">${escapeHtml(context.lineup_source || "Ultime formazioni disponibili")}${confidence}</p>
-      <ol class="lineup-list">
-        ${lineup.map((player) => `<li><span>${escapeHtml(player.position || "—")}</span><strong>${escapeHtml(player.name || player)}</strong><small>${escapeHtml(playerStat(player))}</small></li>`).join("")}
-      </ol>
-    </div>
-  `;
-}
-
 function renderFixtureCard(item, index) {
   const { fixture, result } = item;
-  const p = result.probabilities;
-  const top = p.scores[0];
+  const probabilities = result.probabilities;
+  const top = probabilities.scores[0];
   const preferred = favoriteTeam();
   const isFavoriteMatch = fixture.home_team === preferred || fixture.away_team === preferred;
   const cardId = `fixture-${index}`;
-  const homePlayers = playerNames(result.homeContext);
-  const awayPlayers = playerNames(result.awayContext);
-  const contextLine = [
-    homePlayers ? `${escapeHtml(fixture.home_team)} — ${homePlayers}` : "",
-    awayPlayers ? `${escapeHtml(fixture.away_team)} — ${awayPlayers}` : "",
-  ].filter(Boolean).join(" | ");
   const comparison = [
     comparisonRow(result.home.ppg5, "Forma (PPG)", result.away.ppg5),
     comparisonRow(result.home.xgFor5, "xG ultime 5", result.away.xgFor5),
     comparisonRow(result.home.xgAgainst5, "xGA ultime 5", result.away.xgAgainst5),
+    comparisonRow(result.home.sot5, "Tiri in porta", result.away.sot5),
     comparisonRow(result.home.elo, "Elo", result.away.elo, (value) => number(value, 0)),
-    comparisonRow(result.home.marketPpg5, "Forza mercato", result.away.marketPpg5),
     comparisonRow(result.home.restDays, "Giorni di riposo", result.away.restDays, (value) => number(value, 0)),
-    comparisonRow(result.homeContext.lineupStrength, "Indice formazione", result.awayContext.lineupStrength),
   ].join("");
   const qualityBadge = globalSettings.showDataQuality
     ? `<span class="quality ${qualityClass(result.quality.label)}">${result.quality.label}</span>`
     : "";
   const fairOddsMetrics = globalSettings.showFairOdds ? `
-    <div><span>Quota 1</span><strong>${fairOdds(p.homeWin)}</strong></div>
-    <div><span>Quota 2</span><strong>${fairOdds(p.awayWin)}</strong></div>
+    <div><span>Quota 1</span><strong>${fairOdds(probabilities.homeWin)}</strong></div>
+    <div><span>Quota X</span><strong>${fairOdds(probabilities.draw)}</strong></div>
+    <div><span>Quota 2</span><strong>${fairOdds(probabilities.awayWin)}</strong></div>
   ` : "";
 
   return `
@@ -230,9 +183,9 @@ function renderFixtureCard(item, index) {
           </div>
         </div>
         <div class="probability-strip">
-          <span><b>1</b>${percent(p.homeWin)}</span>
-          <span><b>X</b>${percent(p.draw)}</span>
-          <span><b>2</b>${percent(p.awayWin)}</span>
+          <span><b>1</b>${percent(probabilities.homeWin)}</span>
+          <span><b>X</b>${percent(probabilities.draw)}</span>
+          <span><b>2</b>${percent(probabilities.awayWin)}</span>
         </div>
         <div class="fixture-footer">
           <span>${result.mostLikelyOutcome.key} · ${escapeHtml(result.mostLikelyOutcome.name)}</span>
@@ -242,26 +195,22 @@ function renderFixtureCard(item, index) {
       <div id="${cardId}" class="fixture-details" hidden>
         <div class="detail-column">
           <div class="detail-heading"><h3>Risultati esatti</h3><span>${result.cutoffDate}</span></div>
-          <ol class="score-list">${exactScoreRows(p.scores)}</ol>
+          <ol class="score-list">${exactScoreRows(probabilities.scores)}</ol>
         </div>
         <div class="detail-column">
           <div class="detail-heading"><h3>Indicatori</h3><span>${result.baselineMatches} gare baseline</span></div>
           <div class="metric-grid">
             <div><span>xG ${escapeHtml(fixture.home_team)}</span><strong>${number(result.lambdaHome)}</strong></div>
             <div><span>xG ${escapeHtml(fixture.away_team)}</span><strong>${number(result.lambdaAway)}</strong></div>
-            <div><span>Over 2.5</span><strong>${percent(p.over25)}</strong></div>
-            <div><span>BTTS</span><strong>${percent(p.bothScore)}</strong></div>
+            <div><span>Over 2.5</span><strong>${percent(probabilities.over25)}</strong></div>
+            <div><span>BTTS</span><strong>${percent(probabilities.bothScore)}</strong></div>
             ${fairOddsMetrics}
           </div>
         </div>
         <div class="detail-column detail-column--wide">
-          <div class="detail-heading"><h3>Forma complessiva</h3><span>${result.trainingMatches} partite</span></div>
+          <div class="detail-heading"><h3>Indicatori usati dal modello</h3><span>${result.trainingMatches} partite</span></div>
           <div class="comparison-table">${comparison}</div>
-          ${contextLine ? `<p class="context-line">${contextLine}</p>` : ""}
-        </div>
-        <div class="detail-column detail-column--lineups">
-          <div class="detail-heading"><h3>Giocatori e probabili formazioni</h3><span>Dati inclusi nell’indice formazione</span></div>
-          <div class="lineups-grid">${lineupColumn(fixture.home_team)}${lineupColumn(fixture.away_team)}</div>
+          <p class="context-line">Modello core: xG/gol, tiri, forma recente, Elo, rendimento casa/trasferta e riposo.</p>
         </div>
       </div>
     </article>
@@ -327,11 +276,11 @@ async function init() {
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     payload = unpackMatches(await response.json());
     competitionCatalog = buildCompetitionCatalog(payload);
-    if (!competitionCatalog.length) throw new Error("Calendari non disponibili nel dataset.");
+    if (!competitionCatalog.length) throw new Error("I cinque campionati supportati non sono disponibili nel dataset.");
     populateCompetitions();
     loadSelectedCompetition();
   } catch {
-    $("error-message").textContent = "Impossibile caricare i dati delle competizioni. Riprova tra poco.";
+    $("error-message").textContent = "Impossibile caricare i dati dei cinque maggiori campionati europei. Riprova tra poco.";
     $("error-message").hidden = false;
     $("predict-button").disabled = true;
   }

@@ -1,6 +1,6 @@
 {
-  "name": "multi-league-match-predictor-pages",
-  "version": "3.1.0",
+  "name": "top-five-european-match-predictor-pages",
+  "version": "4.0.0",
   "private": true,
   "type": "module",
   "scripts": {
