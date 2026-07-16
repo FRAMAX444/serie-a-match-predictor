@@ -8,103 +8,33 @@
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <main class="page-shell">
-    <section class="page-heading">
-      <h1>Pronostici per giornata</h1>
-    </section>
-
-    <section class="filters-card" aria-label="Selezione pronostici">
-      <div class="field">
-        <label for="matchday-select">Giornata</label>
-        <div class="select-wrap">
-          <select id="matchday-select" aria-describedby="selected-round-summary"></select>
-          <span aria-hidden="true">⌄</span>
-        </div>
-        <small id="selected-round-summary">—</small>
+  <main class="page-shell page-shell--predictor">
+    <section class="control-bar" aria-label="Selezione pronostici">
+      <div class="select-wrap">
+        <label class="sr-only" for="matchday-select">Giornata</label>
+        <select id="matchday-select" aria-label="Giornata"></select>
+        <span aria-hidden="true">⌄</span>
       </div>
 
-      <div class="field">
-        <label for="favorite-team-select">Squadra preferita</label>
-        <div class="select-wrap">
-          <select id="favorite-team-select"></select>
-          <span aria-hidden="true">⌄</span>
-        </div>
-        <small>La palette segue automaticamente i colori della squadra</small>
+      <div class="select-wrap">
+        <label class="sr-only" for="favorite-team-select">Squadra preferita</label>
+        <select id="favorite-team-select" aria-label="Squadra preferita"></select>
+        <span aria-hidden="true">⌄</span>
       </div>
 
       <button id="predict-button" class="primary-button" type="button">
-        <span>Calcola pronostici</span>
+        <span>Calcola</span>
         <span aria-hidden="true">→</span>
       </button>
 
-      <details class="model-settings">
-        <summary>Impostazioni modello</summary>
-        <div class="settings-grid">
-          <label>
-            <span>Finestra dati</span>
-            <select id="window-days">
-              <option value="365">12 mesi</option>
-              <option value="540" selected>18 mesi</option>
-              <option value="730">24 mesi</option>
-            </select>
-          </label>
-          <label>
-            <span>Recenza</span>
-            <select id="half-life">
-              <option value="75">75 giorni</option>
-              <option value="120" selected>120 giorni</option>
-              <option value="180">180 giorni</option>
-            </select>
-          </label>
-        </div>
-      </details>
-
-      <details class="customization-settings">
-        <summary>Personalizzazione grafica</summary>
-        <div class="customization-grid">
-          <label class="color-control">
-            <span>Colore principale</span>
-            <input id="primary-color" type="color" value="#1f4f8f" />
-          </label>
-          <label class="color-control">
-            <span>Colore secondario</span>
-            <input id="secondary-color" type="color" value="#172033" />
-          </label>
-          <label class="background-control">
-            <span>Immagine di sfondo</span>
-            <input id="background-image" type="file" accept="image/*" />
-          </label>
-          <div class="customization-actions">
-            <button id="reset-palette" class="secondary-button" type="button">Colori squadra</button>
-            <button id="remove-background" class="secondary-button" type="button">Rimuovi sfondo</button>
-          </div>
-        </div>
-        <small id="customization-status" class="customization-status" aria-live="polite"></small>
-      </details>
-
+      <a class="icon-button" href="settings.html" aria-label="Impostazioni" title="Impostazioni">⚙</a>
       <p id="error-message" class="error" role="alert" hidden></p>
     </section>
 
     <section id="results" class="results" aria-live="polite" hidden>
-      <div class="results-header">
-        <div>
-          <h2 id="round-title">Giornata —</h2>
-          <p id="round-subtitle">—</p>
-        </div>
-        <div id="favorite-summary" class="favorite-summary" hidden>
-          <span class="favorite-summary__label">Squadra preferita</span>
-          <strong>—</strong>
-        </div>
-      </div>
-
       <div id="fixtures-grid" class="fixtures-grid"></div>
     </section>
   </main>
-
-  <footer class="app-footer">
-    <span>Fonti: Football-Data.co.uk e Understat.</span>
-    <a href="https://github.com/FRAMAX444/serie-a-match-predictor" rel="noreferrer">GitHub</a>
-  </footer>
 
   <script type="module" src="app.js"></script>
 </body>
