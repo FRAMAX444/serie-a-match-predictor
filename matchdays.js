@@ -70,10 +70,16 @@ function inferRounds(fixtures) {
   }));
 }
 
+function competitionType(competition) {
+  const explicit = String(competition.type || competition.competition_type || "").toLowerCase();
+  if (explicit) return explicit;
+  return EUROPE_IDS.has(String(competition.id)) ? "europe" : "domestic";
+}
+
 export function buildCompetitionCatalog(payload) {
   if (!Array.isArray(payload.competitions)) return [];
   return payload.competitions
-    .filter((competition) => competition && EUROPE_IDS.has(String(competition.id))
+    .filter((competition) => competition && competition.id
       && Array.isArray(competition.fixtures) && competition.fixtures.length)
     .map((competition) => ({
       id: String(competition.id),
@@ -82,6 +88,9 @@ export function buildCompetitionCatalog(payload) {
       fixtures: competition.fixtures,
       defaultRound: Number(competition.default_round) || 1,
       source: competition.source || "",
+      type: competitionType(competition),
+      country: String(competition.country || (EUROPE_IDS.has(String(competition.id)) ? "Europe" : "")),
+      logo: String(competition.logo || competition.logo_url || ""),
     }));
 }
 
@@ -98,7 +107,10 @@ export function buildMatchdays(payload, competitionId = null) {
   const explicitCount = fixtures.filter((fixture) => validRound(fixture.round)).length;
   const matchdays = explicitCount === fixtures.length && fixtures.length ? groupRounds(fixtures) : inferRounds(fixtures);
   const firstUpcoming = matchdays.find((matchday) => matchday.fixtures.some((fixture) => !fixture.completed));
-  const defaultRound = Number(selected.defaultRound) || firstUpcoming?.round || matchdays.at(-1)?.round || 1;
+  const configuredRound = matchdays.some((matchday) => matchday.round === Number(selected.defaultRound))
+    ? Number(selected.defaultRound)
+    : null;
+  const defaultRound = configuredRound || firstUpcoming?.round || matchdays.at(-1)?.round || 1;
   return {
     competition: selected,
     season: selected.season,
@@ -107,6 +119,18 @@ export function buildMatchdays(payload, competitionId = null) {
     defaultRound,
     inferred: explicitCount !== fixtures.length,
   };
+}
+
+export function nextFixtureForTeam(calendar, team, now = new Date()) {
+  if (!calendar?.matchdays?.length || !team) return null;
+  const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const fixtures = calendar.matchdays.flatMap((matchday) => matchday.fixtures.map((fixture) => ({ fixture, matchday })));
+  const matching = fixtures.filter(({ fixture }) => fixture.home_team === team || fixture.away_team === team);
+  return matching
+    .filter(({ fixture }) => !fixture.completed && toDate(fixture.date) >= today)
+    .sort((left, right) => left.fixture.date.localeCompare(right.fixture.date))[0]
+    || matching.filter(({ fixture }) => !fixture.completed).sort((left, right) => left.fixture.date.localeCompare(right.fixture.date))[0]
+    || null;
 }
 
 export function matchdayLabel(matchday) {
