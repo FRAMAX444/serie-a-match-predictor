@@ -1,4 +1,4 @@
-name: Validate top-five predictor
+name: Validate European predictor
 
 on:
   pull_request:
@@ -20,7 +20,7 @@ jobs:
           node-version: "22"
       - name: Validate application
         run: |
-          python -m py_compile scripts/update_europe_data.py scripts/update_top5_data.py
+          python -m py_compile scripts/update_europe_data.py scripts/update_uefa_data.py scripts/update_top5_data.py
           npm test
           npm run check
       - name: Build dataset from public sources
@@ -31,10 +31,10 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: top-five-source-smoke
+          name: european-source-smoke
           path: source-smoke.log
       - name: Require successful source build
         if: steps.source_build.outcome == 'failure'
         run: |
-          tail -n 120 source-smoke.log
+          tail -n 140 source-smoke.log
           exit 1

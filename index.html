@@ -3,48 +3,48 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="description" content="Pronostici probabilistici per Premier League, LaLiga, Serie A, Bundesliga e Ligue 1 basati su xG, forma, Elo e rendimento casa/trasferta." />
-  <title>Top Five Match Predictor</title>
+  <meta name="description" content="Pronostici probabilistici per i Big Five e le competizioni UEFA basati su xG, forma, Elo e rendimento casa/trasferta." />
+  <title>European Match Predictor</title>
   <link rel="stylesheet" href="styles.css" />
   <link rel="stylesheet" href="global.css" />
   <link rel="stylesheet" href="europe.css" />
 </head>
-<body class="league-picker-open">
+<body>
   <div id="global-announcement" class="global-announcement" hidden></div>
 
-  <section id="league-picker" class="league-picker" aria-labelledby="league-picker-title">
+  <section id="league-picker" class="league-picker" role="dialog" aria-modal="true" aria-labelledby="league-picker-title" aria-describedby="league-picker-description" hidden>
     <div class="league-picker__panel">
       <div class="league-picker__heading">
         <div>
-          <span class="league-picker__eyebrow">MATCH PREDICTOR</span>
-          <h1 id="league-picker-title">Scegli il campionato</h1>
-          <p id="league-picker-description">Caricamento dei cinque campionati supportati…</p>
+          <span class="league-picker__eyebrow">COMPETIZIONI</span>
+          <h1 id="league-picker-title">Cambia competizione</h1>
+          <p id="league-picker-description">Caricamento…</p>
         </div>
-        <button id="close-league-picker" class="icon-button league-picker__close" type="button" aria-label="Chiudi selezione lega">×</button>
+        <button id="close-league-picker" class="icon-button league-picker__close" type="button" aria-label="Chiudi selezione competizione">×</button>
       </div>
-      <div id="league-picker-grid" class="league-picker__grid" role="list"></div>
-      <p class="league-picker__hint">Puoi cambiare l’ordine e il campionato preferito nelle impostazioni.</p>
+      <div id="league-picker-grid" class="league-picker__grid"></div>
     </div>
   </section>
 
   <main class="page-shell page-shell--predictor">
     <section class="control-bar control-bar--europe" aria-label="Selezione pronostici">
-      <div class="select-wrap">
-        <label class="sr-only" for="competition-select">Campionato</label>
-        <select id="competition-select" aria-label="Campionato"></select>
-        <span aria-hidden="true">⌄</span>
+      <div class="select-wrap select-wrap--competition">
+        <label class="sr-only" for="competition-select">Competizione</label>
+        <span id="competition-logo" class="competition-select-logo" aria-hidden="true"></span>
+        <select id="competition-select" aria-label="Competizione"></select>
+        <span class="select-caret" aria-hidden="true">⌄</span>
       </div>
 
       <div class="select-wrap">
         <label class="sr-only" for="matchday-select">Turno</label>
         <select id="matchday-select" aria-label="Turno"></select>
-        <span aria-hidden="true">⌄</span>
+        <span class="select-caret" aria-hidden="true">⌄</span>
       </div>
 
       <div class="select-wrap">
         <label class="sr-only" for="favorite-team-select">Squadra evidenziata</label>
         <select id="favorite-team-select" aria-label="Squadra evidenziata"></select>
-        <span aria-hidden="true">⌄</span>
+        <span class="select-caret" aria-hidden="true">⌄</span>
       </div>
 
       <button id="predict-button" class="primary-button" type="button">
@@ -53,7 +53,7 @@
       </button>
 
       <div class="control-links">
-        <button id="open-league-picker" class="icon-button" type="button" aria-label="Cambia campionato" title="Cambia campionato">🏆</button>
+        <button id="open-league-picker" class="icon-button" type="button" aria-label="Scelta rapida competizione" title="Scelta rapida competizione">🏆</button>
         <a class="icon-button" href="settings.html" aria-label="Impostazioni personali" title="Impostazioni personali">⚙</a>
         <a class="icon-button" href="admin.html" aria-label="Amministrazione" title="Amministrazione">🔐</a>
       </div>

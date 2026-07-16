@@ -2,15 +2,24 @@ const DAY_MS = 86400000;
 const toDate = (value) => new Date(`${String(value).slice(0, 10)}T12:00:00Z`);
 const validRound = (value) => Number.isInteger(Number(value)) && Number(value) > 0;
 
-export const SUPPORTED_LEAGUES = Object.freeze([
-  { id: "eng.1", name: "Premier League", country: "England" },
-  { id: "esp.1", name: "LaLiga", country: "Spain" },
-  { id: "ita.1", name: "Serie A", country: "Italy" },
-  { id: "ger.1", name: "Bundesliga", country: "Germany" },
-  { id: "fra.1", name: "Ligue 1", country: "France" },
+export const SUPPORTED_COMPETITIONS = Object.freeze([
+  { id: "ucl", name: "UEFA Champions League", country: "Europe", type: "europe" },
+  { id: "uel", name: "UEFA Europa League", country: "Europe", type: "europe" },
+  { id: "uecl", name: "UEFA Conference League", country: "Europe", type: "europe" },
+  { id: "eng.1", name: "Premier League", country: "England", type: "domestic" },
+  { id: "esp.1", name: "LaLiga", country: "Spain", type: "domestic" },
+  { id: "ita.1", name: "Serie A", country: "Italy", type: "domestic" },
+  { id: "ger.1", name: "Bundesliga", country: "Germany", type: "domestic" },
+  { id: "fra.1", name: "Ligue 1", country: "France", type: "domestic" },
 ]);
 
-const LEAGUE_BY_ID = new Map(SUPPORTED_LEAGUES.map((league, index) => [league.id, { ...league, order: index }]));
+export const SUPPORTED_LEAGUES = Object.freeze(
+  SUPPORTED_COMPETITIONS.filter((competition) => competition.type === "domestic"),
+);
+
+const COMPETITION_BY_ID = new Map(
+  SUPPORTED_COMPETITIONS.map((competition, index) => [competition.id, { ...competition, order: index }]),
+);
 
 function normalizeFixture(item, index = 0, competition = {}) {
   const homeTeam = item.home_team ?? item.homeTeam;
@@ -82,10 +91,10 @@ function inferRounds(fixtures) {
 export function buildCompetitionCatalog(payload) {
   if (!Array.isArray(payload.competitions)) return [];
   return payload.competitions
-    .filter((competition) => competition && LEAGUE_BY_ID.has(String(competition.id))
+    .filter((competition) => competition && COMPETITION_BY_ID.has(String(competition.id))
       && Array.isArray(competition.fixtures) && competition.fixtures.length)
     .map((competition) => {
-      const supported = LEAGUE_BY_ID.get(String(competition.id));
+      const supported = COMPETITION_BY_ID.get(String(competition.id));
       return {
         id: supported.id,
         name: supported.name,
@@ -93,7 +102,7 @@ export function buildCompetitionCatalog(payload) {
         fixtures: competition.fixtures,
         defaultRound: Number(competition.default_round) || 1,
         source: competition.source || "",
-        type: "domestic",
+        type: supported.type,
         country: supported.country,
         logo: String(competition.logo || competition.logo_url || ""),
         order: supported.order,

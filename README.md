@@ -1,6 +1,16 @@
-# Top Five European Match Predictor
+# European Match Predictor
 
-Web app statica per prevedere le partite dei cinque maggiori campionati europei:
+Web app statica per prevedere le partite delle principali competizioni europee.
+
+## Competizioni selezionabili
+
+Coppe UEFA:
+
+- UEFA Champions League;
+- UEFA Europa League;
+- UEFA Conference League.
+
+Campionati Big Five:
 
 - Premier League;
 - LaLiga;
@@ -8,37 +18,39 @@ Web app statica per prevedere le partite dei cinque maggiori campionati europei:
 - Bundesliga;
 - Ligue 1.
 
-Le coppe UEFA e i campionati minori non sono selezionabili e non vengono usati dal modello.
+I campionati minori non compaiono nel selettore. Le sole partite nazionali dei club UEFA provenienti da altri campionati possono essere conservate come supporto interno alla forma e all'Elo delle coppe.
 
 ## Flusso utente
 
-1. scegli uno dei cinque campionati supportati;
+1. scegli una coppa o un campionato dal selettore compatto con logo;
 2. seleziona il turno;
 3. scegli facoltativamente una squadra da evidenziare;
 4. premi **Calcola**;
 5. apri una partita per vedere punteggi esatti, probabilità 1X2, xG, Over 2.5, BTTS e confronto degli indicatori principali.
 
-L'interfaccia è responsive e conserva nel browser lega preferita, squadra evidenziata, colori e parametri di recenza.
+L'interfaccia è responsive e conserva nel browser competizione preferita, squadra evidenziata, colori e parametri di recenza.
 
 ## Dataset
 
 `scripts/update_top5_data.py` aggiorna `data/matches.json` usando fonti pubbliche e conserva soltanto i dati necessari:
 
-- calendario e risultati ESPN;
+- calendari e risultati delle coppe dall'API pubblica UEFA, con ESPN come fallback;
+- calendari e risultati dei Big Five da ESPN;
 - statistiche di tiro da Football-Data.co.uk;
 - xG Understat quando disponibile;
 - fallback xG prudente basato su tiri e tiri in porta.
 
-Il dataset contiene soltanto:
+Il dataset contiene:
 
-- `competitions`: i cinque campionati con fixture, turni, paese e logo;
+- `competitions`: le tre coppe UEFA e i cinque campionati, con fixture, turni, paese e logo;
 - `matches`: storico usato dal modello;
-- `domestic_leagues`: elenco fisso dei campionati supportati;
+- `domestic_leagues`: elenco fisso dei Big Five selezionabili;
+- `training_support_leagues`: eventuali campionati nascosti usati soltanto per la forma nazionale dei club UEFA;
 - `coverage`, `source_health` e `sources`: indicatori di copertura.
 
-Sono stati rimossi dal flusso attivo dati giocatori, probabili formazioni, trasferimenti, indisponibilità, quote di mercato, possesso e disciplina.
+Restano esclusi dal flusso attivo dati giocatori, probabili formazioni, trasferimenti, indisponibilità, quote di mercato, possesso e disciplina.
 
-## Modello 4.0 Top Five Core
+## Modello 4.1 Big Five + UEFA Core
 
 Il modello usa esclusivamente segnali pre-partita stabili e disponibili in modo omogeneo:
 
@@ -48,8 +60,10 @@ Il modello usa esclusivamente segnali pre-partita stabili e disponibili in modo 
 - rendimento casa/trasferta;
 - Elo aggiornato cronologicamente;
 - giorni di riposo;
-- baseline specifica del campionato;
+- baseline specifica della competizione;
 - Poisson con correzione Dixon–Coles per i punteggi bassi.
+
+Per i cinque campionati il filtro di training resta limitato esattamente ai Big Five, quindi l'aggiunta delle coppe non modifica i pronostici nazionali. Per le coppe, il modello combina storico UEFA e forma nazionale delle squadre partecipanti, mantenendo una baseline separata per ciascuna competizione quando il campione è sufficiente.
 
 Tutte le partite dello stesso turno condividono il medesimo cutoff precedente alla prima gara, evitando leakage tra anticipi e partite successive.
 
@@ -64,12 +78,12 @@ Aprire `http://localhost:8000`.
 ## Test
 
 ```bash
-python -m py_compile scripts/update_europe_data.py scripts/update_top5_data.py
+python -m py_compile scripts/update_europe_data.py scripts/update_uefa_data.py scripts/update_top5_data.py
 npm test
 npm run check
 ```
 
-I test verificano il filtro ai Big Five, il catalogo campionati, il cutoff comune e la normalizzazione delle probabilità.
+I test verificano catalogo Big Five + UEFA, esclusione dei campionati minori, cutoff comune, normalizzazione delle probabilità e invariabilità dei pronostici Big Five dopo l'aggiunta dei dati europei.
 
 ## Aggiornamento e deploy
 
@@ -83,4 +97,4 @@ Le previsioni sono probabilistiche e non includono notizie dell'ultimo minuto, f
 
 ## Licenza e fonti
 
-Codice MIT. I dati restano soggetti alle condizioni delle fonti utilizzate: ESPN public scoreboards, Football-Data.co.uk e Understat.
+Codice MIT. I dati restano soggetti alle condizioni delle fonti utilizzate: UEFA public match API, ESPN public scoreboards, Football-Data.co.uk e Understat.

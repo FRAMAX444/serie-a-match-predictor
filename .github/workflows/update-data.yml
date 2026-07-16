@@ -1,4 +1,4 @@
-name: Update top-five league data
+name: Update European competition data
 
 on:
   schedule:
@@ -12,7 +12,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: top-five-data-update
+  group: european-competition-data-update
   cancel-in-progress: true
 
 jobs:
@@ -26,11 +26,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: Build Big Five dataset
+      - name: Build Big Five and UEFA dataset
         run: python scripts/update_top5_data.py --target-season "$TARGET_SEASON" --history-seasons 4
       - name: Validate generated inputs and model
         run: |
-          python -m py_compile scripts/update_europe_data.py scripts/update_top5_data.py
+          python -m py_compile scripts/update_europe_data.py scripts/update_uefa_data.py scripts/update_top5_data.py
           npm test
           npm run check
       - name: Commit changed dataset
@@ -42,5 +42,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add data/matches.json
-          git commit -m "Update top-five predictor data"
+          git commit -m "Update European predictor data"
           git push

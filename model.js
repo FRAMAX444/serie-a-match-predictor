@@ -1,6 +1,8 @@
 const LN2 = Math.log(2);
 const DAY_MS = 86400000;
-const SUPPORTED_LEAGUE_IDS = new Set(["eng.1", "esp.1", "ita.1", "ger.1", "fra.1"]);
+const DOMESTIC_COMPETITION_IDS = new Set(["eng.1", "esp.1", "ita.1", "ger.1", "fra.1"]);
+const EUROPE_COMPETITION_IDS = new Set(["ucl", "uel", "uecl"]);
+const SUPPORTED_COMPETITION_IDS = new Set([...DOMESTIC_COMPETITION_IDS, ...EUROPE_COMPETITION_IDS]);
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const safe = (value, fallback = 0) => {
   if (value === null || value === undefined || value === "") return fallback;
@@ -88,13 +90,14 @@ function weightedAverage(records, key, fallback, halfLifeMatches = 3.5) {
   return numerator / denominator;
 }
 
-function emptyState() {
-  return { elo: 1500, matches: [], homeMatches: [], awayMatches: [], lastDate: null };
+function emptyState(initialElo = 1500) {
+  return { elo: initialElo, matches: [], homeMatches: [], awayMatches: [], lastDate: null };
 }
 
-function applyMatch(states, match) {
-  const homeState = states.get(match.home_team) || emptyState();
-  const awayState = states.get(match.away_team) || emptyState();
+function applyMatch(states, match, crossCompetition = false) {
+  const initialElo = crossCompetition ? safe(match.league_strength, 1500) : 1500;
+  const homeState = states.get(match.home_team) || emptyState(initialElo);
+  const awayState = states.get(match.away_team) || emptyState(initialElo);
   states.set(match.home_team, homeState);
   states.set(match.away_team, awayState);
 
@@ -140,10 +143,15 @@ function applyMatch(states, match) {
   homeState.homeMatches = homeState.homeMatches.slice(-16);
   awayState.awayMatches = awayState.awayMatches.slice(-16);
 
-  const expectedHome = 1 / (1 + Math.pow(10, (awayState.elo - (homeState.elo + 48)) / 400));
+  const isEuropeanMatch = EUROPE_COMPETITION_IDS.has(String(match.competition_id))
+    || String(match.competition_type || "").toLowerCase() === "europe";
+  const homeAdvantage = crossCompetition && isEuropeanMatch ? 38 : 48;
+  const expectedHome = 1 / (1 + Math.pow(10, (awayState.elo - (homeState.elo + homeAdvantage)) / 400));
   const actualHome = homeGoals > awayGoals ? 1 : homeGoals === awayGoals ? 0.5 : 0;
   const margin = Math.min(1.75, 1 + 0.13 * Math.abs(homeGoals - awayGoals));
-  const delta = 18 * margin * (actualHome - expectedHome);
+  const importance = crossCompetition ? clamp(safe(match.importance, isEuropeanMatch ? 1.16 : 1), 0.8, 1.3) : 1;
+  const k = crossCompetition ? (isEuropeanMatch ? 21 : 17) * importance : 18;
+  const delta = k * margin * (actualHome - expectedHome);
   homeState.elo += delta;
   awayState.elo -= delta;
   homeState.lastDate = match.date;
@@ -183,6 +191,11 @@ function stateMetrics(state, venue, predictionDate) {
 function selectBaselineTraining(training, competitionId) {
   const exact = training.filter((match) => match.competition_id === competitionId);
   if (exact.length >= 60) return { matches: exact, source: "competition" };
+  if (EUROPE_COMPETITION_IDS.has(competitionId)) {
+    const european = training.filter((match) => EUROPE_COMPETITION_IDS.has(String(match.competition_id)));
+    if (european.length >= 60) return { matches: european, source: "europe" };
+    return { matches: training, source: "europe-support" };
+  }
   return { matches: training, source: "top5" };
 }
 
@@ -238,17 +251,21 @@ function outcomeName(probabilities, homeTeam, awayTeam) {
 
 export function predictFromMatches(matches, rawOptions) {
   const options = { windowDays: 540, halfLifeDays: 120, competitionId: "", ...rawOptions };
-  if (!SUPPORTED_LEAGUE_IDS.has(options.competitionId)) {
-    throw new Error("Competizione non supportata: usa uno dei cinque maggiori campionati europei.");
+  if (!SUPPORTED_COMPETITION_IDS.has(options.competitionId)) {
+    throw new Error("Competizione non supportata: usa i Big Five o una delle tre coppe UEFA.");
   }
 
+  const europeanTarget = EUROPE_COMPETITION_IDS.has(options.competitionId);
   const predictionDate = dateAtNoon(options.date);
   const cutoffDate = dateAtNoon(options.cutoffDate || options.date);
   const windowStart = new Date(cutoffDate.getTime() - options.windowDays * DAY_MS);
   const warmupStart = new Date(windowStart.getTime() - 420 * DAY_MS);
   const chronological = matches.filter((match) => {
     const matchDate = dateAtNoon(match.date);
-    return SUPPORTED_LEAGUE_IDS.has(String(match.competition_id))
+    const competitionAllowed = europeanTarget
+      ? true
+      : DOMESTIC_COMPETITION_IDS.has(String(match.competition_id));
+    return competitionAllowed
       && matchDate < cutoffDate
       && matchDate >= warmupStart
       && match.home_goals !== null && match.home_goals !== undefined
@@ -260,7 +277,7 @@ export function predictFromMatches(matches, rawOptions) {
   const baselineSelection = selectBaselineTraining(training, options.competitionId);
   const baselineTraining = baselineSelection.matches;
   const states = new Map();
-  chronological.forEach((match) => applyMatch(states, match));
+  chronological.forEach((match) => applyMatch(states, match, europeanTarget));
   const home = stateMetrics(states.get(options.homeTeam) || emptyState(), "home", predictionDate);
   const away = stateMetrics(states.get(options.awayTeam) || emptyState(), "away", predictionDate);
   const league = weightedCompetitionAverages(baselineTraining, cutoffDate, options.halfLifeDays);
@@ -318,7 +335,7 @@ export function predictFromMatches(matches, rawOptions) {
     cutoffDate: String(options.cutoffDate || options.date).slice(0, 10),
     xgCoverage: (home.xgCoverage + away.xgCoverage) / 2,
     competitionId: options.competitionId,
-    modelVersion: "4.0-top5-core",
+    modelVersion: "4.1-top5-uefa-core",
   };
 }
 
