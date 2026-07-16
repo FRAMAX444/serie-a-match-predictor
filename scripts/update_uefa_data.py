@@ -11,7 +11,6 @@ import json
 import re
 import urllib.parse
 from pathlib import Path
-from typing import Iterable
 
 import update_europe_data as base
 
@@ -164,11 +163,12 @@ def fetch_europe_then_espn(descriptor: dict[str, object], start_year: int, compe
             print(f"UEFA API {descriptor['name']} {base.season_code(start_year)}: {len(official)} gare")
     except Exception as error:
         print(f"UEFA API {descriptor['name']} {base.season_code(start_year)}: {error}", file=base.sys.stderr)
+    if official:
+        return official
     try:
-        espn = original_fetch_events(descriptor, start_year, competition_type)
+        return original_fetch_events(descriptor, start_year, competition_type)
     except Exception:
-        espn = []
-    return base.merge_matches([*official, *espn]) if official else espn
+        return []
 
 
 def official_competition_payload(descriptor: dict[str, object], fixtures: list[dict[str, object]], source: str) -> dict[str, object]:
