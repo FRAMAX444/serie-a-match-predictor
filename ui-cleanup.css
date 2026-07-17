@@ -1,0 +1,139 @@
+/* Shared cleanup for concise copy and a neutral match-details dialog. */
+
+/* Keep labels, actions, statuses and warnings; remove secondary explanatory copy. */
+#league-picker-description,
+.settings-header > p,
+.settings-card__heading > p:not(#global-policy-status),
+.admin-header p,
+.admin-login > div > p,
+.fixture-modal__panel .fixture-modal__probability-heading span,
+.fixture-modal__panel .fixture-modal__details .context-line {
+  display: none !important;
+}
+
+/* Neutral surfaces throughout the popup. Team colors remain limited to the 1X2 bar. */
+.fixture-modal__panel {
+  color: #f3f4f6 !important;
+  border-color: rgba(255, 255, 255, .14) !important;
+  background: rgba(20, 22, 27, .98) !important;
+  box-shadow: 0 32px 110px rgba(0, 0, 0, .5), inset 0 1px rgba(255, 255, 255, .06) !important;
+  scrollbar-color: rgba(255, 255, 255, .22) transparent !important;
+}
+
+.fixture-modal__panel .fixture-modal__header {
+  border-bottom-color: rgba(255, 255, 255, .1) !important;
+  background: rgba(20, 22, 27, .96) !important;
+}
+
+.fixture-modal__panel .fixture-modal__meta,
+.fixture-modal__panel .fixture-modal__hero .predicted-score small,
+.fixture-modal__panel .fixture-modal__vs,
+.fixture-modal__panel .fixture-modal__outcome,
+.fixture-modal__panel .fixture-modal__details .detail-heading > span,
+.fixture-modal__panel .fixture-modal__details .metric-grid span,
+.fixture-modal__panel .fixture-modal__details .comparison-row span,
+.fixture-modal__panel .fixture-modal__details .score-list li {
+  color: rgba(229, 231, 235, .66) !important;
+}
+
+.fixture-modal__panel .fixture-modal__hero {
+  background: #25282e !important;
+}
+
+.fixture-modal__panel .fixture-modal__hero::before {
+  background:
+    radial-gradient(circle at 50% 0%, rgba(255, 255, 255, .08), transparent 46%),
+    linear-gradient(180deg, #2d3037 0%, #22252b 100%) !important;
+}
+
+.fixture-modal__panel .fixture-modal__hero::after {
+  display: none !important;
+}
+
+.fixture-modal__panel .fixture-modal__hero .team strong {
+  color: #f9fafb !important;
+  text-shadow: 0 2px 14px rgba(0, 0, 0, .48) !important;
+}
+
+.fixture-modal__panel .fixture-modal__hero .predicted-score {
+  border-color: rgba(255, 255, 255, .16) !important;
+  background: rgba(17, 19, 23, .72) !important;
+  box-shadow: inset 0 1px rgba(255, 255, 255, .06), 0 12px 28px rgba(0, 0, 0, .24) !important;
+}
+
+.fixture-modal__panel .fixture-modal__close,
+.fixture-modal__panel .fixture-modal__close:hover {
+  color: #f9fafb !important;
+}
+
+.fixture-modal__panel .quality {
+  color: #e5e7eb !important;
+  border-color: rgba(255, 255, 255, .18) !important;
+  background: #353941 !important;
+}
+
+.fixture-modal__panel .fixture-modal__details {
+  color: #eef0f3 !important;
+  border-top-color: rgba(255, 255, 255, .1) !important;
+  background: #191b20 !important;
+}
+
+.fixture-modal__panel .fixture-modal__details .detail-column {
+  border-color: rgba(255, 255, 255, .1) !important;
+  background: rgba(255, 255, 255, .045) !important;
+  box-shadow: inset 0 1px rgba(255, 255, 255, .035) !important;
+}
+
+.fixture-modal__panel .fixture-modal__details .detail-heading h3,
+.fixture-modal__panel .fixture-modal__details .metric-grid strong,
+.fixture-modal__panel .fixture-modal__details .comparison-row strong,
+.fixture-modal__panel .fixture-modal__details .score-list b {
+  color: #f7f7f8 !important;
+}
+
+.fixture-modal__panel .fixture-modal__details .metric-grid div,
+.fixture-modal__panel .fixture-modal__details .comparison-table,
+.fixture-modal__panel .fixture-modal__details .comparison-row {
+  border-color: rgba(255, 255, 255, .09) !important;
+}
+
+.fixture-modal__panel .fixture-modal__details .metric-grid div {
+  background: rgba(255, 255, 255, .05) !important;
+}
+
+.fixture-modal__panel .fixture-modal__details .score-bar {
+  background: rgba(255, 255, 255, .1) !important;
+}
+
+.fixture-modal__panel .fixture-modal__details .score-bar i {
+  background: linear-gradient(90deg, #6f7580, #b8bdc6) !important;
+}
+
+/* Exact proportional widths: no grid min-content redistribution and no flex shrinking. */
+.fixture-modal__panel .probability-strip--modal {
+  display: flex !important;
+  grid-template-columns: none !important;
+  align-items: stretch;
+  gap: 0 !important;
+  background: #1b1e23 !important;
+}
+
+.fixture-modal__panel .probability-strip--modal span {
+  box-sizing: border-box;
+  flex: 0 0 var(--chance, 33.333333%) !important;
+  width: var(--chance, 33.333333%) !important;
+  max-width: var(--chance, 33.333333%) !important;
+  min-width: 0 !important;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.fixture-modal__panel .probability-strip--modal span + span {
+  border-left: 1px solid rgba(255, 255, 255, .18) !important;
+}
+
+@media (max-width: 620px) {
+  .fixture-modal__panel .probability-strip--modal span {
+    padding-inline: 1px !important;
+  }
+}
