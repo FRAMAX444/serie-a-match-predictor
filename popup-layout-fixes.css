@@ -1,4 +1,4 @@
-/* Final popup layout safeguards: readable probability labels and a correctly fitted Roma crest. */
+/* Final popup layout safeguards: readable probability labels and consistently sized crests. */
 
 /* Keep the colored 1X2 bar proportional, but give the three labels equal safe columns below it. */
 .fixture-modal__panel .fixture-modal__probability-values {
@@ -48,15 +48,16 @@
   filter: none !important;
 }
 
-/* Roma's shield is portrait-oriented: use its real aspect ratio instead of forcing a square. */
+/* Roma receives the same square footprint as every other crest. */
 .fixture-modal__panel .fixture-modal__hero .team-badge--roma,
 .fixture-modal__panel .fixture-modal__hero .team--favorite .team-badge--roma,
 .fixture-modal__panel .fixture-modal__hero .team-badge--roma:not(.team-badge--fallback) {
-  width: clamp(66px, 12vw, 92px) !important;
-  height: auto !important;
+  box-sizing: border-box;
+  width: clamp(76px, 14vw, 112px) !important;
   max-width: 100% !important;
+  height: auto !important;
   max-height: none !important;
-  aspect-ratio: 387.26 / 518.67 !important;
+  aspect-ratio: 1 !important;
   align-self: center;
   overflow: hidden !important;
   border: 0 !important;
@@ -74,7 +75,7 @@
   height: 100% !important;
   max-width: 100% !important;
   max-height: 100% !important;
-  padding: 2px 0 !important;
+  padding: 5px 8px !important;
   object-fit: contain !important;
   object-position: 50% 50% !important;
   transform: none !important;
@@ -84,7 +85,7 @@
   .fixture-modal__panel .fixture-modal__hero .team-badge--roma,
   .fixture-modal__panel .fixture-modal__hero .team--favorite .team-badge--roma,
   .fixture-modal__panel .fixture-modal__hero .team-badge--roma:not(.team-badge--fallback) {
-    width: clamp(58px, 19vw, 76px) !important;
+    width: clamp(66px, 22vw, 92px) !important;
   }
 
   .fixture-modal__panel .fixture-modal__probability-values {
