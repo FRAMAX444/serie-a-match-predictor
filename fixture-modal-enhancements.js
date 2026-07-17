@@ -1,3 +1,4 @@
+import { normalizePercentageWidths } from "./prediction-presentation.js";
 import { paletteForTeam } from "./preferences.js";
 
 const modalContent = document.getElementById("fixture-modal-content");
@@ -9,16 +10,12 @@ function safeHex(value, fallback) {
 }
 
 function probabilityFromCell(cell) {
+  const exact = Number.parseFloat(cell?.dataset?.probability || "");
+  if (Number.isFinite(exact)) return Math.max(exact * 100, 0);
+
   const match = cell?.textContent?.match(/(\d+(?:[.,]\d+)?)\s*%/);
   const value = Number.parseFloat(match?.[1]?.replace(",", ".") || "0");
   return Number.isFinite(value) ? Math.max(value, 0) : 0;
-}
-
-function normalizedProbabilities(cells) {
-  const values = cells.map(probabilityFromCell);
-  const total = values.reduce((sum, value) => sum + value, 0);
-  if (total <= 0) return cells.map(() => 100 / Math.max(cells.length, 1));
-  return values.map((value) => (value / total) * 100);
 }
 
 function probabilityValue(label, probability, position) {
@@ -196,18 +193,19 @@ function enhanceFixtureModal() {
     probabilityStrip.style.removeProperty("--probability-columns");
 
     const cells = [...probabilityStrip.querySelectorAll("span")];
-    const probabilities = normalizedProbabilities(cells);
+    const displayedProbabilities = cells.map(probabilityFromCell);
+    const layoutProbabilities = normalizePercentageWidths(displayedProbabilities);
     const outcomeClasses = ["probability-strip__home", "probability-strip__draw", "probability-strip__away"];
     const outcomeLabels = ["1", "X", "2"];
 
     probabilityStrip.setAttribute("role", "img");
     probabilityStrip.setAttribute(
       "aria-label",
-      `Probabilità 1X2 per ${matchLabel}: ${outcomeLabels.map((label, index) => `${label} ${probabilities[index].toFixed(1)}%`).join(", ")}`,
+      `Probabilità 1X2 per ${matchLabel}: ${outcomeLabels.map((label, index) => `${label} ${displayedProbabilities[index].toFixed(1)}%`).join(", ")}`,
     );
 
     cells.forEach((cell, index) => {
-      const chance = `${probabilities[index].toFixed(6)}%`;
+      const chance = `${layoutProbabilities[index].toFixed(6)}%`;
       cell.classList.add(outcomeClasses[index]);
       cell.style.setProperty("--chance", chance);
       cell.style.flexBasis = chance;
@@ -226,10 +224,11 @@ function enhanceFixtureModal() {
 
     let cumulativeProbability = 0;
     const probabilityItems = outcomeLabels.map((label, index) => {
-      const probability = probabilities[index];
-      const center = cumulativeProbability + probability / 2;
-      cumulativeProbability += probability;
-      return probabilityValue(label, probability, center);
+      const displayedProbability = displayedProbabilities[index];
+      const layoutProbability = layoutProbabilities[index];
+      const center = cumulativeProbability + layoutProbability / 2;
+      cumulativeProbability += layoutProbability;
+      return probabilityValue(label, displayedProbability, center);
     });
     values.replaceChildren(...probabilityItems);
     watchProbabilityValues(values);
