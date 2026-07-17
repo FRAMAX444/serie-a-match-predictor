@@ -59,16 +59,13 @@ function enhanceFixtureModal() {
   const probabilityStrip = hero.querySelector(".probability-strip");
   if (probabilityStrip) {
     probabilityStrip.classList.add("probability-strip--modal");
+    probabilityStrip.style.removeProperty("--probability-columns");
 
     const cells = [...probabilityStrip.querySelectorAll("span")];
     const probabilities = normalizedProbabilities(cells);
     const outcomeClasses = ["probability-strip__home", "probability-strip__draw", "probability-strip__away"];
     const outcomeLabels = ["1", "X", "2"];
 
-    probabilityStrip.style.setProperty(
-      "--probability-columns",
-      probabilities.map((value) => `${value.toFixed(6)}fr`).join(" "),
-    );
     probabilityStrip.setAttribute("role", "img");
     probabilityStrip.setAttribute(
       "aria-label",
@@ -76,14 +73,17 @@ function enhanceFixtureModal() {
     );
 
     cells.forEach((cell, index) => {
+      const chance = `${probabilities[index].toFixed(6)}%`;
       cell.classList.add(outcomeClasses[index]);
-      cell.style.setProperty("--chance", `${probabilities[index].toFixed(3)}%`);
+      cell.style.setProperty("--chance", chance);
+      cell.style.flexBasis = chance;
+      cell.style.width = chance;
     });
 
     if (!probabilityStrip.previousElementSibling?.classList.contains("fixture-modal__probability-heading")) {
       const heading = document.createElement("div");
       heading.className = "fixture-modal__probability-heading";
-      heading.innerHTML = "<strong>Probabilità 1X2</strong><span>La larghezza di ogni sezione è proporzionale alla probabilità</span>";
+      heading.innerHTML = "<strong>Probabilità 1X2</strong>";
       probabilityStrip.before(heading);
     }
   }
