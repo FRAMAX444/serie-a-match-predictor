@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { calibrateScoreMatrix, matrixProbabilities, scoreMatrix } from "../model.js";
+import { matrixProbabilities, scoreConsensusChecks, scoreMatrix } from "../model.js";
+import { selectRepresentativeScore } from "../prediction-presentation.js";
 
 const strongAwayContext = {
   lambdaHome: 1.00,
@@ -30,47 +31,54 @@ const strongAwayContext = {
   },
 };
 
-const awayConsensus = calibrateScoreMatrix(scoreMatrix(1.00, 1.99), strongAwayContext);
-const awayProbabilities = matrixProbabilities(awayConsensus.matrix);
+const awayProbabilities = matrixProbabilities(scoreMatrix(1.00, 1.99));
+const awayChecks = scoreConsensusChecks(
+  strongAwayContext.lambdaHome,
+  strongAwayContext.lambdaAway,
+  strongAwayContext.home,
+  strongAwayContext.away,
+);
+assert.equal(awayProbabilities.scores[0].home, awayProbabilities.scores[0].away);
 assert.ok(awayProbabilities.awayWin > awayProbabilities.draw);
-assert.ok(awayProbabilities.scores[0].away > awayProbabilities.scores[0].home);
-assert.notEqual(awayProbabilities.scores[0].home, awayProbabilities.scores[0].away);
+assert.ok(awayChecks.direction < -0.5);
 
-const balancedContext = {
-  lambdaHome: 1.18,
-  lambdaAway: 1.16,
-  home: {
-    elo: 1502,
-    ppg3: 1.4,
-    ppg5: 1.42,
-    xgFor5: 1.28,
-    xgAgainst5: 1.25,
-    sot5: 3.8,
-    venueGf5: 1.3,
-    venueGa5: 1.25,
-    restDays: 7,
-    sampleReliability: 1,
-  },
-  away: {
-    elo: 1498,
-    ppg3: 1.38,
-    ppg5: 1.4,
-    xgFor5: 1.27,
-    xgAgainst5: 1.26,
-    sot5: 3.75,
-    venueGf5: 1.29,
-    venueGa5: 1.26,
-    restDays: 7,
-    sampleReliability: 1,
-  },
+const awayScore = selectRepresentativeScore({
+  probabilities: awayProbabilities,
+  mostLikelyOutcome: { key: "2", probability: awayProbabilities.awayWin },
+});
+const bestAwayScore = awayProbabilities.scores.find((score) => score.away > score.home);
+assert.deepEqual(
+  { home: awayScore.home, away: awayScore.away, probability: awayScore.probability },
+  { home: bestAwayScore.home, away: bestAwayScore.away, probability: bestAwayScore.probability },
+);
+assert.ok(awayScore.away > awayScore.home);
+
+const balancedHome = {
+  elo: 1500,
+  ppg3: 1.4,
+  ppg5: 1.4,
+  xgFor5: 1.2,
+  xgAgainst5: 1.2,
+  sot5: 3.7,
+  venueGf5: 1.2,
+  venueGa5: 1.2,
+  restDays: 7,
+  sampleReliability: 1,
 };
+const balancedAway = { ...balancedHome };
+const balancedProbabilities = matrixProbabilities(scoreMatrix(0.80, 0.80));
+const balancedChecks = scoreConsensusChecks(0.80, 0.80, balancedHome, balancedAway);
+assert.ok(balancedProbabilities.draw > balancedProbabilities.homeWin);
+assert.ok(balancedProbabilities.draw > balancedProbabilities.awayWin);
+assert.ok(balancedChecks.balance > 0.99);
 
-const balancedConsensus = calibrateScoreMatrix(scoreMatrix(1.18, 1.16), balancedContext);
-const balancedProbabilities = matrixProbabilities(balancedConsensus.matrix);
-assert.equal(balancedProbabilities.scores[0].home, balancedProbabilities.scores[0].away);
-assert.ok(balancedConsensus.checks.balance > 0.9);
+const drawScore = selectRepresentativeScore({
+  probabilities: balancedProbabilities,
+  mostLikelyOutcome: { key: "X", probability: balancedProbabilities.draw },
+});
+assert.equal(drawScore.home, drawScore.away);
 
-const total = awayConsensus.matrix.flat().reduce((sum, value) => sum + value, 0);
+const total = scoreMatrix(1.00, 1.99).flat().reduce((sum, value) => sum + value, 0);
 assert.ok(Math.abs(total - 1) < 1e-12);
 
-console.log("OK: calibrazione consensus del risultato esatto");
+console.log("OK: consensus diagnostico e punteggio MAP condizionale coerente");
