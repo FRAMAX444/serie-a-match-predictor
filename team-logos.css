@@ -10,6 +10,13 @@
   object-fit: contain;
 }
 
+.team-badge__image[src*="roma-2026.svg"] {
+  padding: 4px;
+  object-position: 50% 50%;
+  transform: translateY(-8%);
+  transform-origin: center;
+}
+
 .team-badge__fallback {
   place-self: center;
 }
