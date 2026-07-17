@@ -36,57 +36,94 @@ function probabilityValue(label, probability, position) {
   return item;
 }
 
+function measuredProbabilityItems(values, containerWidth) {
+  return [...values.querySelectorAll(".fixture-modal__probability-value")].map((item) => {
+    const width = Math.min(Math.ceil(item.getBoundingClientRect().width), containerWidth);
+    const position = Number.parseFloat(item.dataset.probabilityPosition || "50");
+    const desiredCenter = (Math.min(100, Math.max(0, position)) / 100) * containerWidth;
+
+    return {
+      item,
+      width,
+      desiredCenter,
+      desiredLeft: desiredCenter - width / 2,
+    };
+  });
+}
+
+function resolveSingleRowPositions(measurements, containerWidth, minimumGap) {
+  if (!measurements.length) return [];
+
+  const positions = measurements.map(({ desiredLeft }) => desiredLeft);
+  const lastIndex = measurements.length - 1;
+
+  positions[0] = Math.max(0, positions[0]);
+  for (let index = 1; index <= lastIndex; index += 1) {
+    const previousEnd = positions[index - 1] + measurements[index - 1].width;
+    positions[index] = Math.max(positions[index], previousEnd + minimumGap);
+  }
+
+  positions[lastIndex] = Math.min(
+    positions[lastIndex],
+    Math.max(0, containerWidth - measurements[lastIndex].width),
+  );
+  for (let index = lastIndex - 1; index >= 0; index -= 1) {
+    const latestAllowed = positions[index + 1] - minimumGap - measurements[index].width;
+    positions[index] = Math.min(positions[index], latestAllowed);
+  }
+
+  if (positions[0] < 0) {
+    const shift = -positions[0];
+    for (let index = 0; index <= lastIndex; index += 1) positions[index] += shift;
+  }
+
+  const finalOverflow = positions[lastIndex] + measurements[lastIndex].width - containerWidth;
+  if (finalOverflow > 0) {
+    for (let index = 0; index <= lastIndex; index += 1) positions[index] -= finalOverflow;
+  }
+
+  return positions;
+}
+
 function layoutProbabilityValues(values) {
   const items = [...values.querySelectorAll(".fixture-modal__probability-value")];
   const containerWidth = values.getBoundingClientRect().width;
   if (!items.length || containerWidth <= 0) return;
 
-  const minimumGap = 8;
-  const occupiedLanes = [];
-  let highestLane = 0;
-
   items.forEach((item) => {
     item.style.left = "0px";
-    item.style.setProperty("--label-lane", "0");
+    item.style.setProperty("--anchor-offset", "0px");
   });
 
-  const measurements = items.map((item) => {
-    const naturalWidth = Math.min(Math.ceil(item.getBoundingClientRect().width), containerWidth);
-    const position = Number.parseFloat(item.dataset.probabilityPosition || "50");
-    const desiredCenter = (Math.min(100, Math.max(0, position)) / 100) * containerWidth;
-    const halfWidth = naturalWidth / 2;
-    const center = Math.min(
-      Math.max(desiredCenter, halfWidth),
-      Math.max(halfWidth, containerWidth - halfWidth),
-    );
+  values.classList.remove("fixture-modal__probability-values--compact");
+  let measurements = measuredProbabilityItems(values, containerWidth);
+  let minimumGap = containerWidth < 420 ? 6 : 10;
+  let requiredWidth = measurements.reduce((sum, measurement) => sum + measurement.width, 0)
+    + minimumGap * Math.max(0, measurements.length - 1);
 
-    return {
-      item,
-      center,
-      start: center - halfWidth,
-      end: center + halfWidth,
-    };
+  if (requiredWidth > containerWidth) {
+    values.classList.add("fixture-modal__probability-values--compact");
+    measurements = measuredProbabilityItems(values, containerWidth);
+    minimumGap = 4;
+    requiredWidth = measurements.reduce((sum, measurement) => sum + measurement.width, 0)
+      + minimumGap * Math.max(0, measurements.length - 1);
+  }
+
+  const positions = requiredWidth <= containerWidth
+    ? resolveSingleRowPositions(measurements, containerWidth, minimumGap)
+    : measurements.map((measurement, index) => {
+      const equalSlot = containerWidth / measurements.length;
+      return Math.max(0, Math.min(
+        index * equalSlot + (equalSlot - measurement.width) / 2,
+        containerWidth - measurement.width,
+      ));
+    });
+
+  measurements.forEach(({ item, width, desiredCenter }, index) => {
+    const adjustedCenter = positions[index] + width / 2;
+    item.style.left = `${adjustedCenter}px`;
+    item.style.setProperty("--anchor-offset", `${desiredCenter - adjustedCenter}px`);
   });
-
-  measurements.forEach(({ item, center, start, end }) => {
-    let lane = 0;
-    while (
-      occupiedLanes[lane]?.some(
-        (interval) => start < interval.end + minimumGap && end > interval.start - minimumGap,
-      )
-    ) {
-      lane += 1;
-    }
-
-    if (!occupiedLanes[lane]) occupiedLanes[lane] = [];
-    occupiedLanes[lane].push({ start, end });
-    highestLane = Math.max(highestLane, lane);
-
-    item.style.left = `${center}px`;
-    item.style.setProperty("--label-lane", String(lane));
-  });
-
-  values.style.setProperty("--probability-label-lanes", String(highestLane + 1));
 }
 
 function watchProbabilityValues(values) {
