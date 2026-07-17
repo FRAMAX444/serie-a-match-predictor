@@ -63,24 +63,24 @@ export function matrixProbabilities(matrix) {
   return { homeWin, draw, awayWin, over25, bothScore, scores };
 }
 
-function consensusDirection(lambdaHome, lambdaAway, home, away) {
-  const expectedGoalEdge = Math.tanh((lambdaHome - lambdaAway) / 0.85);
-  const eloEdge = Math.tanh((safe(home?.elo, 1500) - safe(away?.elo, 1500)) / 220);
-  const homeForm = 0.6 * safe(home?.ppg3, 1.35) + 0.4 * safe(home?.ppg5, 1.35);
-  const awayForm = 0.6 * safe(away?.ppg3, 1.35) + 0.4 * safe(away?.ppg5, 1.35);
+export function scoreConsensusChecks(lambdaHome, lambdaAway, home = {}, away = {}) {
+  const expectedGoalEdge = Math.tanh((safe(lambdaHome, 1.3) - safe(lambdaAway, 1.15)) / 0.85);
+  const eloEdge = Math.tanh((safe(home.elo, 1500) - safe(away.elo, 1500)) / 220);
+  const homeForm = 0.6 * safe(home.ppg3, 1.35) + 0.4 * safe(home.ppg5, 1.35);
+  const awayForm = 0.6 * safe(away.ppg3, 1.35) + 0.4 * safe(away.ppg5, 1.35);
   const formEdge = Math.tanh((homeForm - awayForm) / 1.4);
   const chanceCreationEdge = Math.tanh((
     0.65 * (
-      safe(home?.xgFor5, 1.3) - safe(away?.xgFor5, 1.3)
-      + safe(away?.xgAgainst5, 1.3) - safe(home?.xgAgainst5, 1.3)
+      safe(home.xgFor5, 1.3) - safe(away.xgFor5, 1.3)
+      + safe(away.xgAgainst5, 1.3) - safe(home.xgAgainst5, 1.3)
     )
-    + 0.12 * (safe(home?.sot5, 3.8) - safe(away?.sot5, 3.8))
+    + 0.12 * (safe(home.sot5, 3.8) - safe(away.sot5, 3.8))
   ) / 1.25);
   const venueEdge = Math.tanh((
-    safe(home?.venueGf5, 1.3) - safe(away?.venueGf5, 1.3)
-    + safe(away?.venueGa5, 1.3) - safe(home?.venueGa5, 1.3)
+    safe(home.venueGf5, 1.3) - safe(away.venueGf5, 1.3)
+    + safe(away.venueGa5, 1.3) - safe(home.venueGa5, 1.3)
   ) / 1.6);
-  const restEdge = Math.tanh((safe(home?.restDays, 8) - safe(away?.restDays, 8)) / 7);
+  const restEdge = Math.tanh((safe(home.restDays, 8) - safe(away.restDays, 8)) / 7);
   const direction = clamp(
     0.46 * expectedGoalEdge
     + 0.17 * eloEdge
@@ -91,6 +91,10 @@ function consensusDirection(lambdaHome, lambdaAway, home, away) {
     -1,
     1,
   );
+  const reliability = clamp(0.35 + 0.65 * (
+    safe(home.sampleReliability, 0.5) + safe(away.sampleReliability, 0.5)
+  ) / 2, 0.35, 1);
+  const lambdaGap = Math.abs(safe(lambdaHome, 1.3) - safe(lambdaAway, 1.15));
   return {
     direction,
     expectedGoalEdge,
@@ -99,57 +103,9 @@ function consensusDirection(lambdaHome, lambdaAway, home, away) {
     chanceCreationEdge,
     venueEdge,
     restEdge,
-  };
-}
-
-export function calibrateScoreMatrix(matrix, context = {}) {
-  const lambdaHome = safe(context.lambdaHome, 1.3);
-  const lambdaAway = safe(context.lambdaAway, 1.15);
-  const signals = consensusDirection(lambdaHome, lambdaAway, context.home, context.away);
-  const reliability = clamp(0.35 + 0.65 * (
-    safe(context.home?.sampleReliability, 0.5) + safe(context.away?.sampleReliability, 0.5)
-  ) / 2, 0.35, 1);
-  const lambdaDifference = lambdaHome - lambdaAway;
-  const lambdaGap = Math.abs(lambdaDifference);
-  const balance = 1 - Math.abs(signals.direction);
-  const homeLogWeight = reliability * clamp(
-    0.16 * signals.direction + 0.035 * Math.max(0, lambdaDifference),
-    -0.28,
-    0.28,
-  );
-  const awayLogWeight = reliability * clamp(
-    -0.16 * signals.direction + 0.035 * Math.max(0, -lambdaDifference),
-    -0.28,
-    0.28,
-  );
-  const drawLogWeight = reliability * clamp(
-    0.08 * (balance - 0.5)
-    - 0.12 * Math.max(0, lambdaGap - 0.18)
-    - 0.10 * Math.abs(signals.direction),
-    -0.30,
-    0.08,
-  );
-  const outcomeWeights = {
-    home: Math.exp(homeLogWeight),
-    draw: Math.exp(drawLogWeight),
-    away: Math.exp(awayLogWeight),
-  };
-  let total = 0;
-  const calibrated = matrix.map((row, homeGoals) => row.map((probability, awayGoals) => {
-    const outcome = homeGoals > awayGoals ? "home" : homeGoals === awayGoals ? "draw" : "away";
-    const adjusted = probability * outcomeWeights[outcome];
-    total += adjusted;
-    return adjusted;
-  }));
-  return {
-    matrix: calibrated.map((row) => row.map((value) => value / total)),
-    checks: {
-      ...signals,
-      reliability,
-      lambdaGap,
-      balance,
-      outcomeWeights,
-    },
+    reliability,
+    lambdaGap,
+    balance: 1 - Math.abs(direction),
   };
 }
 
@@ -406,10 +362,10 @@ export function predictFromMatches(matches, rawOptions) {
   lambdaHome = clamp(lambdaHome, 0.18, 4.1);
   lambdaAway = clamp(lambdaAway, 0.16, 3.9);
 
-  const baseMatrix = scoreMatrix(lambdaHome, lambdaAway, 8);
-  const consensus = calibrateScoreMatrix(baseMatrix, { lambdaHome, lambdaAway, home, away });
-  const probabilities = matrixProbabilities(consensus.matrix);
+  const probabilities = matrixProbabilities(scoreMatrix(lambdaHome, lambdaAway, 8));
+  const scoreChecks = scoreConsensusChecks(lambdaHome, lambdaAway, home, away);
   const quality = dataQuality(home, away, training.length, baselineTraining.length);
+  const mostLikelyOutcome = outcomeName(probabilities, options.homeTeam, options.awayTeam);
   return {
     lambdaHome,
     lambdaAway,
@@ -418,8 +374,8 @@ export function predictFromMatches(matches, rawOptions) {
     away,
     league,
     quality,
-    scoreChecks: consensus.checks,
-    mostLikelyOutcome: outcomeName(probabilities, options.homeTeam, options.awayTeam),
+    scoreChecks,
+    mostLikelyOutcome,
     trainingMatches: training.length,
     baselineMatches: baselineTraining.length,
     baselineSource: baselineSelection.source,
@@ -428,7 +384,7 @@ export function predictFromMatches(matches, rawOptions) {
     cutoffDate: String(options.cutoffDate || options.date).slice(0, 10),
     xgCoverage: (home.xgCoverage + away.xgCoverage) / 2,
     competitionId: options.competitionId,
-    modelVersion: "4.2-consensus-score",
+    modelVersion: "4.3-coherent-score",
   };
 }
 
