@@ -1,10 +1,10 @@
 {
   "name": "top-five-european-match-predictor-pages",
-  "version": "4.1.1",
+  "version": "4.2.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node tests/data-fetch-cache.test.js && node tests/model.test.js && node tests/global-settings.test.js && node tests/multi-league.test.js && node tests/admin-auth.test.js",
+    "test": "node tests/data-fetch-cache.test.js && node tests/score-consensus.test.js && node tests/model.test.js && node tests/global-settings.test.js && node tests/multi-league.test.js && node tests/admin-auth.test.js",
     "check": "node --check data-fetch-cache.js && node --check app.js && node --check all-team-crests.js && node --check preferences.js && node --check settings.js && node --check competition-preference.js && node --check league-picker.js && node --check model.js && node --check matchdays.js && node --check firebase-config.js && node --check firebase-client.js && node --check global-settings.js && node --check admin-auth.js && node --check admin.js"
   }
 }
