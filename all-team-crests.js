@@ -1,4 +1,4 @@
-const ROMA_LATEST_LOGO = "./assets/team-logos/roma-2026.svg";
+const ROMA_LATEST_LOGO = new URL("./assets/team-logos/roma-2026.svg", import.meta.url).href;
 const crestCandidates = new Map();
 
 function teamKey(team) {
@@ -8,6 +8,16 @@ function teamKey(team) {
     .toLocaleLowerCase("it")
     .replace(/[^a-z0-9]+/g, " ")
     .trim();
+}
+
+function normalizedUrl(value) {
+  const source = String(value || "").trim();
+  if (!source) return "";
+  try {
+    return new URL(source, document.baseURI).href;
+  } catch {
+    return source;
+  }
 }
 
 function isRomaTeam(team) {
@@ -85,9 +95,11 @@ function attachCrest(teamElement) {
   if (!badge || !team) return;
 
   const roma = isRomaTeam(team);
+  badge.classList.toggle("team-badge--roma", roma);
+
   let image = badge.querySelector(".team-badge__image");
   const existingSource = String(image?.getAttribute("src") || "").trim();
-  const alreadyCorrect = roma && existingSource === ROMA_LATEST_LOGO;
+  const alreadyCorrect = roma && normalizedUrl(existingSource) === ROMA_LATEST_LOGO;
   if (badge.dataset.crestHydrated === "true" && (!roma || alreadyCorrect)) return;
 
   const catalogCandidates = crestCandidates.get(teamKey(team)) || [];
@@ -98,7 +110,7 @@ function attachCrest(teamElement) {
 
   badge.dataset.crestHydrated = "true";
   const fallback = badge.querySelector(".team-badge__fallback");
-  let candidateIndex = existingSource && candidates[0] === existingSource ? 1 : 0;
+  let candidateIndex = existingSource && normalizedUrl(candidates[0]) === normalizedUrl(existingSource) ? 1 : 0;
 
   if (!image) {
     image = document.createElement("img");
@@ -155,7 +167,8 @@ function enforceRomaImages(root = document) {
 
   for (const image of images) {
     if (!isRomaTeam(inferredImageTeam(image))) continue;
-    if (image.getAttribute("src") !== ROMA_LATEST_LOGO) image.src = ROMA_LATEST_LOGO;
+    image.closest(".team-badge")?.classList.add("team-badge--roma");
+    if (normalizedUrl(image.getAttribute("src")) !== ROMA_LATEST_LOGO) image.src = ROMA_LATEST_LOGO;
   }
 }
 
