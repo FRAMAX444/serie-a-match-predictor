@@ -3,6 +3,10 @@
 }
 .control-bar--europe .control-links { align-self: stretch; }
 
+body:has(#favorite-team-select > option:checked:not([value=""])) .fixture-card:not(.fixture-card--favorite) {
+  display: none;
+}
+
 .select-wrap--competition select { padding-left: 3.35rem; }
 .select-wrap > .competition-select-logo {
   position: absolute;
@@ -141,7 +145,11 @@ body.league-picker-open { overflow: hidden; }
 }
 
 @media (max-width: 680px) {
-  .control-bar--europe { grid-template-columns: 1fr 1fr auto; }
+  .control-bar--europe {
+    position: static;
+    top: auto;
+    grid-template-columns: 1fr 1fr auto;
+  }
   .control-bar--europe .select-wrap:first-child { grid-column: 1 / 3; }
   .control-bar--europe .primary-button { grid-column: 1 / 3; }
   .control-bar--europe .control-links { grid-column: 3; grid-row: 1; flex-direction: column; }
