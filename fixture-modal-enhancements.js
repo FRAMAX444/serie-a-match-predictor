@@ -10,7 +10,14 @@ function safeHex(value, fallback) {
 function probabilityFromCell(cell) {
   const match = cell?.textContent?.match(/(\d+(?:[.,]\d+)?)\s*%/);
   const value = Number.parseFloat(match?.[1]?.replace(",", ".") || "0");
-  return Number.isFinite(value) ? Math.max(value, 1) : 1;
+  return Number.isFinite(value) ? Math.max(value, 0) : 0;
+}
+
+function normalizedProbabilities(cells) {
+  const values = cells.map(probabilityFromCell);
+  const total = values.reduce((sum, value) => sum + value, 0);
+  if (total <= 0) return cells.map(() => 100 / Math.max(cells.length, 1));
+  return values.map((value) => (value / total) * 100);
 }
 
 function enhanceFixtureModal() {
@@ -36,10 +43,10 @@ function enhanceFixtureModal() {
 
   const homePalette = paletteForTeam(homeName);
   const awayPalette = paletteForTeam(awayName);
-  hero.style.setProperty("--home-team-primary", safeHex(homePalette.primary, "#1f4f8f"));
-  hero.style.setProperty("--home-team-secondary", safeHex(homePalette.secondary, "#172033"));
-  hero.style.setProperty("--away-team-primary", safeHex(awayPalette.primary, "#7a263a"));
-  hero.style.setProperty("--away-team-secondary", safeHex(awayPalette.secondary, "#ffffff"));
+  modalContent.style.setProperty("--home-team-primary", safeHex(homePalette.primary, "#1f4f8f"));
+  modalContent.style.setProperty("--home-team-secondary", safeHex(homePalette.secondary, "#172033"));
+  modalContent.style.setProperty("--away-team-primary", safeHex(awayPalette.primary, "#7a263a"));
+  modalContent.style.setProperty("--away-team-secondary", safeHex(awayPalette.secondary, "#ffffff"));
 
   const predictedScore = hero.querySelector(".predicted-score");
   if (predictedScore && !predictedScore.querySelector(".fixture-modal__vs")) {
@@ -52,20 +59,31 @@ function enhanceFixtureModal() {
   const probabilityStrip = hero.querySelector(".probability-strip");
   if (probabilityStrip) {
     probabilityStrip.classList.add("probability-strip--modal");
-    probabilityStrip.setAttribute("role", "img");
-    probabilityStrip.setAttribute("aria-label", `Probabilità 1X2 per ${matchLabel}`);
 
     const cells = [...probabilityStrip.querySelectorAll("span")];
+    const probabilities = normalizedProbabilities(cells);
     const outcomeClasses = ["probability-strip__home", "probability-strip__draw", "probability-strip__away"];
+    const outcomeLabels = ["1", "X", "2"];
+
+    probabilityStrip.style.setProperty(
+      "--probability-columns",
+      probabilities.map((value) => `${value.toFixed(6)}fr`).join(" "),
+    );
+    probabilityStrip.setAttribute("role", "img");
+    probabilityStrip.setAttribute(
+      "aria-label",
+      `Probabilità 1X2 per ${matchLabel}: ${outcomeLabels.map((label, index) => `${label} ${probabilities[index].toFixed(1)}%`).join(", ")}`,
+    );
+
     cells.forEach((cell, index) => {
       cell.classList.add(outcomeClasses[index]);
-      cell.style.setProperty("--chance", String(probabilityFromCell(cell)));
+      cell.style.setProperty("--chance", `${probabilities[index].toFixed(3)}%`);
     });
 
     if (!probabilityStrip.previousElementSibling?.classList.contains("fixture-modal__probability-heading")) {
       const heading = document.createElement("div");
       heading.className = "fixture-modal__probability-heading";
-      heading.innerHTML = "<strong>Probabilità 1X2</strong><span>Le dimensioni mostrano le chance stimate</span>";
+      heading.innerHTML = "<strong>Probabilità 1X2</strong><span>La larghezza di ogni sezione è proporzionale alla probabilità</span>";
       probabilityStrip.before(heading);
     }
   }
