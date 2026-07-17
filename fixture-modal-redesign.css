@@ -1,59 +1,22 @@
-body.fixture-modal-open {
-  overflow: hidden;
-}
-
-.fixture-modal {
-  position: fixed;
-  inset: 0;
-  z-index: 1200;
-  display: grid;
-  place-items: center;
-  padding: clamp(10px, 3vw, 28px);
-  overflow-y: auto;
-  isolation: isolate;
-  background:
-    radial-gradient(circle at 50% 44%, rgba(255, 255, 255, .08), transparent 32%),
-    linear-gradient(rgba(3, 16, 10, .72), rgba(2, 11, 7, .9)),
-    repeating-linear-gradient(90deg, #1b6a40 0 12.5%, #175c37 12.5% 25%);
-  backdrop-filter: blur(5px);
-  -webkit-backdrop-filter: blur(5px);
-}
-
-.fixture-modal::before {
-  content: "";
-  position: fixed;
-  inset: clamp(22px, 5vw, 64px);
-  z-index: -1;
-  border: 2px solid rgba(255, 255, 255, .22);
-  border-radius: 8px;
-  pointer-events: none;
-  opacity: .72;
-  background:
-    linear-gradient(90deg, transparent calc(50% - 1px), rgba(255, 255, 255, .2) 50%, transparent calc(50% + 1px)),
-    radial-gradient(circle at 50% 50%, transparent 0 76px, rgba(255, 255, 255, .22) 77px 79px, transparent 80px),
-    linear-gradient(90deg, rgba(255, 255, 255, .19) 0 2px, transparent 2px calc(18% - 2px), rgba(255, 255, 255, .19) calc(18% - 2px) 18%, transparent 18% 82%, rgba(255, 255, 255, .19) 82% calc(82% + 2px), transparent calc(82% + 2px) calc(100% - 2px), rgba(255, 255, 255, .19) calc(100% - 2px));
-  box-shadow: inset 0 0 90px rgba(0, 0, 0, .16);
-}
-
-.fixture-modal[hidden] {
-  display: none;
-}
+/* Il redesign è volutamente limitato al contenuto del dialogo.
+   L'overlay continua a mostrare la pagina precedente, oscurata e sfocata
+   dalle regole originali di fixture-modal.css. */
 
 .fixture-modal__panel {
   position: relative;
   width: min(820px, 100%);
   max-height: calc(100vh - clamp(20px, 6vw, 56px));
   overflow: auto;
-  border: 1px solid rgba(255, 255, 255, .22);
+  border: 1px solid rgba(255, 255, 255, .2);
   border-radius: 26px;
   outline: none;
   color: #f5f8f6;
-  background: rgba(6, 17, 13, .94);
-  box-shadow: 0 32px 110px rgba(0, 0, 0, .52), inset 0 1px rgba(255, 255, 255, .08);
+  background: rgba(6, 17, 13, .97);
+  box-shadow: 0 32px 110px rgba(0, 0, 0, .48), inset 0 1px rgba(255, 255, 255, .08);
   scrollbar-color: rgba(255, 255, 255, .24) transparent;
 }
 
-.fixture-modal__header {
+.fixture-modal__panel .fixture-modal__header {
   position: sticky;
   top: 0;
   z-index: 5;
@@ -63,12 +26,12 @@ body.fixture-modal-open {
   gap: 20px;
   padding: 20px 22px 16px;
   border-bottom: 1px solid rgba(255, 255, 255, .1);
-  background: rgba(5, 16, 12, .88);
+  background: rgba(5, 16, 12, .94);
   backdrop-filter: blur(18px);
   -webkit-backdrop-filter: blur(18px);
 }
 
-.fixture-modal__header h2 {
+.fixture-modal__panel .fixture-modal__header h2 {
   margin: 5px 0 0;
   color: #ffffff;
   font-size: clamp(1.25rem, 4vw, 1.72rem);
@@ -76,7 +39,7 @@ body.fixture-modal-open {
   letter-spacing: -.04em;
 }
 
-.fixture-modal__meta {
+.fixture-modal__panel .fixture-modal__meta {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -86,19 +49,19 @@ body.fixture-modal-open {
   text-transform: capitalize;
 }
 
-.fixture-modal__match-label {
+.fixture-modal__panel .fixture-modal__match-label {
   color: rgba(255, 255, 255, .92);
   font-weight: 800;
   letter-spacing: .015em;
 }
 
-.fixture-modal__match-label::after {
+.fixture-modal__panel .fixture-modal__match-label::after {
   content: "•";
   margin-left: 10px;
   color: rgba(255, 255, 255, .36);
 }
 
-.fixture-modal__close {
+.fixture-modal__panel .fixture-modal__close {
   flex: 0 0 auto;
   width: 42px;
   min-height: 42px;
@@ -109,13 +72,13 @@ body.fixture-modal-open {
   font-size: 1.35rem;
 }
 
-.fixture-modal__close:hover {
+.fixture-modal__panel .fixture-modal__close:hover {
   border-color: rgba(255, 255, 255, .42);
   color: #ffffff;
   background: rgba(255, 255, 255, .14);
 }
 
-.fixture-modal__hero {
+.fixture-modal__panel .fixture-modal__hero {
   --home-team-primary: #1f4f8f;
   --home-team-secondary: #172033;
   --away-team-primary: #7a263a;
@@ -127,42 +90,50 @@ body.fixture-modal-open {
   background: #123f28;
 }
 
-.fixture-modal__hero::before {
+.fixture-modal__panel .fixture-modal__hero::before {
   content: "";
   position: absolute;
   inset: 0;
   z-index: -2;
   background:
-    linear-gradient(rgba(4, 25, 15, .22), rgba(3, 18, 12, .74)),
+    linear-gradient(rgba(4, 25, 15, .2), rgba(3, 18, 12, .76)),
     repeating-linear-gradient(90deg, #27794a 0 12.5%, #236e43 12.5% 25%);
 }
 
-.fixture-modal__hero::after {
+.fixture-modal__panel .fixture-modal__hero::after {
   content: "";
   position: absolute;
   inset: 18px;
   z-index: -1;
-  border: 1px solid rgba(255, 255, 255, .2);
+  border: 1px solid rgba(255, 255, 255, .21);
   border-radius: 3px;
   pointer-events: none;
   background:
-    linear-gradient(90deg, transparent calc(50% - 1px), rgba(255, 255, 255, .18) 50%, transparent calc(50% + 1px)),
-    radial-gradient(circle at 50% 50%, transparent 0 54px, rgba(255, 255, 255, .18) 55px 56px, transparent 57px);
-  opacity: .78;
+    linear-gradient(90deg, transparent calc(50% - 1px), rgba(255, 255, 255, .19) 50%, transparent calc(50% + 1px)),
+    radial-gradient(circle at 50% 50%, transparent 0 54px, rgba(255, 255, 255, .19) 55px 56px, transparent 57px),
+    linear-gradient(90deg,
+      rgba(255, 255, 255, .15) 0 1px,
+      transparent 1px 17%,
+      rgba(255, 255, 255, .15) 17% calc(17% + 1px),
+      transparent calc(17% + 1px) 83%,
+      rgba(255, 255, 255, .15) 83% calc(83% + 1px),
+      transparent calc(83% + 1px) calc(100% - 1px),
+      rgba(255, 255, 255, .15) calc(100% - 1px));
+  opacity: .8;
 }
 
-.fixture-modal__hero > * {
+.fixture-modal__panel .fixture-modal__hero > * {
   position: relative;
   z-index: 1;
 }
 
-.fixture-modal__hero .fixture-main {
+.fixture-modal__panel .fixture-modal__hero .fixture-main {
   grid-template-columns: minmax(0, 1fr) clamp(72px, 12vw, 110px) minmax(0, 1fr);
   gap: clamp(12px, 3vw, 28px);
   margin: 0 0 clamp(22px, 4vw, 32px);
 }
 
-.fixture-modal__hero .team {
+.fixture-modal__panel .fixture-modal__hero .team {
   flex-direction: column;
   justify-content: flex-start;
   gap: 10px;
@@ -170,13 +141,13 @@ body.fixture-modal-open {
   text-align: center;
 }
 
-.fixture-modal__hero .team--away {
+.fixture-modal__panel .fixture-modal__hero .team--away {
   flex-direction: column-reverse;
   justify-content: flex-end;
   text-align: center;
 }
 
-.fixture-modal__hero .team strong {
+.fixture-modal__panel .fixture-modal__hero .team strong {
   width: 100%;
   overflow: visible;
   color: #ffffff;
@@ -188,10 +159,10 @@ body.fixture-modal-open {
   white-space: normal;
 }
 
-.fixture-modal__hero .team-badge,
-.fixture-modal__hero .team--favorite .team-badge,
-.fixture-modal__hero .team-badge:not(.team-badge--fallback),
-.fixture-modal__hero .team--favorite .team-badge:not(.team-badge--fallback) {
+.fixture-modal__panel .fixture-modal__hero .team-badge,
+.fixture-modal__panel .fixture-modal__hero .team--favorite .team-badge,
+.fixture-modal__panel .fixture-modal__hero .team-badge:not(.team-badge--fallback),
+.fixture-modal__panel .fixture-modal__hero .team--favorite .team-badge:not(.team-badge--fallback) {
   width: clamp(92px, 16vw, 138px);
   height: clamp(92px, 16vw, 138px);
   overflow: visible;
@@ -202,24 +173,25 @@ body.fixture-modal-open {
   filter: drop-shadow(0 16px 18px rgba(0, 0, 0, .36));
 }
 
-.fixture-modal__hero .team-badge__image,
-.fixture-modal__hero .team-badge__image[src*="roma-2026.svg"] {
+.fixture-modal__panel .fixture-modal__hero .team-badge__image,
+.fixture-modal__panel .fixture-modal__hero .team-badge__image[src*="roma-2026.svg"] {
+  display: block;
   width: 100%;
   height: 100%;
   padding: 0;
   object-fit: contain;
-  object-position: center;
+  object-position: 50% 50%;
   transform: none;
 }
 
-.fixture-modal__hero .team-badge--fallback {
+.fixture-modal__panel .fixture-modal__hero .team-badge--fallback {
   border: 2px solid rgba(255, 255, 255, .62);
   border-radius: 50%;
   font-size: 1.2rem;
   text-shadow: 0 2px 10px rgba(0, 0, 0, .5);
 }
 
-.fixture-modal__hero .predicted-score {
+.fixture-modal__panel .fixture-modal__hero .predicted-score {
   align-self: center;
   min-width: 0;
   padding: 10px 8px 9px;
@@ -232,7 +204,7 @@ body.fixture-modal-open {
   -webkit-backdrop-filter: blur(9px);
 }
 
-.fixture-modal__vs {
+.fixture-modal__panel .fixture-modal__vs {
   display: block;
   margin-bottom: 4px;
   color: rgba(255, 255, 255, .7);
@@ -241,18 +213,18 @@ body.fixture-modal-open {
   letter-spacing: .16em;
 }
 
-.fixture-modal__hero .predicted-score strong {
+.fixture-modal__panel .fixture-modal__hero .predicted-score strong {
   font-size: clamp(1.45rem, 4vw, 2rem);
   line-height: 1;
 }
 
-.fixture-modal__hero .predicted-score small {
+.fixture-modal__panel .fixture-modal__hero .predicted-score small {
   margin-top: 5px;
   color: rgba(255, 255, 255, .67);
   font-size: .62rem;
 }
 
-.fixture-modal__probability-heading {
+.fixture-modal__panel .fixture-modal__probability-heading {
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
@@ -260,20 +232,21 @@ body.fixture-modal-open {
   margin: 0 2px 9px;
 }
 
-.fixture-modal__probability-heading strong {
+.fixture-modal__panel .fixture-modal__probability-heading strong {
   color: #ffffff;
   font-size: .86rem;
   letter-spacing: -.01em;
 }
 
-.fixture-modal__probability-heading span {
+.fixture-modal__panel .fixture-modal__probability-heading span {
   color: rgba(255, 255, 255, .58);
   font-size: .66rem;
   text-align: right;
 }
 
-.probability-strip--modal {
-  display: flex;
+.fixture-modal__panel .probability-strip--modal {
+  display: grid;
+  grid-template-columns: var(--probability-columns, 1fr 1fr 1fr);
   gap: 0;
   min-height: 78px;
   overflow: hidden;
@@ -283,29 +256,28 @@ body.fixture-modal-open {
   box-shadow: 0 18px 34px rgba(0, 0, 0, .24), inset 0 1px rgba(255, 255, 255, .1);
 }
 
-.probability-strip--modal span {
+.fixture-modal__panel .probability-strip--modal span {
   position: relative;
   display: grid;
-  flex: var(--chance, 1) 1 0;
-  min-width: 64px;
+  min-width: 0;
   place-content: center;
   gap: 4px;
-  padding: 13px 9px;
+  padding: 13px 4px;
   border: 0;
   border-radius: 0;
   color: #ffffff;
   background: transparent;
-  font-size: .86rem;
+  font-size: clamp(.68rem, 2vw, .86rem);
   font-weight: 820;
   text-align: center;
   text-shadow: 0 1px 8px rgba(0, 0, 0, .45);
 }
 
-.probability-strip--modal span + span {
+.fixture-modal__panel .probability-strip--modal span + span {
   border-left: 1px solid rgba(255, 255, 255, .18);
 }
 
-.probability-strip--modal span::after {
+.fixture-modal__panel .probability-strip--modal span::after {
   content: "";
   position: absolute;
   inset: 0;
@@ -313,45 +285,45 @@ body.fixture-modal-open {
   background: linear-gradient(180deg, rgba(255, 255, 255, .17), transparent 42%, rgba(0, 0, 0, .12));
 }
 
-.probability-strip--modal b {
+.fixture-modal__panel .probability-strip--modal b {
   position: relative;
   z-index: 1;
   color: #ffffff;
-  font-size: 1.38rem;
+  font-size: clamp(1rem, 3vw, 1.38rem);
   line-height: 1;
 }
 
-.probability-strip__home {
+.fixture-modal__panel .probability-strip__home {
   background: linear-gradient(135deg, var(--home-team-secondary) -34%, var(--home-team-primary) 42%, var(--home-team-primary) 100%) !important;
 }
 
-.probability-strip__draw {
+.fixture-modal__panel .probability-strip__draw {
   background: linear-gradient(135deg, #758091, #424b59) !important;
 }
 
-.probability-strip__away {
+.fixture-modal__panel .probability-strip__away {
   background: linear-gradient(135deg, var(--away-team-secondary) -34%, var(--away-team-primary) 42%, var(--away-team-primary) 100%) !important;
 }
 
-.fixture-modal__outcome {
+.fixture-modal__panel .fixture-modal__outcome {
   margin: 12px 0 0;
   color: rgba(255, 255, 255, .62);
   font-size: .76rem;
   text-align: center;
 }
 
-.fixture-modal__outcome strong {
+.fixture-modal__panel .fixture-modal__outcome strong {
   color: #ffffff;
 }
 
-.fixture-modal__details {
+.fixture-modal__panel .fixture-modal__details {
   border-top: 1px solid rgba(255, 255, 255, .1);
   padding: clamp(18px, 3vw, 26px);
   color: #eef5f1;
   background: rgba(7, 20, 15, .98);
 }
 
-.fixture-modal__details .detail-column {
+.fixture-modal__panel .fixture-modal__details .detail-column {
   padding: 16px;
   border: 1px solid rgba(255, 255, 255, .1);
   border-radius: 16px;
@@ -359,149 +331,121 @@ body.fixture-modal-open {
   box-shadow: inset 0 1px rgba(255, 255, 255, .035);
 }
 
-.fixture-modal__details .detail-heading h3,
-.fixture-modal__details .metric-grid strong,
-.fixture-modal__details .comparison-row strong,
-.fixture-modal__details .score-list b {
+.fixture-modal__panel .fixture-modal__details .detail-heading h3,
+.fixture-modal__panel .fixture-modal__details .metric-grid strong,
+.fixture-modal__panel .fixture-modal__details .comparison-row strong,
+.fixture-modal__panel .fixture-modal__details .score-list b {
   color: #f7fbf8;
 }
 
-.fixture-modal__details .detail-heading > span,
-.fixture-modal__details .metric-grid span,
-.fixture-modal__details .comparison-row span,
-.fixture-modal__details .context-line,
-.fixture-modal__details .score-list li {
+.fixture-modal__panel .fixture-modal__details .detail-heading > span,
+.fixture-modal__panel .fixture-modal__details .metric-grid span,
+.fixture-modal__panel .fixture-modal__details .comparison-row span,
+.fixture-modal__panel .fixture-modal__details .context-line,
+.fixture-modal__panel .fixture-modal__details .score-list li {
   color: rgba(232, 242, 236, .62);
 }
 
-.fixture-modal__details .metric-grid div {
+.fixture-modal__panel .fixture-modal__details .metric-grid div {
   border-color: rgba(255, 255, 255, .09);
   background: rgba(255, 255, 255, .055);
 }
 
-.fixture-modal__details .comparison-table,
-.fixture-modal__details .comparison-row {
+.fixture-modal__panel .fixture-modal__details .comparison-table,
+.fixture-modal__panel .fixture-modal__details .comparison-row {
   border-color: rgba(255, 255, 255, .09);
 }
 
-.fixture-modal__details .score-bar {
+.fixture-modal__panel .fixture-modal__details .score-bar {
   background: rgba(255, 255, 255, .1);
 }
 
-.fixture-modal__details .score-bar i {
-  background: linear-gradient(90deg, var(--home-team-primary, #3f8b67), #8fd4ad);
-}
-
-.fixture-toggle {
-  transition: background .16s ease, transform .16s ease;
-}
-
-.fixture-toggle:hover {
-  background: rgb(var(--primary-rgb) / .035);
-}
-
-.fixture-card--favorite .fixture-toggle:hover {
-  background: var(--result-accent-strong);
+.fixture-modal__panel .fixture-modal__details .score-bar i {
+  background: linear-gradient(90deg, var(--home-team-primary, #3f8b67), var(--home-team-secondary, #8fd4ad));
 }
 
 @media (max-width: 620px) {
-  .fixture-modal {
-    place-items: end stretch;
-    padding: 6px;
-  }
-
-  .fixture-modal::before {
-    inset: 14px;
-    opacity: .42;
-  }
-
   .fixture-modal__panel {
     width: 100%;
-    max-height: calc(100vh - 12px);
+    max-height: calc(100vh - 16px);
     border-radius: 22px;
   }
 
-  .fixture-modal__header {
+  .fixture-modal__panel .fixture-modal__header {
     padding: 16px 16px 13px;
   }
 
-  .fixture-modal__hero {
+  .fixture-modal__panel .fixture-modal__hero {
     padding: 22px 13px 24px;
   }
 
-  .fixture-modal__hero::after {
+  .fixture-modal__panel .fixture-modal__hero::after {
     inset: 11px;
   }
 
-  .fixture-modal__hero .fixture-main {
+  .fixture-modal__panel .fixture-modal__hero .fixture-main {
     grid-template-columns: minmax(0, 1fr) 66px minmax(0, 1fr);
     gap: 7px;
   }
 
-  .fixture-modal__hero .team-badge,
-  .fixture-modal__hero .team--favorite .team-badge,
-  .fixture-modal__hero .team-badge:not(.team-badge--fallback),
-  .fixture-modal__hero .team--favorite .team-badge:not(.team-badge--fallback) {
+  .fixture-modal__panel .fixture-modal__hero .team-badge,
+  .fixture-modal__panel .fixture-modal__hero .team--favorite .team-badge,
+  .fixture-modal__panel .fixture-modal__hero .team-badge:not(.team-badge--fallback),
+  .fixture-modal__panel .fixture-modal__hero .team--favorite .team-badge:not(.team-badge--fallback) {
     width: clamp(76px, 25vw, 108px);
     height: clamp(76px, 25vw, 108px);
   }
 
-  .fixture-modal__hero .predicted-score {
+  .fixture-modal__panel .fixture-modal__hero .predicted-score {
     padding: 8px 5px;
     border-radius: 14px;
   }
 
-  .fixture-modal__hero .predicted-score strong {
+  .fixture-modal__panel .fixture-modal__hero .predicted-score strong {
     font-size: 1.3rem;
   }
 
-  .fixture-modal__probability-heading {
+  .fixture-modal__panel .fixture-modal__probability-heading {
     align-items: flex-start;
   }
 
-  .fixture-modal__probability-heading span {
-    max-width: 145px;
+  .fixture-modal__panel .fixture-modal__probability-heading span {
+    max-width: 190px;
   }
 
-  .probability-strip--modal {
+  .fixture-modal__panel .probability-strip--modal {
     min-height: 70px;
     border-radius: 15px;
   }
 
-  .probability-strip--modal span {
-    min-width: 54px;
-    padding: 11px 5px;
-    font-size: .75rem;
+  .fixture-modal__panel .probability-strip--modal span {
+    padding: 11px 2px;
   }
 
-  .probability-strip--modal b {
-    font-size: 1.15rem;
-  }
-
-  .fixture-modal__details {
+  .fixture-modal__panel .fixture-modal__details {
     grid-template-columns: 1fr;
     padding: 14px;
   }
 
-  .fixture-modal__details .detail-column--wide {
+  .fixture-modal__panel .fixture-modal__details .detail-column--wide {
     grid-column: auto;
   }
 }
 
 @media (max-width: 390px) {
-  .fixture-modal__match-label {
+  .fixture-modal__panel .fixture-modal__match-label {
     display: none;
   }
 
-  .fixture-modal__hero .fixture-main {
+  .fixture-modal__panel .fixture-modal__hero .fixture-main {
     grid-template-columns: minmax(0, 1fr) 58px minmax(0, 1fr);
   }
 
-  .fixture-modal__hero .team strong {
+  .fixture-modal__panel .fixture-modal__hero .team strong {
     font-size: .82rem;
   }
 
-  .fixture-modal__probability-heading span {
+  .fixture-modal__panel .fixture-modal__probability-heading span {
     display: none;
   }
 }
