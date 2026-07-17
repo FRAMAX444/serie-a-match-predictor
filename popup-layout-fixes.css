@@ -1,4 +1,4 @@
-/* Final popup layout safeguards: readable probability labels and consistently sized crests. */
+/* Final popup layout safeguards: readable probability labels and consistently fitted crests. */
 
 /* Keep the colored 1X2 bar proportional, but give the three labels equal safe columns below it. */
 .fixture-modal__panel .fixture-modal__probability-values {
@@ -48,18 +48,18 @@
   filter: none !important;
 }
 
-/* Roma receives the same square footprint as every other crest. */
+/* Roma stays inside the same team column but is slightly smaller, with a generous safe inset. */
 .fixture-modal__panel .fixture-modal__hero .team-badge--roma,
 .fixture-modal__panel .fixture-modal__hero .team--favorite .team-badge--roma,
 .fixture-modal__panel .fixture-modal__hero .team-badge--roma:not(.team-badge--fallback) {
   box-sizing: border-box;
-  width: clamp(76px, 14vw, 112px) !important;
+  width: clamp(68px, 12vw, 96px) !important;
   max-width: 100% !important;
   height: auto !important;
   max-height: none !important;
   aspect-ratio: 1 !important;
   align-self: center;
-  overflow: hidden !important;
+  overflow: visible !important;
   border: 0 !important;
   border-radius: 0 !important;
   background: transparent !important;
@@ -75,7 +75,7 @@
   height: 100% !important;
   max-width: 100% !important;
   max-height: 100% !important;
-  padding: 5px 8px !important;
+  padding: 9px 13px !important;
   object-fit: contain !important;
   object-position: 50% 50% !important;
   transform: none !important;
@@ -85,7 +85,12 @@
   .fixture-modal__panel .fixture-modal__hero .team-badge--roma,
   .fixture-modal__panel .fixture-modal__hero .team--favorite .team-badge--roma,
   .fixture-modal__panel .fixture-modal__hero .team-badge--roma:not(.team-badge--fallback) {
-    width: clamp(66px, 22vw, 92px) !important;
+    width: clamp(58px, 18vw, 78px) !important;
+  }
+
+  .fixture-modal__panel .fixture-modal__hero .team-badge--roma .team-badge__image,
+  .fixture-modal__panel .fixture-modal__hero .team-badge__image[src*="roma-2026.svg"] {
+    padding: 7px 10px !important;
   }
 
   .fixture-modal__panel .fixture-modal__probability-values {
