@@ -1,4 +1,4 @@
-const ROMA_LATEST_LOGO = "https://upload.wikimedia.org/wikipedia/fr/thumb/b/b7/Logo_AS_Roma_2026.svg/240px-Logo_AS_Roma_2026.svg.png";
+const ROMA_LATEST_LOGO = "./assets/team-logos/roma-2026.svg";
 const crestCandidates = new Map();
 
 function teamKey(team) {
@@ -10,10 +10,20 @@ function teamKey(team) {
     .trim();
 }
 
+function isRomaTeam(team) {
+  return ["roma", "as roma", "a s roma", "roma fc", "as roma fc", "a s roma fc"].includes(teamKey(team));
+}
+
 function addCandidate(team, url, prioritize = false) {
   const key = teamKey(team);
   const source = String(url || "").trim();
-  if (!key || !source) return;
+  if (!key) return;
+
+  if (isRomaTeam(team)) {
+    crestCandidates.set(key, [ROMA_LATEST_LOGO]);
+    return;
+  }
+  if (!source) return;
 
   const candidates = crestCandidates.get(key) || [];
   if (candidates.includes(source)) return;
@@ -72,17 +82,23 @@ function showCrest(badge, image, fallback) {
 function attachCrest(teamElement) {
   const badge = teamElement.querySelector(".team-badge");
   const team = teamElement.querySelector("strong")?.textContent?.trim();
-  if (!badge || !team || badge.dataset.crestHydrated === "true") return;
+  if (!badge || !team) return;
 
-  const catalogCandidates = crestCandidates.get(teamKey(team)) || [];
+  const roma = isRomaTeam(team);
   let image = badge.querySelector(".team-badge__image");
   const existingSource = String(image?.getAttribute("src") || "").trim();
-  const candidates = [...new Set([existingSource, ...catalogCandidates].filter(Boolean))];
+  const alreadyCorrect = roma && existingSource === ROMA_LATEST_LOGO;
+  if (badge.dataset.crestHydrated === "true" && (!roma || alreadyCorrect)) return;
+
+  const catalogCandidates = crestCandidates.get(teamKey(team)) || [];
+  const candidates = roma
+    ? [ROMA_LATEST_LOGO]
+    : [...new Set([existingSource, ...catalogCandidates].filter(Boolean))];
   if (!candidates.length) return;
 
   badge.dataset.crestHydrated = "true";
   const fallback = badge.querySelector(".team-badge__fallback");
-  let candidateIndex = existingSource ? 1 : 0;
+  let candidateIndex = existingSource && candidates[0] === existingSource ? 1 : 0;
 
   if (!image) {
     image = document.createElement("img");
@@ -107,7 +123,10 @@ function attachCrest(teamElement) {
   image.addEventListener("load", () => showCrest(badge, image, fallback), { once: true });
   image.addEventListener("error", loadCandidate);
 
-  if (!existingSource) {
+  if (roma && !alreadyCorrect) {
+    image.hidden = true;
+    loadCandidate();
+  } else if (!existingSource) {
     loadCandidate();
   } else if (image.complete) {
     if (image.naturalWidth) showCrest(badge, image, fallback);
@@ -115,8 +134,35 @@ function attachCrest(teamElement) {
   }
 }
 
+function inferredImageTeam(image) {
+  const teamName = image.closest(".team")?.querySelector("strong")?.textContent?.trim();
+  if (teamName) return teamName;
+
+  const label = [
+    image.alt,
+    image.title,
+    image.getAttribute("aria-label"),
+    image.dataset.team,
+  ].filter(Boolean).join(" ");
+  const match = label.match(/(?:stemma|logo|crest)\s+(?:della\s+|di\s+)?(.+)/i);
+  return match?.[1]?.trim() || "";
+}
+
+function enforceRomaImages(root = document) {
+  const images = [];
+  if (root instanceof HTMLImageElement) images.push(root);
+  root.querySelectorAll?.("img").forEach((image) => images.push(image));
+
+  for (const image of images) {
+    if (!isRomaTeam(inferredImageTeam(image))) continue;
+    if (image.getAttribute("src") !== ROMA_LATEST_LOGO) image.src = ROMA_LATEST_LOGO;
+  }
+}
+
 function hydrateCrests(root = document) {
-  root.querySelectorAll(".team").forEach(attachCrest);
+  root.querySelectorAll?.(".team").forEach(attachCrest);
+  if (root instanceof Element && root.matches(".team")) attachCrest(root);
+  enforceRomaImages(root);
 }
 
 async function initTeamCrests() {
@@ -128,14 +174,22 @@ async function initTeamCrests() {
 
     const observer = new MutationObserver((mutations) => {
       for (const mutation of mutations) {
+        if (mutation.type === "attributes" && mutation.target instanceof HTMLImageElement) {
+          enforceRomaImages(mutation.target);
+          continue;
+        }
         for (const node of mutation.addedNodes) {
           if (!(node instanceof Element)) continue;
-          if (node.matches(".team")) attachCrest(node);
           hydrateCrests(node);
         }
       }
     });
-    observer.observe(document.body, { childList: true, subtree: true });
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["src", "alt", "title", "aria-label", "data-team"],
+    });
   } catch (error) {
     console.warn("Stemmi squadre non disponibili", error);
   }
