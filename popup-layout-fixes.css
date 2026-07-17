@@ -36,6 +36,18 @@
   font-size: clamp(.7rem, 1.8vw, .82rem) !important;
 }
 
+/* Crests sit directly on the pitch: no dark tile, glow or drop shadow behind them. */
+.fixture-modal__panel .fixture-modal__hero .team-badge,
+.fixture-modal__panel .fixture-modal__hero .team--favorite .team-badge,
+.fixture-modal__panel .fixture-modal__hero .team-badge:not(.team-badge--fallback),
+.fixture-modal__panel .fixture-modal__hero .team--favorite .team-badge:not(.team-badge--fallback) {
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  filter: none !important;
+}
+
 /* Roma's shield is portrait-oriented: use its real aspect ratio instead of forcing a square. */
 .fixture-modal__panel .fixture-modal__hero .team-badge--roma,
 .fixture-modal__panel .fixture-modal__hero .team--favorite .team-badge--roma,
@@ -51,7 +63,7 @@
   border-radius: 0 !important;
   background: transparent !important;
   box-shadow: none !important;
-  filter: drop-shadow(0 12px 14px rgba(0, 0, 0, .34)) !important;
+  filter: none !important;
 }
 
 .fixture-modal__panel .fixture-modal__hero .team-badge--roma .team-badge__image,
