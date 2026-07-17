@@ -1,33 +1,43 @@
 /* Final popup layout safeguards: readable probability labels and consistently fitted crests. */
 
-/* Keep the colored 1X2 bar proportional, but give the three labels equal safe columns below it. */
+/* Keep each label under the center of its proportional segment. When labels get too close,
+   JavaScript moves only the conflicting labels to a lower lane without changing their x position. */
 .fixture-modal__panel .fixture-modal__probability-values {
-  display: grid !important;
-  grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
-  align-items: start !important;
-  gap: clamp(6px, 1.8vw, 16px) !important;
+  --probability-label-lane-height: 38px;
+  position: relative;
+  display: block !important;
   width: 100% !important;
+  min-height: calc(var(--probability-label-lanes, 1) * var(--probability-label-lane-height));
+  margin-top: 9px;
+  overflow: visible;
 }
 
 .fixture-modal__panel .fixture-modal__probability-value {
+  position: absolute !important;
+  top: calc(var(--label-lane, 0) * var(--probability-label-lane-height));
+  left: 0;
   display: grid !important;
   grid-template-rows: auto auto;
   place-items: center;
   gap: 4px;
-  min-width: 0 !important;
-  width: auto !important;
-  max-width: none !important;
-  padding: 3px 2px !important;
-  overflow: hidden;
+  width: max-content !important;
+  min-width: 46px !important;
+  max-width: calc(100% - 4px) !important;
+  padding: 3px 4px !important;
+  overflow: visible;
+  transform: translateX(-50%);
+  color: #f3f4f6;
   text-align: center;
+  pointer-events: none;
 }
 
 .fixture-modal__panel .fixture-modal__probability-value b,
 .fixture-modal__panel .fixture-modal__probability-value small {
   display: block;
+  width: max-content;
   max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow: visible;
+  text-overflow: clip;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
@@ -94,10 +104,11 @@
   }
 
   .fixture-modal__panel .fixture-modal__probability-values {
-    gap: 4px !important;
+    --probability-label-lane-height: 36px;
   }
 
   .fixture-modal__panel .fixture-modal__probability-value {
-    padding-inline: 1px !important;
+    min-width: 42px !important;
+    padding-inline: 2px !important;
   }
 }

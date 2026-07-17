@@ -1,6 +1,7 @@
 import { paletteForTeam } from "./preferences.js";
 
 const modalContent = document.getElementById("fixture-modal-content");
+const probabilityLayoutObservers = new WeakMap();
 
 function safeHex(value, fallback) {
   const color = String(value || "").trim();
@@ -20,10 +21,10 @@ function normalizedProbabilities(cells) {
   return values.map((value) => (value / total) * 100);
 }
 
-function probabilityValue(label, probability) {
+function probabilityValue(label, probability, position) {
   const item = document.createElement("span");
   item.className = "fixture-modal__probability-value";
-  item.style.setProperty("--chance", `${probability.toFixed(6)}%`);
+  item.dataset.probabilityPosition = position.toFixed(6);
 
   const outcome = document.createElement("b");
   outcome.textContent = label;
@@ -33,6 +34,78 @@ function probabilityValue(label, probability) {
 
   item.append(outcome, percentage);
   return item;
+}
+
+function layoutProbabilityValues(values) {
+  const items = [...values.querySelectorAll(".fixture-modal__probability-value")];
+  const containerWidth = values.getBoundingClientRect().width;
+  if (!items.length || containerWidth <= 0) return;
+
+  const minimumGap = 8;
+  const occupiedLanes = [];
+  let highestLane = 0;
+
+  items.forEach((item) => {
+    item.style.left = "0px";
+    item.style.setProperty("--label-lane", "0");
+  });
+
+  const measurements = items.map((item) => {
+    const naturalWidth = Math.min(Math.ceil(item.getBoundingClientRect().width), containerWidth);
+    const position = Number.parseFloat(item.dataset.probabilityPosition || "50");
+    const desiredCenter = (Math.min(100, Math.max(0, position)) / 100) * containerWidth;
+    const halfWidth = naturalWidth / 2;
+    const center = Math.min(
+      Math.max(desiredCenter, halfWidth),
+      Math.max(halfWidth, containerWidth - halfWidth),
+    );
+
+    return {
+      item,
+      center,
+      start: center - halfWidth,
+      end: center + halfWidth,
+    };
+  });
+
+  measurements.forEach(({ item, center, start, end }) => {
+    let lane = 0;
+    while (
+      occupiedLanes[lane]?.some(
+        (interval) => start < interval.end + minimumGap && end > interval.start - minimumGap,
+      )
+    ) {
+      lane += 1;
+    }
+
+    if (!occupiedLanes[lane]) occupiedLanes[lane] = [];
+    occupiedLanes[lane].push({ start, end });
+    highestLane = Math.max(highestLane, lane);
+
+    item.style.left = `${center}px`;
+    item.style.setProperty("--label-lane", String(lane));
+  });
+
+  values.style.setProperty("--probability-label-lanes", String(highestLane + 1));
+}
+
+function watchProbabilityValues(values) {
+  let animationFrame = 0;
+  const scheduleLayout = () => {
+    if (animationFrame) cancelAnimationFrame(animationFrame);
+    animationFrame = requestAnimationFrame(() => {
+      animationFrame = 0;
+      layoutProbabilityValues(values);
+    });
+  };
+
+  scheduleLayout();
+
+  if (typeof ResizeObserver === "function" && !probabilityLayoutObservers.has(values)) {
+    const observer = new ResizeObserver(scheduleLayout);
+    observer.observe(values);
+    probabilityLayoutObservers.set(values, observer);
+  }
 }
 
 function enhanceFixtureModal() {
@@ -104,7 +177,16 @@ function enhanceFixtureModal() {
       values.setAttribute("aria-hidden", "true");
       probabilityStrip.after(values);
     }
-    values.replaceChildren(...outcomeLabels.map((label, index) => probabilityValue(label, probabilities[index])));
+
+    let cumulativeProbability = 0;
+    const probabilityItems = outcomeLabels.map((label, index) => {
+      const probability = probabilities[index];
+      const center = cumulativeProbability + probability / 2;
+      cumulativeProbability += probability;
+      return probabilityValue(label, probability, center);
+    });
+    values.replaceChildren(...probabilityItems);
+    watchProbabilityValues(values);
 
     if (!probabilityStrip.previousElementSibling?.classList.contains("fixture-modal__probability-heading")) {
       const heading = document.createElement("div");
