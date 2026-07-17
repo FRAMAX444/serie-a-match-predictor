@@ -8,12 +8,15 @@
   height: 100%;
   padding: 2px;
   object-fit: contain;
+  object-position: 50% 50%;
+  transform: none;
 }
 
 .team-badge__image[src*="roma-2026.svg"] {
-  padding: 4px;
+  padding: 1px;
+  object-fit: contain;
   object-position: 50% 50%;
-  transform: translateY(-8%);
+  transform: none;
   transform-origin: center;
 }
 
