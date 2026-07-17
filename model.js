@@ -281,7 +281,7 @@ function stateMetrics(state, venue, predictionDate) {
 function selectBaselineTraining(training, competitionId) {
   const exact = training.filter((match) => match.competition_id === competitionId);
   if (exact.length >= 60) return { matches: exact, source: "competition" };
-  if (EUPE_COMPETITION_IDS.has(competitionId)) {
+  if (EUROPE_COMPETITION_IDS.has(competitionId)) {
     const european = training.filter((match) => EUROPE_COMPETITION_IDS.has(String(match.competition_id)));
     if (european.length >= 60) return { matches: european, source: "europe" };
     return { matches: training, source: "europe-support" };
