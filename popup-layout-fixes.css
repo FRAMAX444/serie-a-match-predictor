@@ -1,49 +1,92 @@
-/* Final popup layout safeguards: readable probability labels and consistently fitted crests. */
+/* Final popup layout safeguards: elegant probability labels and consistently fitted crests. */
 
-/* Keep each label under the center of its proportional segment. When labels get too close,
-   JavaScript moves only the conflicting labels to a lower lane without changing their x position. */
+/* Keep all three labels on one clean row. JavaScript starts from each segment centre and only
+   spreads labels horizontally when needed, while the small marker stays on the exact bar point. */
 .fixture-modal__panel .fixture-modal__probability-values {
-  --probability-label-lane-height: 38px;
   position: relative;
   display: block !important;
   width: 100% !important;
-  min-height: calc(var(--probability-label-lanes, 1) * var(--probability-label-lane-height));
-  margin-top: 9px;
+  min-height: 38px;
+  margin-top: 7px;
   overflow: visible;
 }
 
 .fixture-modal__panel .fixture-modal__probability-value {
   position: absolute !important;
-  top: calc(var(--label-lane, 0) * var(--probability-label-lane-height));
+  top: 7px;
   left: 0;
-  display: grid !important;
-  grid-template-rows: auto auto;
-  place-items: center;
-  gap: 4px;
+  display: inline-flex !important;
+  align-items: baseline;
+  justify-content: center;
+  gap: 5px;
   width: max-content !important;
-  min-width: 46px !important;
+  min-width: 0 !important;
   max-width: calc(100% - 4px) !important;
-  padding: 3px 4px !important;
-  overflow: visible;
+  padding: 5px 8px !important;
+  border: 1px solid rgba(255, 255, 255, .08);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .035);
   transform: translateX(-50%);
   color: #f3f4f6;
+  line-height: 1;
   text-align: center;
+  white-space: nowrap;
   pointer-events: none;
+}
+
+.fixture-modal__panel .fixture-modal__probability-value::before {
+  content: "";
+  position: absolute;
+  top: -8px;
+  left: calc(50% + var(--anchor-offset, 0px));
+  width: 1px;
+  height: 6px;
+  background: rgba(229, 231, 235, .42);
+  transform: translateX(-50%);
+}
+
+.fixture-modal__panel .fixture-modal__probability-value::after {
+  content: "";
+  position: absolute;
+  top: -10px;
+  left: calc(50% + var(--anchor-offset, 0px));
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: rgba(243, 244, 246, .78);
+  transform: translateX(-50%);
 }
 
 .fixture-modal__panel .fixture-modal__probability-value b,
 .fixture-modal__panel .fixture-modal__probability-value small {
-  display: block;
-  width: max-content;
-  max-width: 100%;
+  display: inline;
+  width: auto;
+  max-width: none;
   overflow: visible;
   text-overflow: clip;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
 
+.fixture-modal__panel .fixture-modal__probability-value b {
+  color: #ffffff;
+  font-size: .78rem;
+  letter-spacing: .02em;
+}
+
 .fixture-modal__panel .fixture-modal__probability-value small {
-  font-size: clamp(.7rem, 1.8vw, .82rem) !important;
+  color: rgba(229, 231, 235, .76);
+  font-size: clamp(.7rem, 1.7vw, .8rem) !important;
+}
+
+.fixture-modal__panel .fixture-modal__probability-values--compact .fixture-modal__probability-value {
+  gap: 3px;
+  padding: 4px 5px !important;
+}
+
+.fixture-modal__panel .fixture-modal__probability-values--compact .fixture-modal__probability-value b,
+.fixture-modal__panel .fixture-modal__probability-values--compact .fixture-modal__probability-value small {
+  font-size: .68rem !important;
 }
 
 /* Crests sit directly on the pitch: no dark tile, glow or drop shadow behind them. */
@@ -104,11 +147,12 @@
   }
 
   .fixture-modal__panel .fixture-modal__probability-values {
-    --probability-label-lane-height: 36px;
+    min-height: 36px;
   }
 
   .fixture-modal__panel .fixture-modal__probability-value {
-    min-width: 42px !important;
-    padding-inline: 2px !important;
+    top: 6px;
+    gap: 4px;
+    padding: 4px 6px !important;
   }
 }
