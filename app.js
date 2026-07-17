@@ -20,7 +20,7 @@ const formatDate = (value) => new Intl.DateTimeFormat("it-IT", {
   weekday: "short", day: "numeric", month: "short",
 }).format(new Date(`${value}T12:00:00Z`));
 
-const ROMA_LATEST_LOGO = "https://upload.wikimedia.org/wikipedia/fr/thumb/b/b7/Logo_AS_Roma_2026.svg/240px-Logo_AS_Roma_2026.svg.png";
+const ROMA_LATEST_LOGO = "./assets/team-logos/roma-2026.svg";
 
 let payload;
 let competitionCatalog = [];
