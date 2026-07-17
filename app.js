@@ -2,6 +2,11 @@ import { predictMatchdayFromMatches } from "./model.js";
 import { buildCompetitionCatalog, buildMatchdays, matchdayLabel } from "./matchdays.js";
 import { DEFAULT_GLOBAL_SETTINGS, applyGlobalSettings, initializeGlobalSettings } from "./global-settings.js";
 import {
+  formatProbability,
+  outcomeProbabilityEntries,
+  selectRepresentativeScore,
+} from "./prediction-presentation.js";
+import {
   FAVORITE_STORAGE_KEY,
   applyStoredAppearance,
   applyTeamPalette,
@@ -10,7 +15,7 @@ import {
 } from "./preferences.js";
 
 const $ = (id) => document.getElementById(id);
-const percent = (value) => `${(100 * value).toFixed(1)}%`;
+const percent = formatProbability;
 const number = (value, digits = 2) => Number(value).toFixed(digits);
 const fairOdds = (value) => value > 0 ? number(1 / value, 2) : "—";
 const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
@@ -207,6 +212,12 @@ function exactScoreRows(scores) {
   `).join("");
 }
 
+function probabilityStripMarkup(probabilities) {
+  return outcomeProbabilityEntries(probabilities).map(({ key, probability }) => `
+    <span data-outcome="${key}" data-probability="${probability}"><b>${key}</b>${percent(probability)}</span>
+  `).join("");
+}
+
 function comparisonRow(home, label, away, formatter = (value) => number(value, 2)) {
   return `<div class="comparison-row"><strong>${formatter(home)}</strong><span>${label}</span><strong>${formatter(away)}</strong></div>`;
 }
@@ -252,7 +263,7 @@ function fixtureDetailsMarkup(fixture, result) {
       <div class="detail-column detail-column--wide">
         <div class="detail-heading"><h3>Indicatori usati dal modello</h3><span>${result.trainingMatches} partite</span></div>
         <div class="comparison-table">${comparison}</div>
-        <p class="context-line">Modello core: xG/gol, tiri, forma recente, Elo, rendimento casa/trasferta e riposo.</p>
+        <p class="context-line">Modello core: xG/gol, tiri, forma recente, Elo, rendimento casa/trasferta e riposo. Il punteggio mostrato è il risultato esatto più probabile condizionato all’esito 1X2 scelto dal consensus.</p>
       </div>
     </div>
   `;
@@ -261,7 +272,7 @@ function fixtureDetailsMarkup(fixture, result) {
 function fixtureModalMarkup(item) {
   const { fixture, result } = item;
   const probabilities = result.probabilities;
-  const top = probabilities.scores[0];
+  const top = selectRepresentativeScore(result);
   const preferred = favoriteTeam();
 
   return `
@@ -288,9 +299,7 @@ function fixtureModalMarkup(item) {
         </div>
       </div>
       <div class="probability-strip">
-        <span><b>1</b>${percent(probabilities.homeWin)}</span>
-        <span><b>X</b>${percent(probabilities.draw)}</span>
-        <span><b>2</b>${percent(probabilities.awayWin)}</span>
+        ${probabilityStripMarkup(probabilities)}
       </div>
       <p class="fixture-modal__outcome">Esito più probabile: <strong>${result.mostLikelyOutcome.key} · ${escapeHtml(result.mostLikelyOutcome.name)}</strong></p>
     </div>
@@ -301,7 +310,7 @@ function fixtureModalMarkup(item) {
 function renderFixtureCard(item, index) {
   const { fixture, result } = item;
   const probabilities = result.probabilities;
-  const top = probabilities.scores[0];
+  const top = selectRepresentativeScore(result);
   const preferred = favoriteTeam();
   const isFavoriteMatch = fixture.home_team === preferred || fixture.away_team === preferred;
 
@@ -324,9 +333,7 @@ function renderFixtureCard(item, index) {
           </div>
         </div>
         <div class="probability-strip">
-          <span><b>1</b>${percent(probabilities.homeWin)}</span>
-          <span><b>X</b>${percent(probabilities.draw)}</span>
-          <span><b>2</b>${percent(probabilities.awayWin)}</span>
+          ${probabilityStripMarkup(probabilities)}
         </div>
         <div class="fixture-footer">
           <span>${result.mostLikelyOutcome.key} · ${escapeHtml(result.mostLikelyOutcome.name)}</span>

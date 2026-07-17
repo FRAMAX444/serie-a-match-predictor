@@ -63,6 +63,52 @@ export function matrixProbabilities(matrix) {
   return { homeWin, draw, awayWin, over25, bothScore, scores };
 }
 
+export function scoreConsensusChecks(lambdaHome, lambdaAway, home = {}, away = {}) {
+  const expectedGoalEdge = Math.tanh((safe(lambdaHome, 1.3) - safe(lambdaAway, 1.15)) / 0.85);
+  const eloEdge = Math.tanh((safe(home.elo, 1500) - safe(away.elo, 1500)) / 220);
+  const homeForm = 0.6 * safe(home.ppg3, 1.35) + 0.4 * safe(home.ppg5, 1.35);
+  const awayForm = 0.6 * safe(away.ppg3, 1.35) + 0.4 * safe(away.ppg5, 1.35);
+  const formEdge = Math.tanh((homeForm - awayForm) / 1.4);
+  const chanceCreationEdge = Math.tanh((
+    0.65 * (
+      safe(home.xgFor5, 1.3) - safe(away.xgFor5, 1.3)
+      + safe(away.xgAgainst5, 1.3) - safe(home.xgAgainst5, 1.3)
+    )
+    + 0.12 * (safe(home.sot5, 3.8) - safe(away.sot5, 3.8))
+  ) / 1.25);
+  const venueEdge = Math.tanh((
+    safe(home.venueGf5, 1.3) - safe(away.venueGf5, 1.3)
+    + safe(away.venueGa5, 1.3) - safe(home.venueGa5, 1.3)
+  ) / 1.6);
+  const restEdge = Math.tanh((safe(home.restDays, 8) - safe(away.restDays, 8)) / 7);
+  const direction = clamp(
+    0.46 * expectedGoalEdge
+    + 0.17 * eloEdge
+    + 0.15 * formEdge
+    + 0.12 * chanceCreationEdge
+    + 0.06 * venueEdge
+    + 0.04 * restEdge,
+    -1,
+    1,
+  );
+  const reliability = clamp(0.35 + 0.65 * (
+    safe(home.sampleReliability, 0.5) + safe(away.sampleReliability, 0.5)
+  ) / 2, 0.35, 1);
+  const lambdaGap = Math.abs(safe(lambdaHome, 1.3) - safe(lambdaAway, 1.15));
+  return {
+    direction,
+    expectedGoalEdge,
+    eloEdge,
+    formEdge,
+    chanceCreationEdge,
+    venueEdge,
+    restEdge,
+    reliability,
+    lambdaGap,
+    balance: 1 - Math.abs(direction),
+  };
+}
+
 function xgValue(match, side) {
   const explicit = safe(match[`${side}_xg`], NaN);
   if (Number.isFinite(explicit)) return { value: explicit, actual: true };
@@ -317,7 +363,9 @@ export function predictFromMatches(matches, rawOptions) {
   lambdaAway = clamp(lambdaAway, 0.16, 3.9);
 
   const probabilities = matrixProbabilities(scoreMatrix(lambdaHome, lambdaAway, 8));
+  const scoreChecks = scoreConsensusChecks(lambdaHome, lambdaAway, home, away);
   const quality = dataQuality(home, away, training.length, baselineTraining.length);
+  const mostLikelyOutcome = outcomeName(probabilities, options.homeTeam, options.awayTeam);
   return {
     lambdaHome,
     lambdaAway,
@@ -326,7 +374,8 @@ export function predictFromMatches(matches, rawOptions) {
     away,
     league,
     quality,
-    mostLikelyOutcome: outcomeName(probabilities, options.homeTeam, options.awayTeam),
+    scoreChecks,
+    mostLikelyOutcome,
     trainingMatches: training.length,
     baselineMatches: baselineTraining.length,
     baselineSource: baselineSelection.source,
@@ -335,7 +384,7 @@ export function predictFromMatches(matches, rawOptions) {
     cutoffDate: String(options.cutoffDate || options.date).slice(0, 10),
     xgCoverage: (home.xgCoverage + away.xgCoverage) / 2,
     competitionId: options.competitionId,
-    modelVersion: "4.1-top5-uefa-core",
+    modelVersion: "4.3-coherent-score",
   };
 }
 
