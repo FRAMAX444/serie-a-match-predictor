@@ -50,7 +50,7 @@ Il dataset contiene:
 
 Restano esclusi dal flusso attivo dati giocatori, probabili formazioni, trasferimenti, indisponibilità, quote di mercato, possesso e disciplina.
 
-## Modello 4.2 Big Five + UEFA Core
+## Modello 4.3 Big Five + UEFA Core
 
 Il modello usa esclusivamente segnali pre-partita stabili e disponibili in modo omogeneo:
 
@@ -61,10 +61,15 @@ Il modello usa esclusivamente segnali pre-partita stabili e disponibili in modo 
 - Elo aggiornato cronologicamente;
 - giorni di riposo;
 - baseline specifica della competizione;
-- Poisson con correzione Dixon–Coles per i punteggi bassi;
-- calibrazione consensus del risultato esatto tramite probabilità 1X2, differenziale atteso, forma, Elo, creazione di occasioni, rendimento casa/trasferta e riposo.
+- Poisson con correzione Dixon–Coles per i punteggi bassi.
 
-La stima mostrata non coincide più automaticamente con il singolo punteggio Poisson più frequente: un pareggio viene mantenuto quando i segnali complessivi sono bilanciati, mentre un vantaggio coerente di una squadra può spostare il risultato rappresentativo verso una vittoria.
+Tutti questi segnali vengono combinati una sola volta nella stima dei gol attesi. La stessa matrice dei punteggi produce risultati esatti, probabilità 1X2, Over 2.5 e BTTS, evitando doppio conteggio e incongruenze tra mercati.
+
+Il punteggio principale non è più necessariamente il singolo risultato esatto più frequente in assoluto. Prima viene scelto l'esito 1/X/2 con probabilità aggregata maggiore; poi viene mostrato il risultato esatto più probabile condizionato a quell'esito. Per esempio, se `1-1` è il singolo punteggio più frequente ma la somma di tutti i risultati con vittoria ospite è nettamente superiore, viene mostrato il miglior punteggio ospite. Il pareggio resta selezionato quando è davvero l'esito 1X2 più probabile.
+
+I controlli consensus su differenziale atteso, forma, Elo, creazione di occasioni, rendimento casa/trasferta e riposo restano disponibili come diagnostica, ma non vengono applicati una seconda volta alle probabilità.
+
+Card e popup usano la stessa sorgente per valori e arrotondamento 1X2. Il popup normalizza soltanto le larghezze grafiche della barra, senza modificare le percentuali mostrate.
 
 Per i cinque campionati il filtro di training resta limitato esattamente ai Big Five, quindi l'aggiunta delle coppe non modifica i pronostici nazionali. Per le coppe, il modello combina storico UEFA e forma nazionale delle squadre partecipanti, mantenendo una baseline separata per ciascuna competizione quando il campione è sufficiente.
 
@@ -86,7 +91,7 @@ npm test
 npm run check
 ```
 
-I test verificano catalogo Big Five + UEFA, esclusione dei campionati minori, cutoff comune, normalizzazione delle probabilità, calibrazione consensus del risultato esatto e invariabilità dei pronostici Big Five dopo l'aggiunta dei dati europei.
+I test verificano catalogo Big Five + UEFA, esclusione dei campionati minori, cutoff comune, normalizzazione delle probabilità, coerenza tra esito 1X2 e punteggio mostrato, identità delle percentuali tra card e popup e invariabilità dei pronostici Big Five dopo l'aggiunta dei dati europei.
 
 ## Aggiornamento e deploy
 
