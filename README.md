@@ -50,7 +50,7 @@ Il dataset contiene:
 
 Restano esclusi dal flusso attivo dati giocatori, probabili formazioni, trasferimenti, indisponibilità, quote di mercato, possesso e disciplina.
 
-## Modello 4.1 Big Five + UEFA Core
+## Modello 4.2 Big Five + UEFA Core
 
 Il modello usa esclusivamente segnali pre-partita stabili e disponibili in modo omogeneo:
 
@@ -61,7 +61,10 @@ Il modello usa esclusivamente segnali pre-partita stabili e disponibili in modo 
 - Elo aggiornato cronologicamente;
 - giorni di riposo;
 - baseline specifica della competizione;
-- Poisson con correzione Dixon–Coles per i punteggi bassi.
+- Poisson con correzione Dixon–Coles per i punteggi bassi;
+- calibrazione consensus del risultato esatto tramite probabilità 1X2, differenziale atteso, forma, Elo, creazione di occasioni, rendimento casa/trasferta e riposo.
+
+La stima mostrata non coincide più automaticamente con il singolo punteggio Poisson più frequente: un pareggio viene mantenuto quando i segnali complessivi sono bilanciati, mentre un vantaggio coerente di una squadra può spostare il risultato rappresentativo verso una vittoria.
 
 Per i cinque campionati il filtro di training resta limitato esattamente ai Big Five, quindi l'aggiunta delle coppe non modifica i pronostici nazionali. Per le coppe, il modello combina storico UEFA e forma nazionale delle squadre partecipanti, mantenendo una baseline separata per ciascuna competizione quando il campione è sufficiente.
 
@@ -83,7 +86,7 @@ npm test
 npm run check
 ```
 
-I test verificano catalogo Big Five + UEFA, esclusione dei campionati minori, cutoff comune, normalizzazione delle probabilità e invariabilità dei pronostici Big Five dopo l'aggiunta dei dati europei.
+I test verificano catalogo Big Five + UEFA, esclusione dei campionati minori, cutoff comune, normalizzazione delle probabilità, calibrazione consensus del risultato esatto e invariabilità dei pronostici Big Five dopo l'aggiunta dei dati europei.
 
 ## Aggiornamento e deploy
 
