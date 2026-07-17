@@ -145,9 +145,18 @@ function watchProbabilityValues(values) {
   }
 }
 
+function normalizeModalTeamPresentation(hero) {
+  hero.querySelectorAll(".team--favorite").forEach((team) => {
+    team.classList.remove("team--favorite");
+  });
+}
+
 function enhanceFixtureModal() {
   const hero = modalContent?.querySelector(".fixture-modal__hero");
-  if (!hero || hero.classList.contains("fixture-modal__hero--enhanced")) return;
+  if (!hero) return;
+
+  normalizeModalTeamPresentation(hero);
+  if (hero.classList.contains("fixture-modal__hero--enhanced")) return;
 
   const headerTitle = modalContent.querySelector(".fixture-modal__header h2");
   const teams = [...hero.querySelectorAll(".team")];
