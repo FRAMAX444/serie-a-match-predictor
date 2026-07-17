@@ -1,19 +1,27 @@
 .team-badge {
+  position: relative;
+  min-width: 0;
   overflow: hidden;
+  isolation: isolate;
 }
 
 .team-badge__image {
+  box-sizing: border-box;
   display: block;
   width: 100%;
+  max-width: 100%;
   height: 100%;
-  padding: 2px;
+  max-height: 100%;
+  padding: 3px;
   object-fit: contain;
   object-position: 50% 50%;
   transform: none;
+  transform-origin: center;
 }
 
+.team-badge--roma .team-badge__image,
 .team-badge__image[src*="roma-2026.svg"] {
-  padding: 1px;
+  padding: 4px 6px;
   object-fit: contain;
   object-position: 50% 50%;
   transform: none;

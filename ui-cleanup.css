@@ -50,15 +50,105 @@
   display: none !important;
 }
 
+/* The pitch is confined to the matchup area behind the two crests. */
+.fixture-modal__panel .fixture-modal__hero .fixture-main {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  padding: clamp(16px, 3vw, 24px) clamp(10px, 2.5vw, 22px);
+  border: 1px solid rgba(255, 255, 255, .18);
+  border-radius: 22px;
+  background: #215f3b;
+  box-shadow: inset 0 1px rgba(255, 255, 255, .08), 0 18px 38px rgba(0, 0, 0, .24);
+}
+
+.fixture-modal__panel .fixture-modal__hero .fixture-main::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -2;
+  background:
+    linear-gradient(rgba(4, 25, 15, .08), rgba(3, 18, 12, .28)),
+    repeating-linear-gradient(90deg, #2c7a4b 0 12.5%, #276f45 12.5% 25%);
+}
+
+.fixture-modal__panel .fixture-modal__hero .fixture-main::after {
+  content: "";
+  position: absolute;
+  inset: 9px;
+  z-index: -1;
+  border: 1px solid rgba(255, 255, 255, .27);
+  border-radius: 5px;
+  pointer-events: none;
+  background:
+    linear-gradient(90deg, transparent calc(50% - 1px), rgba(255, 255, 255, .24) 50%, transparent calc(50% + 1px)),
+    radial-gradient(circle at 50% 50%, transparent 0 29px, rgba(255, 255, 255, .24) 30px 31px, transparent 32px),
+    linear-gradient(90deg,
+      rgba(255, 255, 255, .2) 0 1px,
+      transparent 1px 17%,
+      rgba(255, 255, 255, .2) 17% calc(17% + 1px),
+      transparent calc(17% + 1px) 83%,
+      rgba(255, 255, 255, .2) 83% calc(83% + 1px),
+      transparent calc(83% + 1px) calc(100% - 1px),
+      rgba(255, 255, 255, .2) calc(100% - 1px));
+}
+
+.fixture-modal__panel .fixture-modal__hero .fixture-main > * {
+  position: relative;
+  z-index: 1;
+}
+
+.fixture-modal__panel .fixture-modal__hero .team {
+  max-width: 100%;
+  min-width: 0;
+}
+
 .fixture-modal__panel .fixture-modal__hero .team strong {
+  max-width: 100%;
   color: #f9fafb !important;
-  text-shadow: 0 2px 14px rgba(0, 0, 0, .48) !important;
+  text-shadow: 0 2px 14px rgba(0, 0, 0, .58) !important;
+}
+
+/* Keep every crest inside its own column, with extra safe space for Roma's tall shield. */
+.fixture-modal__panel .fixture-modal__hero .team-badge,
+.fixture-modal__panel .fixture-modal__hero .team--favorite .team-badge,
+.fixture-modal__panel .fixture-modal__hero .team-badge:not(.team-badge--fallback),
+.fixture-modal__panel .fixture-modal__hero .team--favorite .team-badge:not(.team-badge--fallback) {
+  box-sizing: border-box;
+  width: clamp(76px, 14vw, 112px) !important;
+  max-width: 100% !important;
+  height: auto !important;
+  aspect-ratio: 1;
+  overflow: hidden !important;
+  border: 0 !important;
+  border-radius: 18px !important;
+  background: rgba(12, 35, 23, .32) !important;
+  filter: drop-shadow(0 12px 14px rgba(0, 0, 0, .34)) !important;
+}
+
+.fixture-modal__panel .fixture-modal__hero .team-badge__image,
+.fixture-modal__panel .fixture-modal__hero .team-badge__image[src*="roma-2026.svg"] {
+  box-sizing: border-box;
+  display: block;
+  width: 100% !important;
+  max-width: 100% !important;
+  height: 100% !important;
+  max-height: 100% !important;
+  padding: 5px !important;
+  object-fit: contain !important;
+  object-position: 50% 50% !important;
+  transform: none !important;
+}
+
+.fixture-modal__panel .fixture-modal__hero .team-badge--roma .team-badge__image,
+.fixture-modal__panel .fixture-modal__hero .team-badge__image[src*="roma-2026.svg"] {
+  padding: 7px 10px !important;
 }
 
 .fixture-modal__panel .fixture-modal__hero .predicted-score {
-  border-color: rgba(255, 255, 255, .16) !important;
-  background: rgba(17, 19, 23, .72) !important;
-  box-shadow: inset 0 1px rgba(255, 255, 255, .06), 0 12px 28px rgba(0, 0, 0, .24) !important;
+  border-color: rgba(255, 255, 255, .18) !important;
+  background: rgba(17, 19, 23, .76) !important;
+  box-shadow: inset 0 1px rgba(255, 255, 255, .07), 0 12px 28px rgba(0, 0, 0, .28) !important;
 }
 
 .fixture-modal__panel .fixture-modal__close,
@@ -109,22 +199,26 @@
   background: linear-gradient(90deg, #6f7580, #b8bdc6) !important;
 }
 
-/* Exact proportional widths: no grid min-content redistribution and no flex shrinking. */
+/* Exact proportional widths: the colored bar contains no text. */
 .fixture-modal__panel .probability-strip--modal {
   display: flex !important;
   grid-template-columns: none !important;
   align-items: stretch;
   gap: 0 !important;
+  min-height: 48px;
   background: #1b1e23 !important;
 }
 
 .fixture-modal__panel .probability-strip--modal span {
   box-sizing: border-box;
+  display: block !important;
   flex: 0 0 var(--chance, 33.333333%) !important;
   width: var(--chance, 33.333333%) !important;
   max-width: var(--chance, 33.333333%) !important;
   min-width: 0 !important;
   overflow: hidden;
+  padding: 0 !important;
+  font-size: 0 !important;
   white-space: nowrap;
 }
 
@@ -132,8 +226,69 @@
   border-left: 1px solid rgba(255, 255, 255, .18) !important;
 }
 
+/* Outcome names and percentages are entirely below the colored segments. */
+.fixture-modal__panel .fixture-modal__probability-values {
+  display: flex;
+  align-items: flex-start;
+  width: 100%;
+  margin-top: 9px;
+}
+
+.fixture-modal__panel .fixture-modal__probability-value {
+  box-sizing: border-box;
+  display: grid;
+  flex: 0 0 var(--chance, 33.333333%);
+  width: var(--chance, 33.333333%);
+  max-width: var(--chance, 33.333333%);
+  min-width: 0;
+  place-items: center;
+  gap: 3px;
+  padding: 0 2px;
+  color: #f3f4f6;
+  text-align: center;
+}
+
+.fixture-modal__panel .fixture-modal__probability-value b {
+  color: #ffffff;
+  font-size: clamp(.82rem, 2vw, .96rem);
+  line-height: 1;
+}
+
+.fixture-modal__panel .fixture-modal__probability-value small {
+  color: rgba(229, 231, 235, .72);
+  font-size: clamp(.64rem, 1.7vw, .78rem);
+  font-weight: 760;
+  line-height: 1;
+  white-space: nowrap;
+}
+
 @media (max-width: 620px) {
-  .fixture-modal__panel .probability-strip--modal span {
-    padding-inline: 1px !important;
+  .fixture-modal__panel .fixture-modal__hero .fixture-main {
+    padding: 14px 6px;
+    border-radius: 17px;
+  }
+
+  .fixture-modal__panel .fixture-modal__hero .fixture-main::after {
+    inset: 6px;
+  }
+
+  .fixture-modal__panel .fixture-modal__hero .team-badge,
+  .fixture-modal__panel .fixture-modal__hero .team--favorite .team-badge,
+  .fixture-modal__panel .fixture-modal__hero .team-badge:not(.team-badge--fallback),
+  .fixture-modal__panel .fixture-modal__hero .team--favorite .team-badge:not(.team-badge--fallback) {
+    width: clamp(66px, 22vw, 92px) !important;
+  }
+
+  .fixture-modal__panel .fixture-modal__hero .team-badge--roma .team-badge__image,
+  .fixture-modal__panel .fixture-modal__hero .team-badge__image[src*="roma-2026.svg"] {
+    padding: 6px 9px !important;
+  }
+
+  .fixture-modal__panel .probability-strip--modal {
+    min-height: 42px;
+  }
+
+  .fixture-modal__panel .fixture-modal__probability-value {
+    padding-inline: 1px;
   }
 }

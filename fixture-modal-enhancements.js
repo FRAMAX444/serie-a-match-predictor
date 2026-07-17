@@ -20,6 +20,21 @@ function normalizedProbabilities(cells) {
   return values.map((value) => (value / total) * 100);
 }
 
+function probabilityValue(label, probability) {
+  const item = document.createElement("span");
+  item.className = "fixture-modal__probability-value";
+  item.style.setProperty("--chance", `${probability.toFixed(6)}%`);
+
+  const outcome = document.createElement("b");
+  outcome.textContent = label;
+
+  const percentage = document.createElement("small");
+  percentage.textContent = `${probability.toFixed(1)}%`;
+
+  item.append(outcome, percentage);
+  return item;
+}
+
 function enhanceFixtureModal() {
   const hero = modalContent?.querySelector(".fixture-modal__hero");
   if (!hero || hero.classList.contains("fixture-modal__hero--enhanced")) return;
@@ -78,7 +93,18 @@ function enhanceFixtureModal() {
       cell.style.setProperty("--chance", chance);
       cell.style.flexBasis = chance;
       cell.style.width = chance;
+      cell.replaceChildren();
+      cell.setAttribute("aria-hidden", "true");
     });
+
+    let values = hero.querySelector(".fixture-modal__probability-values");
+    if (!values) {
+      values = document.createElement("div");
+      values.className = "fixture-modal__probability-values";
+      values.setAttribute("aria-hidden", "true");
+      probabilityStrip.after(values);
+    }
+    values.replaceChildren(...outcomeLabels.map((label, index) => probabilityValue(label, probabilities[index])));
 
     if (!probabilityStrip.previousElementSibling?.classList.contains("fixture-modal__probability-heading")) {
       const heading = document.createElement("div");
