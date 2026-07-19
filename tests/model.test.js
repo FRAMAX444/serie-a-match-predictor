@@ -112,7 +112,7 @@ assert.equal(domesticPrediction.lambdaHome, domesticWithEurope.lambdaHome);
 assert.equal(domesticPrediction.lambdaAway, domesticWithEurope.lambdaAway);
 assert.deepEqual(domesticPrediction.probabilities, domesticWithEurope.probabilities);
 assert.equal(domesticPrediction.competitionId, "ita.1");
-assert.equal(domesticPrediction.modelVersion, "4.1-top5-uefa-core");
+assert.equal(domesticPrediction.modelVersion, "5.0-calibrated-recency-xg-elo");
 assert.equal(domesticPrediction.baselineSource, "competition");
 assert.ok(domesticPrediction.baselineMatches >= 60);
 
