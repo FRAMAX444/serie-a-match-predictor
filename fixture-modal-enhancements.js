@@ -8,20 +8,38 @@ function safeHex(value, fallback) {
   return /^#[0-9a-f]{6}$/i.test(color) ? color : fallback;
 }
 
-function probabilityFromCell(cell) {
+function textProbabilityFromCell(cell) {
   const match = cell?.textContent?.match(/(\d+(?:[.,]\d+)?)\s*%/);
   const value = Number.parseFloat(match?.[1]?.replace(",", ".") || "0");
   return Number.isFinite(value) ? Math.max(value, 0) : 0;
 }
 
-function normalizedProbabilities(cells) {
+export function probabilityFromCell(cell) {
+  const rawProbability = Number.parseFloat(cell?.dataset?.probability || "");
+  if (Number.isFinite(rawProbability)) return Math.max(rawProbability * 100, 0);
+  return textProbabilityFromCell(cell);
+}
+
+export function displayedProbabilityFromCell(cell, fallbackProbability = 0) {
+  const explicit = String(cell?.dataset?.displayPercentage || "").trim();
+  const explicitMatch = explicit.match(/^(\d+(?:[.,]\d+)?)\s*%$/);
+  if (explicitMatch) return `${explicitMatch[1].replace(",", ".")}%`;
+
+  const textMatch = cell?.textContent?.match(/(\d+(?:[.,]\d+)?)\s*%/);
+  if (textMatch) return `${textMatch[1].replace(",", ".")}%`;
+
+  const safeFallback = Number.isFinite(fallbackProbability) ? Math.max(fallbackProbability, 0) : 0;
+  return `${safeFallback.toFixed(1)}%`;
+}
+
+export function normalizedProbabilities(cells) {
   const values = cells.map(probabilityFromCell);
   const total = values.reduce((sum, value) => sum + value, 0);
   if (total <= 0) return cells.map(() => 100 / Math.max(cells.length, 1));
   return values.map((value) => (value / total) * 100);
 }
 
-function probabilityValue(label, probability, position) {
+function probabilityValue(label, displayedPercentage, position) {
   const item = document.createElement("span");
   item.className = "fixture-modal__probability-value";
   item.dataset.probabilityPosition = position.toFixed(6);
@@ -30,7 +48,7 @@ function probabilityValue(label, probability, position) {
   outcome.textContent = label;
 
   const percentage = document.createElement("small");
-  percentage.textContent = `${probability.toFixed(1)}%`;
+  percentage.textContent = displayedPercentage;
 
   item.append(outcome, percentage);
   return item;
@@ -197,13 +215,16 @@ function enhanceFixtureModal() {
 
     const cells = [...probabilityStrip.querySelectorAll("span")];
     const probabilities = normalizedProbabilities(cells);
+    const displayedPercentages = cells.map((cell, index) => (
+      displayedProbabilityFromCell(cell, probabilities[index])
+    ));
     const outcomeClasses = ["probability-strip__home", "probability-strip__draw", "probability-strip__away"];
     const outcomeLabels = ["1", "X", "2"];
 
     probabilityStrip.setAttribute("role", "img");
     probabilityStrip.setAttribute(
       "aria-label",
-      `Probabilità 1X2 per ${matchLabel}: ${outcomeLabels.map((label, index) => `${label} ${probabilities[index].toFixed(1)}%`).join(", ")}`,
+      `Probabilità 1X2 per ${matchLabel}: ${outcomeLabels.map((label, index) => `${label} ${displayedPercentages[index]}`).join(", ")}`,
     );
 
     cells.forEach((cell, index) => {
@@ -229,7 +250,7 @@ function enhanceFixtureModal() {
       const probability = probabilities[index];
       const center = cumulativeProbability + probability / 2;
       cumulativeProbability += probability;
-      return probabilityValue(label, probability, center);
+      return probabilityValue(label, displayedPercentages[index], center);
     });
     values.replaceChildren(...probabilityItems);
     watchProbabilityValues(values);
