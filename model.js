@@ -11,7 +11,7 @@ const safe = (value, fallback = 0) => {
 };
 const dateAtNoon = (value) => new Date(`${String(value).slice(0, 10)}T12:00:00Z`);
 const blend = (observed, baseline, reliability) => baseline + reliability * (observed - baseline);
-const recent = (records, count) => records.slice(-count);
+const mean = (left, right) => Math.max(0.01, (left + right) / 2);
 
 export function poissonPmf(k, lambda) {
   if (lambda <= 0) return k === 0 ? 1 : 0;
@@ -66,32 +66,59 @@ export function matrixProbabilities(matrix) {
 function xgValue(match, side) {
   const explicit = safe(match[`${side}_xg`], NaN);
   if (Number.isFinite(explicit)) return { value: explicit, actual: true };
+
   const shots = safe(match[`${side}_shots`], NaN);
   const shotsOnTarget = safe(match[`${side}_sot`], NaN);
-  if (Number.isFinite(shots) || Number.isFinite(shotsOnTarget)) {
+  if (Number.isFinite(shots) && Number.isFinite(shotsOnTarget)) {
     return {
-      value: clamp(0.16 + 0.026 * safe(shots, 11) + 0.19 * safe(shotsOnTarget, 3.8), 0.3, 3.8),
+      value: clamp(0.16 + 0.026 * shots + 0.19 * shotsOnTarget, 0.3, 3.8),
       actual: false,
     };
+  }
+  if (Number.isFinite(shots)) {
+    // Calibrated on the supplied 949-match benchmark when only total shots are available.
+    return { value: clamp(0.056 + 0.111 * shots, 0.3, 3.8), actual: false };
+  }
+  if (Number.isFinite(shotsOnTarget)) {
+    return { value: clamp(0.446 + 0.19 * shotsOnTarget, 0.3, 3.8), actual: false };
   }
   return { value: clamp(0.9 + 0.22 * safe(match[`${side}_goals`], 1.2), 0.4, 3.2), actual: false };
 }
 
-function weightedAverage(records, key, fallback, halfLifeMatches = 3.5) {
-  const selected = records.filter((record) => Number.isFinite(record[key]));
+function weightedAverageByDate(records, key, fallback, predictionDate, halfLifeDays, maxRecords) {
+  const selected = records
+    .slice(-maxRecords)
+    .filter((record) => Number.isFinite(record[key]));
   if (!selected.length) return fallback;
+
   let numerator = 0;
   let denominator = 0;
-  selected.slice().reverse().forEach((record, index) => {
-    const weight = Math.pow(0.5, index / halfLifeMatches);
+  selected.forEach((record) => {
+    const ageDays = Math.max(0, (predictionDate - dateAtNoon(record.date)) / DAY_MS);
+    const weight = Math.exp(-LN2 * ageDays / halfLifeDays);
     numerator += record[key] * weight;
     denominator += weight;
   });
-  return numerator / denominator;
+  return denominator > 0 ? numerator / denominator : fallback;
 }
 
 function emptyState(initialElo = 1500) {
-  return { elo: initialElo, matches: [], homeMatches: [], awayMatches: [], lastDate: null };
+  return {
+    elo: initialElo,
+    baselineElo: initialElo,
+    matches: [],
+    homeMatches: [],
+    awayMatches: [],
+    lastDate: null,
+  };
+}
+
+function decayInactiveElo(state, matchDate) {
+  if (!state.lastDate) return;
+  const gapDays = Math.max(0, (dateAtNoon(matchDate) - dateAtNoon(state.lastDate)) / DAY_MS);
+  if (gapDays <= 45) return;
+  const retention = Math.exp(-(gapDays - 45) / 900);
+  state.elo = state.baselineElo + (state.elo - state.baselineElo) * retention;
 }
 
 function applyMatch(states, match, crossCompetition = false) {
@@ -100,6 +127,9 @@ function applyMatch(states, match, crossCompetition = false) {
   const awayState = states.get(match.away_team) || emptyState(initialElo);
   states.set(match.home_team, homeState);
   states.set(match.away_team, awayState);
+
+  decayInactiveElo(homeState, match.date);
+  decayInactiveElo(awayState, match.date);
 
   const homeGoals = safe(match.home_goals);
   const awayGoals = safe(match.away_goals);
@@ -138,16 +168,20 @@ function applyMatch(states, match, crossCompetition = false) {
   homeState.homeMatches.push(homeRecord);
   awayState.matches.push(awayRecord);
   awayState.awayMatches.push(awayRecord);
-  homeState.matches = homeState.matches.slice(-32);
-  awayState.matches = awayState.matches.slice(-32);
-  homeState.homeMatches = homeState.homeMatches.slice(-16);
-  awayState.awayMatches = awayState.awayMatches.slice(-16);
+  homeState.matches = homeState.matches.slice(-40);
+  awayState.matches = awayState.matches.slice(-40);
+  homeState.homeMatches = homeState.homeMatches.slice(-20);
+  awayState.awayMatches = awayState.awayMatches.slice(-20);
 
   const isEuropeanMatch = EUROPE_COMPETITION_IDS.has(String(match.competition_id))
     || String(match.competition_type || "").toLowerCase() === "europe";
   const homeAdvantage = crossCompetition && isEuropeanMatch ? 38 : 48;
   const expectedHome = 1 / (1 + Math.pow(10, (awayState.elo - (homeState.elo + homeAdvantage)) / 400));
-  const actualHome = homeGoals > awayGoals ? 1 : homeGoals === awayGoals ? 0.5 : 0;
+  const resultPerformance = homeGoals > awayGoals ? 1 : homeGoals === awayGoals ? 0.5 : 0;
+  const xgPerformance = 1 / (1 + Math.exp(-1.15 * (homeXg.value - awayXg.value)));
+  const actualHome = homeXg.actual && awayXg.actual
+    ? 0.55 * resultPerformance + 0.45 * xgPerformance
+    : resultPerformance;
   const margin = Math.min(1.75, 1 + 0.13 * Math.abs(homeGoals - awayGoals));
   const importance = crossCompetition ? clamp(safe(match.importance, isEuropeanMatch ? 1.16 : 1), 0.8, 1.3) : 1;
   const k = crossCompetition ? (isEuropeanMatch ? 21 : 17) * importance : 18;
@@ -159,28 +193,28 @@ function applyMatch(states, match, crossCompetition = false) {
 }
 
 function stateMetrics(state, venue, predictionDate) {
-  const r3 = recent(state.matches, 3);
-  const r5 = recent(state.matches, 5);
-  const r10 = recent(state.matches, 10);
-  const venue5 = recent(venue === "home" ? state.homeMatches : state.awayMatches, 5);
-  const sampleReliability = clamp(state.matches.length / 10, 0, 1);
+  const venueMatches = venue === "home" ? state.homeMatches : state.awayMatches;
+  const recentTen = state.matches.slice(-10);
+  const sampleReliability = clamp(1 - Math.exp(-state.matches.length / 6.5), 0, 1);
   const restDays = state.lastDate ? Math.max(1, Math.round((predictionDate - dateAtNoon(state.lastDate)) / DAY_MS)) : 8;
+  const eloRetention = restDays <= 45 ? 1 : Math.exp(-(restDays - 45) / 900);
+  const currentElo = state.baselineElo + (state.elo - state.baselineElo) * eloRetention;
   return {
-    ppg3: weightedAverage(r3, "points", 1.35),
-    ppg5: weightedAverage(r5, "points", 1.35),
-    ppg10: weightedAverage(r10, "points", 1.35, 5),
-    gf5: weightedAverage(r5, "gf", 1.3),
-    ga5: weightedAverage(r5, "ga", 1.3),
-    xgFor5: weightedAverage(r5, "xgFor", 1.3),
-    xgAgainst5: weightedAverage(r5, "xgAgainst", 1.3),
-    shots5: weightedAverage(r5, "shots", 11),
-    shotsAgainst5: weightedAverage(r5, "shotsAgainst", 10.5),
-    sot5: weightedAverage(r5, "sot", 3.8),
-    sotAgainst5: weightedAverage(r5, "sotAgainst", 3.6),
-    venueGf5: weightedAverage(venue5, "gf", 1.3),
-    venueGa5: weightedAverage(venue5, "ga", 1.3),
-    xgCoverage: r10.length ? r10.filter((item) => item.xgActual).length / r10.length : 0,
-    elo: blend(state.elo, 1500, sampleReliability),
+    ppg3: weightedAverageByDate(state.matches, "points", 1.35, predictionDate, 18, 6),
+    ppg5: weightedAverageByDate(state.matches, "points", 1.35, predictionDate, 35, 10),
+    ppg10: weightedAverageByDate(state.matches, "points", 1.35, predictionDate, 90, 20),
+    gf5: weightedAverageByDate(state.matches, "gf", 1.3, predictionDate, 70, 16),
+    ga5: weightedAverageByDate(state.matches, "ga", 1.3, predictionDate, 70, 16),
+    xgFor5: weightedAverageByDate(state.matches, "xgFor", 1.3, predictionDate, 70, 16),
+    xgAgainst5: weightedAverageByDate(state.matches, "xgAgainst", 1.3, predictionDate, 70, 16),
+    shots5: weightedAverageByDate(state.matches, "shots", 11, predictionDate, 70, 16),
+    shotsAgainst5: weightedAverageByDate(state.matches, "shotsAgainst", 10.5, predictionDate, 70, 16),
+    sot5: weightedAverageByDate(state.matches, "sot", 3.8, predictionDate, 70, 16),
+    sotAgainst5: weightedAverageByDate(state.matches, "sotAgainst", 3.6, predictionDate, 70, 16),
+    venueGf5: weightedAverageByDate(venueMatches, "gf", 1.3, predictionDate, 100, 10),
+    venueGa5: weightedAverageByDate(venueMatches, "ga", 1.3, predictionDate, 100, 10),
+    xgCoverage: recentTen.length ? recentTen.filter((item) => item.xgActual).length / recentTen.length : 0,
+    elo: blend(currentElo, state.baselineElo, sampleReliability),
     matches: state.matches.length,
     sampleReliability,
     restDays,
@@ -204,7 +238,7 @@ function weightedCompetitionAverages(matches, cutoffDate, halfLifeDays) {
   const sums = { homeGoals: 0, awayGoals: 0, homeXg: 0, awayXg: 0, homeShots: 0, awayShots: 0, homeSot: 0, awaySot: 0 };
   matches.forEach((match) => {
     const age = Math.max(0, (cutoffDate - dateAtNoon(match.date)) / DAY_MS);
-    const weight = 0.05 + Math.exp(-LN2 * age / halfLifeDays);
+    const weight = Math.exp(-LN2 * age / halfLifeDays);
     const homeExpected = xgValue(match, "home").value;
     const awayExpected = xgValue(match, "away").value;
     weightTotal += weight;
@@ -281,27 +315,34 @@ export function predictFromMatches(matches, rawOptions) {
   const home = stateMetrics(states.get(options.homeTeam) || emptyState(), "home", predictionDate);
   const away = stateMetrics(states.get(options.awayTeam) || emptyState(), "away", predictionDate);
   const league = weightedCompetitionAverages(baselineTraining, cutoffDate, options.halfLifeDays);
+  const neutralGoals = mean(league.homeGoals, league.awayGoals);
+  const neutralXg = mean(league.homeXg, league.awayXg);
+  const neutralShots = mean(league.homeShots, league.awayShots);
+  const neutralSot = mean(league.homeSot, league.awaySot);
 
-  const homeAttack = Math.pow(clamp(blend(home.gf5, league.homeGoals, home.sampleReliability) / league.homeGoals, 0.5, 1.8), 0.22)
-    * Math.pow(clamp(blend(home.xgFor5, league.homeXg, home.sampleReliability) / league.homeXg, 0.5, 1.8), 0.43)
-    * Math.pow(clamp(blend(home.sot5, league.homeSot, home.sampleReliability) / league.homeSot, 0.6, 1.6), 0.18)
-    * Math.pow(clamp(blend(home.shots5, league.homeShots, home.sampleReliability) / league.homeShots, 0.65, 1.5), 0.07)
+  // General team form is venue-neutral. Only venue-specific splits are compared with
+  // home/away league baselines; this avoids systematically suppressing home attack
+  // and inflating away attack when general metrics are used.
+  const homeAttack = Math.pow(clamp(blend(home.gf5, neutralGoals, home.sampleReliability) / neutralGoals, 0.5, 1.8), 0.22)
+    * Math.pow(clamp(blend(home.xgFor5, neutralXg, home.sampleReliability) / neutralXg, 0.5, 1.8), 0.43)
+    * Math.pow(clamp(blend(home.sot5, neutralSot, home.sampleReliability) / neutralSot, 0.6, 1.6), 0.18)
+    * Math.pow(clamp(blend(home.shots5, neutralShots, home.sampleReliability) / neutralShots, 0.65, 1.5), 0.07)
     * Math.pow(clamp(blend(home.venueGf5, league.homeGoals, home.sampleReliability * 0.7) / league.homeGoals, 0.55, 1.65), 0.10);
-  const awayDefense = Math.pow(clamp(blend(away.ga5, league.homeGoals, away.sampleReliability) / league.homeGoals, 0.5, 1.9), 0.27)
-    * Math.pow(clamp(blend(away.xgAgainst5, league.homeXg, away.sampleReliability) / league.homeXg, 0.5, 1.9), 0.45)
-    * Math.pow(clamp(blend(away.sotAgainst5, league.homeSot, away.sampleReliability) / league.homeSot, 0.6, 1.7), 0.18)
-    * Math.pow(clamp(blend(away.shotsAgainst5, league.homeShots, away.sampleReliability) / league.homeShots, 0.65, 1.6), 0.05)
+  const awayDefense = Math.pow(clamp(blend(away.ga5, neutralGoals, away.sampleReliability) / neutralGoals, 0.5, 1.9), 0.27)
+    * Math.pow(clamp(blend(away.xgAgainst5, neutralXg, away.sampleReliability) / neutralXg, 0.5, 1.9), 0.45)
+    * Math.pow(clamp(blend(away.sotAgainst5, neutralSot, away.sampleReliability) / neutralSot, 0.6, 1.7), 0.18)
+    * Math.pow(clamp(blend(away.shotsAgainst5, neutralShots, away.sampleReliability) / neutralShots, 0.65, 1.6), 0.05)
     * Math.pow(clamp(blend(away.venueGa5, league.homeGoals, away.sampleReliability * 0.7) / league.homeGoals, 0.6, 1.7), 0.05);
 
-  const awayAttack = Math.pow(clamp(blend(away.gf5, league.awayGoals, away.sampleReliability) / league.awayGoals, 0.5, 1.85), 0.22)
-    * Math.pow(clamp(blend(away.xgFor5, league.awayXg, away.sampleReliability) / league.awayXg, 0.5, 1.85), 0.43)
-    * Math.pow(clamp(blend(away.sot5, league.awaySot, away.sampleReliability) / league.awaySot, 0.6, 1.65), 0.18)
-    * Math.pow(clamp(blend(away.shots5, league.awayShots, away.sampleReliability) / league.awayShots, 0.65, 1.55), 0.07)
+  const awayAttack = Math.pow(clamp(blend(away.gf5, neutralGoals, away.sampleReliability) / neutralGoals, 0.5, 1.85), 0.22)
+    * Math.pow(clamp(blend(away.xgFor5, neutralXg, away.sampleReliability) / neutralXg, 0.5, 1.85), 0.43)
+    * Math.pow(clamp(blend(away.sot5, neutralSot, away.sampleReliability) / neutralSot, 0.6, 1.65), 0.18)
+    * Math.pow(clamp(blend(away.shots5, neutralShots, away.sampleReliability) / neutralShots, 0.65, 1.55), 0.07)
     * Math.pow(clamp(blend(away.venueGf5, league.awayGoals, away.sampleReliability * 0.7) / league.awayGoals, 0.55, 1.7), 0.10);
-  const homeDefense = Math.pow(clamp(blend(home.ga5, league.awayGoals, home.sampleReliability) / league.awayGoals, 0.5, 1.9), 0.27)
-    * Math.pow(clamp(blend(home.xgAgainst5, league.awayXg, home.sampleReliability) / league.awayXg, 0.5, 1.9), 0.45)
-    * Math.pow(clamp(blend(home.sotAgainst5, league.awaySot, home.sampleReliability) / league.awaySot, 0.6, 1.7), 0.18)
-    * Math.pow(clamp(blend(home.shotsAgainst5, league.awayShots, home.sampleReliability) / league.awayShots, 0.65, 1.6), 0.05)
+  const homeDefense = Math.pow(clamp(blend(home.ga5, neutralGoals, home.sampleReliability) / neutralGoals, 0.5, 1.9), 0.27)
+    * Math.pow(clamp(blend(home.xgAgainst5, neutralXg, home.sampleReliability) / neutralXg, 0.5, 1.9), 0.45)
+    * Math.pow(clamp(blend(home.sotAgainst5, neutralSot, home.sampleReliability) / neutralSot, 0.6, 1.7), 0.18)
+    * Math.pow(clamp(blend(home.shotsAgainst5, neutralShots, home.sampleReliability) / neutralShots, 0.65, 1.6), 0.05)
     * Math.pow(clamp(blend(home.venueGa5, league.awayGoals, home.sampleReliability * 0.7) / league.awayGoals, 0.6, 1.7), 0.05);
 
   const eloDiff = home.elo - away.elo;
@@ -335,7 +376,12 @@ export function predictFromMatches(matches, rawOptions) {
     cutoffDate: String(options.cutoffDate || options.date).slice(0, 10),
     xgCoverage: (home.xgCoverage + away.xgCoverage) / 2,
     competitionId: options.competitionId,
-    modelVersion: "4.1-top5-uefa-core",
+    calibration: {
+      neutralGeneralBaseline: true,
+      metricHalfLifeDays: 70,
+      xgEloBlend: 0.45,
+    },
+    modelVersion: "5.0-calibrated-recency-xg-elo",
   };
 }
 
