@@ -8,8 +8,18 @@ function safeHex(value, fallback) {
   return /^#[0-9a-f]{6}$/i.test(color) ? color : fallback;
 }
 
+function probabilityTextFromCell(cell) {
+  const text = String(cell?.textContent || "");
+  const outcomeLabel = String(cell?.querySelector?.("b")?.textContent || "").trim();
+  if (!outcomeLabel) return text;
+
+  const labelIndex = text.indexOf(outcomeLabel);
+  if (labelIndex < 0) return text;
+  return `${text.slice(0, labelIndex)}${text.slice(labelIndex + outcomeLabel.length)}`;
+}
+
 function textProbabilityFromCell(cell) {
-  const match = cell?.textContent?.match(/(\d+(?:[.,]\d+)?)\s*%/);
+  const match = probabilityTextFromCell(cell).match(/(\d+(?:[.,]\d+)?)\s*%/);
   const value = Number.parseFloat(match?.[1]?.replace(",", ".") || "0");
   return Number.isFinite(value) ? Math.max(value, 0) : 0;
 }
@@ -25,7 +35,7 @@ export function displayedProbabilityFromCell(cell, fallbackProbability = 0) {
   const explicitMatch = explicit.match(/^(\d+(?:[.,]\d+)?)\s*%$/);
   if (explicitMatch) return `${explicitMatch[1].replace(",", ".")}%`;
 
-  const textMatch = cell?.textContent?.match(/(\d+(?:[.,]\d+)?)\s*%/);
+  const textMatch = probabilityTextFromCell(cell).match(/(\d+(?:[.,]\d+)?)\s*%/);
   if (textMatch) return `${textMatch[1].replace(",", ".")}%`;
 
   const safeFallback = Number.isFinite(fallbackProbability) ? Math.max(fallbackProbability, 0) : 0;
