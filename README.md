@@ -50,7 +50,7 @@ Il dataset contiene:
 
 Restano esclusi dal flusso attivo dati giocatori, probabili formazioni, trasferimenti, indisponibilità, quote di mercato, possesso e disciplina.
 
-## Modello 4.1 Big Five + UEFA Core
+## Modello 5.0 Calibrated Recency + xG Elo
 
 Il modello usa esclusivamente segnali pre-partita stabili e disponibili in modo omogeneo:
 
@@ -62,6 +62,13 @@ Il modello usa esclusivamente segnali pre-partita stabili e disponibili in modo 
 - giorni di riposo;
 - baseline specifica della competizione;
 - Poisson con correzione Dixon–Coles per i punteggi bassi.
+
+La versione 5.0 aggiunge quattro correzioni validate con backtest temporale:
+
+- le statistiche generali sono normalizzate contro una baseline neutrale, mentre i soli split casa/trasferta usano le rispettive medie di venue;
+- la recenza è pesata in giorni di calendario, non soltanto per numero di partite;
+- l'affidabilità cresce con shrinkage regolare e l'Elo decade lievemente dopo inattività prolungata;
+- quando sono disponibili xG reali, l'aggiornamento Elo combina risultato e qualità della prestazione, riducendo il rumore dei singoli episodi.
 
 Per i cinque campionati il filtro di training resta limitato esattamente ai Big Five, quindi l'aggiunta delle coppe non modifica i pronostici nazionali. Per le coppe, il modello combina storico UEFA e forma nazionale delle squadre partecipanti, mantenendo una baseline separata per ciascuna competizione quando il campione è sufficiente.
 
@@ -75,15 +82,22 @@ python -m http.server 8000
 
 Aprire `http://localhost:8000`.
 
-## Test
+## Test e backtest
 
 ```bash
 python -m py_compile scripts/update_europe_data.py scripts/update_uefa_data.py scripts/update_top5_data.py
 npm test
 npm run check
+npm run backtest
 ```
 
-I test verificano catalogo Big Five + UEFA, esclusione dei campionati minori, cutoff comune, normalizzazione delle probabilità e invariabilità dei pronostici Big Five dopo l'aggiunta dei dati europei.
+I test verificano catalogo Big Five + UEFA, esclusione dei campionati minori, cutoff comune, normalizzazione delle probabilità, invariabilità dei pronostici Big Five dopo l'aggiunta dei dati europei e le nuove regressioni di calibrazione venue-neutral/xG-Elo.
+
+Il backtest usa soltanto informazioni disponibili prima di ogni gara e riporta log loss, Brier multiclass, Ranked Probability Score e accuracy. È possibile limitare l'analisi, per esempio:
+
+```bash
+npm run backtest -- --competition ita.1 --since 2025-08-01 --max 500
+```
 
 ## Aggiornamento e deploy
 
