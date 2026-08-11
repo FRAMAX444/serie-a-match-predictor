@@ -19,17 +19,19 @@ TOP_FIVE_LEAGUES = tuple(
 EUROPE_COMPETITIONS = tuple(base.EUROPE_COMPETITIONS)
 EUROPE_COMPETITION_IDS = {str(item["id"]) for item in EUROPE_COMPETITIONS}
 
-_existing_domestic_ids = {str(item["id"]) for item in base.DOMESTIC_LEAGUES}
-ALL_DOMESTIC_LEAGUES = tuple(base.DOMESTIC_LEAGUES) + tuple(
-    item for item in uefa.EXTRA_DOMESTIC_LEAGUES
-    if str(item["id"]) not in _existing_domestic_ids
-)
-
 MATCH_FIELDS = (
     "id", "season", "competition_id", "competition_name", "competition_type", "country",
     "league_strength", "date", "kickoff", "home_team", "away_team", "round", "round_label",
     "completed", "source", "source_index", "importance", "home_goals", "away_goals",
     "home_xg", "away_xg", "home_shots", "away_shots", "home_sot", "away_sot",
+    # Già scaricati da parse_csv() in update_europe_data.py (Football-Data.co.uk) ma finora
+    # scartati qui: quote di chiusura (media di mercato, fallback Bet365/Pinnacle), corner
+    # e cartellini. Nessuna nuova fonte dati: si smette solo di eliminarli in compattazione.
+    "home_odds", "draw_odds", "away_odds",
+    "home_corners", "away_corners",
+    "home_yellow", "away_yellow", "home_red", "away_red",
+    "home_possession", "away_possession",
+    "referee",
 )
 
 
@@ -65,8 +67,9 @@ def competition_payload(
     source: str,
     start_year: int,
     competition_type: str,
+    target_code: str,
 ) -> dict[str, object]:
-    item = base.competition_payload(descriptor, fixtures, source)
+    item = base.competition_payload(descriptor, fixtures, source, target_code)
     item["type"] = competition_type
     item["country"] = "Europe" if competition_type == "europe" else str(descriptor.get("country") or "")
     if competition_type == "europe" and any(row.get("source") == "UEFA public match API" for row in fixtures):
@@ -84,10 +87,10 @@ def competition_payload(
 def fetch_domestic_history(
     descriptor: dict[str, object],
     starts: list[int],
+    target_start: int,
 ) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
     current: list[dict[str, object]] = []
     history: list[dict[str, object]] = []
-    target_start = starts[-1]
     for start in starts:
         try:
             rows = base.fetch_espn_events(descriptor, start, "domestic")
@@ -108,24 +111,23 @@ def main() -> None:
     args = parser.parse_args()
 
     target_code, target_start = base.resolve_target_season(args.target_season)
-    starts = list(range(target_start - max(2, args.history_seasons - 1), target_start + 1))
+    starts = list(reversed(range(target_start - max(2, args.history_seasons - 1), target_start + 1)))
     existing = base.load_existing_payload()
 
     competitions: list[dict[str, object]] = []
     matches: list[dict[str, object]] = []
-    target_european_fixtures: list[dict[str, object]] = []
     fixture_count = 0
 
     # Keep the domestic collection path unchanged: complete Big Five history and statistics.
     for descriptor in TOP_FIVE_LEAGUES:
-        current, espn_history = fetch_domestic_history(descriptor, starts)
+        current, espn_history = fetch_domestic_history(descriptor, starts, target_start)
         if not current:
             current = base.existing_competition_fixtures(existing, str(descriptor["id"]), target_code)
             source = "dataset precedente conservato" if current else "calendario non ancora disponibile"
         else:
             source = "ESPN public scoreboard"
 
-        competitions.append(competition_payload(descriptor, current, source, target_start, "domestic"))
+        competitions.append(competition_payload(descriptor, current, source, target_start, "domestic", target_code))
         fixture_count += len(current)
 
         try:
@@ -163,44 +165,12 @@ def main() -> None:
         else:
             source = "UEFA public match API; ESPN fallback"
 
-        competitions.append(competition_payload(descriptor, current, source, target_start, "europe"))
-        target_european_fixtures.extend(current)
+        competitions.append(competition_payload(descriptor, current, source, target_start, "europe", target_code))
         fixture_count += len(current)
         matches.extend(european_history)
         print(f"{descriptor['name']}: {len(current)} fixture target, {len(european_history)} gare storiche")
 
-    # For UEFA predictions only, retain domestic form for participating clubs outside the Big Five.
-    participant_ids, participant_names = uefa.collect_team_keys(target_european_fixtures)
-    support_leagues = [
-        dict(descriptor) for descriptor in ALL_DOMESTIC_LEAGUES
-        if str(descriptor["id"]) not in TOP_FIVE_LEAGUE_IDS
-        and uefa.LEAGUE_COUNTRY_CODES.get(str(descriptor["id"]), set()) & uefa.PARTICIPANT_COUNTRY_CODES
-    ]
-    hidden_support_matches: list[dict[str, object]] = []
-    for descriptor in support_leagues:
-        _, espn_history = fetch_domestic_history(descriptor, starts)
-        espn_history = [
-            item for item in espn_history
-            if uefa.robust_participant_match(item, participant_ids, participant_names)
-        ]
-        try:
-            football_data = [
-                item for item in base.download_football_data(descriptor, starts)
-                if uefa.robust_participant_match(item, participant_ids, participant_names)
-            ]
-        except Exception as error:
-            print(f"Football-Data supporto {descriptor['name']}: {error}", file=sys.stderr)
-            football_data = []
-        league_rows = base.merge_matches([*espn_history, *football_data])
-        if not args.skip_understat and descriptor.get("understat"):
-            try:
-                base.enrich_xg(league_rows, descriptor, starts)
-            except Exception as error:
-                print(f"Understat supporto {descriptor['name']}: {error}", file=sys.stderr)
-        hidden_support_matches.extend(league_rows)
-        print(f"Supporto UEFA {descriptor['name']}: {len(league_rows)} gare dei club partecipanti")
-
-    matches = [compact_match(item) for item in base.merge_matches([*matches, *hidden_support_matches])]
+    matches = [compact_match(item) for item in base.merge_matches(matches)]
     if len(matches) < 400:
         raise SystemExit("Dati insufficienti per Big Five e coppe UEFA: il dataset esistente non viene sovrascritto.")
 
@@ -214,6 +184,7 @@ def main() -> None:
     })
     xg_count = sum(item.get("home_xg") is not None and item.get("away_xg") is not None for item in matches)
     default_competition = "ita.1" if any(item.get("id") == "ita.1" and item.get("fixtures") for item in competitions) else str(competitions[0]["id"])
+    referee_stats = base.compute_referee_stats(matches)
 
     payload = {
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -224,20 +195,17 @@ def main() -> None:
         "competitions": competitions,
         "teams": teams,
         "matches": matches,
+        "referee_stats": referee_stats,
         "domestic_leagues": [
             {key: descriptor[key] for key in ("id", "name", "country")}
             for descriptor in TOP_FIVE_LEAGUES
-        ],
-        "training_support_leagues": [
-            {key: descriptor[key] for key in ("id", "name", "country") if key in descriptor}
-            for descriptor in support_leagues
         ],
         "coverage": {
             "supported_competitions": len([item for item in competitions if item.get("fixtures")]),
             "training_matches": len(matches),
             "xg_actual_matches": xg_count,
             "teams": len(teams),
-            "hidden_uefa_support_matches": len(hidden_support_matches),
+            "referees_tracked": len(referee_stats),
         },
         "source_health": {
             "target_fixtures": fixture_count,
@@ -246,9 +214,10 @@ def main() -> None:
         },
         "sources": {
             "fixtures_results": "UEFA public match API for European cups; ESPN public scoreboards for domestic leagues and fallback",
-            "match_statistics": "Football-Data.co.uk with ESPN fallback",
-            "xg": "Understat where available; shot-based proxy otherwise",
-            "model_inputs": "Goals/xG, shots, shots on target, form, Elo, venue and rest only",
+            "match_statistics": "Football-Data.co.uk (odds, corners, cards, possession, referee retained) with ESPN fallback",
+            "xg": "Understat datesData where the page still exposes it; getTeamData JSON endpoint per-team fallback otherwise; shot-based proxy when neither returns data",
+            "model_inputs": "Goals/xG, shots, shots on target, form, Elo, venue, rest, and optional pre-match team_context (lineup/availability/promotion) or refereeHomeBias when supplied",
+            "referee_stats": "Regularized (shrinkage) home-win-rate bias per referee from Football-Data.co.uk results. No source used here exposes an upcoming fixture's referee before it is officially announced, so applying this to a specific future match is a manual step, not automatic.",
         },
     }
 

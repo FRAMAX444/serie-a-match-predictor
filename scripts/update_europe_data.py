@@ -43,46 +43,22 @@ DOMESTIC_LEAGUES = (
     {"id": "esp.1", "name": "LaLiga", "country": "Spain", "espn": "esp.1", "fd": "SP1", "understat": "La_liga", "strength": 1555},
     {"id": "ita.1", "name": "Serie A", "country": "Italy", "espn": "ita.1", "fd": "I1", "understat": "Serie_A", "strength": 1550},
     {"id": "ger.1", "name": "Bundesliga", "country": "Germany", "espn": "ger.1", "fd": "D1", "understat": "Bundesliga", "strength": 1540},
-    {"id": "fra.1", "name": "Ligue 1", "country": "France", "espn": "fra.1", "fd": "F1", "understat": "Ligue_1", "strength": 1520},
-    {"id": "ned.1", "name": "Eredivisie", "country": "Netherlands", "espn": "ned.1", "fd": "N1", "strength": 1495},
-    {"id": "por.1", "name": "Primeira Liga", "country": "Portugal", "espn": "por.1", "fd": "P1", "strength": 1495},
-    {"id": "bel.1", "name": "Belgian Pro League", "country": "Belgium", "espn": "bel.1", "fd": "B1", "strength": 1465},
-    {"id": "tur.1", "name": "Süper Lig", "country": "Turkey", "espn": "tur.1", "fd": "T1", "strength": 1455},
-    {"id": "sco.1", "name": "Scottish Premiership", "country": "Scotland", "espn": "sco.1", "fd": "SC0", "strength": 1445},
-    {"id": "aut.1", "name": "Austrian Bundesliga", "country": "Austria", "espn": "aut.1", "strength": 1445},
-    {"id": "sui.1", "name": "Swiss Super League", "country": "Switzerland", "espn": "sui.1", "strength": 1435},
-    {"id": "gre.1", "name": "Greek Super League", "country": "Greece", "espn": "gre.1", "fd": "G1", "strength": 1430},
-    {"id": "den.1", "name": "Danish Superliga", "country": "Denmark", "espn": "den.1", "strength": 1425},
-    {"id": "cze.1", "name": "Czech First League", "country": "Czechia", "espn": "cze.1", "strength": 1420},
-    {"id": "nor.1", "name": "Eliteserien", "country": "Norway", "espn": "nor.1", "strength": 1405},
-    {"id": "swe.1", "name": "Allsvenskan", "country": "Sweden", "espn": "swe.1", "strength": 1400},
-    {"id": "pol.1", "name": "Ekstraklasa", "country": "Poland", "espn": "pol.1", "strength": 1400},
-    {"id": "cro.1", "name": "Croatian HNL", "country": "Croatia", "espn": "cro.1", "strength": 1395},
-    {"id": "srb.1", "name": "Serbian SuperLiga", "country": "Serbia", "espn": "srb.1", "strength": 1390},
-    {"id": "ukr.1", "name": "Ukrainian Premier League", "country": "Ukraine", "espn": "ukr.1", "strength": 1390},
-    {"id": "rou.1", "name": "Romanian Liga I", "country": "Romania", "espn": "rou.1", "strength": 1380},
-    {"id": "isr.1", "name": "Israeli Premier League", "country": "Israel", "espn": "isr.1", "strength": 1380},
-    {"id": "hun.1", "name": "Hungarian NB I", "country": "Hungary", "espn": "hun.1", "strength": 1370},
-    {"id": "cyp.1", "name": "Cypriot First Division", "country": "Cyprus", "espn": "cyp.1", "strength": 1365},
-    {"id": "bul.1", "name": "Bulgarian First League", "country": "Bulgaria", "espn": "bul.1", "strength": 1360},
-    {"id": "svn.1", "name": "Slovenian PrvaLiga", "country": "Slovenia", "espn": "svn.1", "strength": 1350},
-    {"id": "svk.1", "name": "Slovak Super Liga", "country": "Slovakia", "espn": "svk.1", "strength": 1345},
-    {"id": "fin.1", "name": "Veikkausliiga", "country": "Finland", "espn": "fin.1", "strength": 1335},
-    {"id": "irl.1", "name": "League of Ireland", "country": "Ireland", "espn": "irl.1", "strength": 1325},
+    {"id": "fra.1", "name": "Ligue 1", "country": "France", "espn": "fra.1", "fd": "F1", "understat": "Ligue_1", "strength": 1520}
 )
 
 NAME_MAP = {
     "Internazionale": "Inter", "Internazionale Milano": "Inter", "Inter Milan": "Inter",
     "AC Milan": "Milan", "AS Roma": "Roma", "Roma FC": "Roma", "Juventus FC": "Juventus",
-    "SSC Napoli": "Napoli", "Napoli SSC": "Napoli", "Bayern Munich": "Bayern Monaco",
-    "Bayern München": "Bayern Monaco", "Borussia Dortmund": "Dortmund", "Paris Saint-Germain": "PSG",
-    "Paris SG": "PSG", "Manchester United": "Man United", "Manchester City": "Man City",
+    "SSC Napoli": "Napoli", "Napoli SSC": "Napoli", "Bayern": "Bayern Monaco",
+    "Bayern Munich": "Bayern Monaco", "Bayern München": "Bayern Monaco",
+    "Borussia Dortmund": "Dortmund", "Paris Saint-Germain": "PSG", "Paris SG": "PSG",
+    "Manchester United": "Man United", "Manchester City": "Man City",
     "Tottenham Hotspur": "Tottenham", "Newcastle United": "Newcastle", "Athletic Club": "Athletic Bilbao",
-    "Atlético Madrid": "Atletico Madrid", "Atletico de Madrid": "Atletico Madrid",
-    "Real Betis Balompié": "Real Betis", "Sporting CP": "Sporting Lisbona",
+    "Atlético Madrid": "Atletico Madrid", "Atletico de Madrid": "Atletico Madrid", "Atletico": "Atletico Madrid",
+    "Atlético": "Atletico Madrid", "Real Betis Balompié": "Real Betis", "Sporting CP": "Sporting Lisbona",
     "Sporting Lisbon": "Sporting Lisbona", "FC Porto": "Porto", "SL Benfica": "Benfica",
     "PSV Eindhoven": "PSV", "Ajax Amsterdam": "Ajax", "Olympique Marseille": "Marsiglia",
-    "Olympique Lyonnais": "Lione", "AS Monaco": "Monaco", "Bayer Leverkusen": "Leverkusen",
+    "Olympique Lyon": "Lione", "Olympique Lyonnais": "Lione", "AS Monaco": "Monaco", "Bayer Leverkusen": "Leverkusen",
     "RB Leipzig": "Lipsia", "Eintracht Frankfurt": "Francoforte", "Club Brugge": "Club Bruges",
     "Celtic Glasgow": "Celtic", "Rangers FC": "Rangers", "Red Bull Salzburg": "Salisburgo",
     "FC Salzburg": "Salisburgo", "Shakhtar Donetsk": "Shakhtar", "Dynamo Kyiv": "Dynamo Kiev",
@@ -307,11 +283,53 @@ def parse_csv(content: str, season: str, league: dict[str, object]) -> list[dict
                 "home_odds": optional_float(row, "AvgH", "B365H", "PSH"),
                 "draw_odds": optional_float(row, "AvgD", "B365D", "PSD"),
                 "away_odds": optional_float(row, "AvgA", "B365A", "PSA"),
+                "referee": (row.get("Referee") or "").strip() or None,
                 "completed": True, "source": "Football-Data.co.uk",
             })
         except (TypeError, ValueError):
             continue
     return [item for item in matches if item["home_team"] and item["away_team"]]
+
+
+def compute_referee_stats(matches: list[dict[str, object]], prior_strength: float = 40.0) -> dict[str, dict[str, object]]:
+    """Tendenze per arbitro: partite dirette, tasso di vittorie casalinghe grezzo e relativo
+    scostamento REGOLARIZZATO (shrinkage bayesiano verso la media di lega) rispetto alla
+    media generale, più cartellini/partita dove disponibili. prior_strength=40 equivale a
+    dare a un arbitro "credito pieno" solo dopo ~40 partite dirette: sotto quella soglia la
+    stima viene tirata verso la media generale, per non scambiare rumore campionario per un
+    vero bias sistematico. Nessuna fonte usata da questa pipeline conosce l'arbitro di una
+    partita futura prima dell'annuncio ufficiale: questi numeri sono utilizzabili solo se
+    l'arbitro di una specifica partita in arrivo viene fornito manualmente (vedi
+    options.refereeHomeBias in model.js).
+    """
+    completed = [m for m in matches if m.get("home_goals") is not None and m.get("away_goals") is not None and m.get("referee")]
+    if not completed:
+        return {}
+    overall_home_rate = sum(1 for m in completed if m["home_goals"] > m["away_goals"]) / len(completed)
+
+    by_referee: dict[str, list[dict[str, object]]] = {}
+    for match in completed:
+        by_referee.setdefault(str(match["referee"]), []).append(match)
+
+    stats: dict[str, dict[str, object]] = {}
+    for referee, games in by_referee.items():
+        count = len(games)
+        home_wins = sum(1 for m in games if m["home_goals"] > m["away_goals"])
+        raw_home_rate = home_wins / count
+        credibility = count / (count + prior_strength)
+        shrunk_home_bias = credibility * (raw_home_rate - overall_home_rate)
+        cards = [
+            (m.get("home_yellow") or 0) + (m.get("away_yellow") or 0) + (m.get("home_red") or 0) + (m.get("away_red") or 0)
+            for m in games
+            if m.get("home_yellow") is not None or m.get("away_yellow") is not None
+        ]
+        stats[referee] = {
+            "matches": count,
+            "home_win_rate": round(raw_home_rate, 4),
+            "home_bias": round(clamp(shrunk_home_bias, -0.12, 0.12), 4),
+            "avg_cards": round(sum(cards) / len(cards), 2) if cards else None,
+        }
+    return stats
 
 
 def download_football_data(league: dict[str, object], starts: Iterable[int]) -> list[dict[str, object]]:
@@ -371,11 +389,19 @@ def fetch_understat_xg(league: dict[str, object], start_year: int) -> list[dict[
 def enrich_xg(matches: list[dict[str, object]], league: dict[str, object], starts: Iterable[int]) -> int:
     index = {(str(item["date"]), str(item["home_team"]), str(item["away_team"])): item for item in matches if item.get("competition_id") == league["id"]}
     enriched = 0
+    fallback_starts: list[int] = []
     for start in starts:
         try:
             rows = fetch_understat_xg(league, start)
         except Exception as error:
             print(f"Understat {league['name']} {start}: {error}", file=sys.stderr)
+            rows = []
+        if not rows:
+            # Percorso economico (1 richiesta, parsing di datesData) a mani vuote: non è
+            # detto sia un errore di rete, potrebbe essere la struttura di pagina cambiata
+            # (successo a dicembre 2025). Non fallire in silenzio: prova il fallback più
+            # pesante invece di limitarti a "continue" come prima di questa modifica.
+            fallback_starts.append(start)
             continue
         for row in rows:
             item = index.get((str(row["date"]), str(row["home_team"]), str(row["away_team"])))
@@ -383,6 +409,32 @@ def enrich_xg(matches: list[dict[str, object]], league: dict[str, object], start
                 item["home_xg"] = row["home_xg"]
                 item["away_xg"] = row["away_xg"]
                 enriched += 1
+
+    if fallback_starts and league.get("understat"):
+        try:
+            from understat_team_api import fetch_league_matches_via_team_api
+        except ImportError as error:
+            print(f"Understat {league['name']}: fallback getTeamData non disponibile ({error})", file=sys.stderr)
+            return enriched
+        for start in fallback_starts:
+            team_universe = {
+                str(item[f"{side}_team"])
+                for item in matches
+                if item.get("competition_id") == league["id"] and season_start(str(item.get("season", "") or "")) == start
+                for side in ("home", "away")
+                if item.get(f"{side}_team")
+            }
+            try:
+                rows = fetch_league_matches_via_team_api(start, team_universe, normalize_team)
+            except Exception as error:
+                print(f"Understat {league['name']} {start} (getTeamData): {error}", file=sys.stderr)
+                continue
+            for row in rows:
+                item = index.get((row["date"], row["home_team"], row["away_team"]))
+                if item:
+                    item["home_xg"] = row["home_xg"]
+                    item["away_xg"] = row["away_xg"]
+                    enriched += 1
     return enriched
 
 
@@ -455,6 +507,28 @@ def assign_rounds(fixtures: list[dict[str, object]]) -> list[dict[str, object]]:
                 item["round"] = nearest["round"]
             if not item.get("round_label"):
                 item["round_label"] = f"Turno {item['round']}"
+        return ordered
+    # Le coppe UEFA (fonte "UEFA public match API") non forniscono mai un round numerico
+    # esplicito, ma quasi sempre un round_label testuale affidabile (es. "1° turno di
+    # qualificazione", "Play-offs", "Fase a campionato - Giornata 3"). Raggruppare per
+    # quell'etichetta è molto più robusto della semplice euristica per data qui sotto:
+    # nelle qualificazioni più percorsi (Champions Path / League Path) e partite di
+    # andata/ritorno di squadre diverse cadono a pochi giorni di distanza l'uno dall'altro,
+    # e un raggruppamento puramente per data li mischiava in un unico turno fittizio.
+    labeled = [item for item in ordered if str(item.get("round_label") or "").strip()]
+    if len(labeled) >= max(1, int(len(ordered) * 0.75)):
+        label_order: list[str] = []
+        label_groups: dict[str, list[dict[str, object]]] = {}
+        for item in ordered:
+            label = str(item.get("round_label") or "").strip() or "Turno"
+            if label not in label_groups:
+                label_groups[label] = []
+                label_order.append(label)
+            label_groups[label].append(item)
+        for index, label in enumerate(label_order, 1):
+            for item in label_groups[label]:
+                item["round"] = index
+                item["round_label"] = label
         return ordered
     groups: list[list[dict[str, object]]] = []
     for item in ordered:
@@ -554,18 +628,20 @@ def build_team_context(teams: list[str], elo: dict[str, float], counts: dict[str
         override = team_overrides.get(team) if isinstance(team_overrides, dict) else None
         if isinstance(override, dict):
             for key, value in override.items():
-                if key in {"as_of", "availability_attack", "availability_defense", "lineup_strength", "manager_change_days", "squad_attack", "squad_creativity", "squad_continuity", "newcomer_impact", "departure_impact", "top_players", "new_players", "notes"}:
+                if key in {"as_of", "availability_attack", "availability_defense", "lineup_strength", "manager_change_days", "squad_attack", "squad_creativity", "squad_continuity", "newcomer_impact", "departure_impact", "promotion_attack", "promotion_defense", "top_players", "new_players", "notes"}:
                     item[key] = value
             item["source"] = f"{item['source']} + override verificati"
         context[team] = item
     return context
 
 
-def competition_payload(descriptor: dict[str, object], fixtures: list[dict[str, object]], source: str) -> dict[str, object]:
+def competition_payload(descriptor: dict[str, object], fixtures: list[dict[str, object]], source: str, target_code: str) -> dict[str, object]:
     assigned = assign_rounds(fixtures)
+    for item in assigned:
+        item["season"] = target_code
     rounds = sorted({int(item["round"]) for item in assigned if item.get("round")})
     upcoming = next((number for number in rounds if any(int(item.get("round", 0)) == number and not item.get("completed") for item in assigned)), None)
-    return {"id": descriptor["id"], "name": descriptor["name"], "season": assigned[0]["season"] if assigned else "", "fixtures": assigned, "default_round": upcoming or (rounds[-1] if rounds else 1), "source": source}
+    return {"id": descriptor["id"], "name": descriptor["name"], "season": target_code, "fixtures": assigned, "default_round": upcoming or (rounds[-1] if rounds else 1), "source": source}
 
 
 def main() -> None:
@@ -587,7 +663,7 @@ def main() -> None:
         if not current:
             current = existing_competition_fixtures(existing, str(descriptor["id"]), target_code)
             source = "dataset precedente conservato" if current else "calendario non ancora disponibile"
-        competitions.append(competition_payload(descriptor, current, source))
+        competitions.append(competition_payload(descriptor, current, source, target_code))
         target_fixtures.extend(current)
         for start in starts:
             rows = current if start == target_start and current else fetch_espn_events(descriptor, start, "europe")

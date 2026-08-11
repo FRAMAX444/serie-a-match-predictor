@@ -26,29 +26,32 @@ I campionati minori non compaiono nel selettore. Le sole partite nazionali dei c
 2. seleziona il turno;
 3. scegli facoltativamente una squadra da evidenziare;
 4. premi **Calcola**;
-5. apri una partita per vedere punteggi esatti, probabilità 1X2, xG, Over 2.5, BTTS e confronto degli indicatori principali.
+5. apri una partita per vedere punteggi esatti, probabilità 1X2, xG, Over 2.5, BTTS e confronto degli indicatori principali (tab "Analisi"); tab "Dati extra" per contesto pre-partita (formazione/disponibilità/neopromosse, se disponibile), medie recenti di corner/cartellini/possesso (non ancora un input del modello, solo contesto storico) e i 5 giocatori più impattanti per squadra con gol/assist/tiri/cartellini dalle ultime formazioni campionate.
 
 L'interfaccia è responsive e conserva nel browser competizione preferita, squadra evidenziata, colori e parametri di recenza.
 
 ## Dataset
 
-`scripts/update_top5_data.py` aggiorna `data/matches.json` usando fonti pubbliche e conserva soltanto i dati necessari:
+`scripts/update_top5_data.py` aggiorna `data/matches.json` usando fonti pubbliche:
 
 - calendari e risultati delle coppe dall'API pubblica UEFA, con ESPN come fallback;
 - calendari e risultati dei Big Five da ESPN;
-- statistiche di tiro da Football-Data.co.uk;
-- xG Understat quando disponibile;
-- fallback xG prudente basato su tiri e tiri in porta.
+- statistiche di tiro, corner, cartellini, possesso e quote di chiusura (media di mercato, poi Bet365, poi Pinnacle) da Football-Data.co.uk;
+- arbitro della partita, da Football-Data.co.uk;
+- xG Understat quando la pagina lega espone ancora il blob `datesData`; fallback via l'endpoint JSON `getTeamData` (per-squadra, stesso schema dati, nessuna dipendenza extra) quando non lo espone più; fallback finale prudente basato su tiri e tiri in porta.
 
 Il dataset contiene:
 
 - `competitions`: le tre coppe UEFA e i cinque campionati, con fixture, turni, paese e logo;
-- `matches`: storico usato dal modello;
+- `matches`: storico usato dal modello, incluse quote/corner/cartellini/possesso/arbitro quando disponibili;
+- `team_context`: formazione probabile, disponibilità e fattori neopromosse per squadra, se `scripts/enrich_competitions_players.py` è stato eseguito dopo `update_top5_data.py`;
+- `referee_stats`: tendenze regolarizzate (shrinkage bayesiano) per arbitro;
 - `domestic_leagues`: elenco fisso dei Big Five selezionabili;
-- `training_support_leagues`: eventuali campionati nascosti usati soltanto per la forma nazionale dei club UEFA;
 - `coverage`, `source_health` e `sources`: indicatori di copertura.
 
-Restano esclusi dal flusso attivo dati giocatori, probabili formazioni, trasferimenti, indisponibilità, quote di mercato, possesso e disciplina.
+La raccolta dati è volutamente limitata ai Big Five e alle tre coppe UEFA: niente più fetch per campionati minori (~40 leghe di supporto, la maggior parte delle chiamate ESPN per quelle falliva comunque con HTTP 400). Per le coppe UEFA questo significa che i club fuori dai Big Five (es. squadre di Eredivisie, Primeira Liga, Veikkausliiga...) partono con priori Elo meno informati, basandosi solo sulle partite giocate nella coppa stessa e non sul loro storico di campionato domestico — un compromesso deliberato a favore di un dataset più piccolo, veloce da rigenerare e senza rumore nei log.
+
+Restano esclusi dal flusso attivo transfer window e notizie last-minute non presenti nelle fonti sopra; l'arbitro di una partita futura non è disponibile automaticamente da nessuna fonte usata qui (va fornito manualmente se lo conosci in anticipo, vedi sotto).
 
 ## Modello 5.0 Calibrated Recency + xG Elo
 
@@ -74,6 +77,14 @@ Per i cinque campionati il filtro di training resta limitato esattamente ai Big 
 
 Tutte le partite dello stesso turno condividono il medesimo cutoff precedente alla prima gara, evitando leakage tra anticipi e partite successive.
 
+### Segnali opzionali (di default nessun effetto sulle previsioni esistenti)
+
+Tre input aggiuntivi, tutti spenti finché non li passi esplicitamente — attivarli non cambia nessuna previsione già calibrata:
+
+- **`teamContext`**: formazione probabile/disponibilità/neopromosse per squadra (da `team_context` nel dataset, se `enrich_competitions_players.py` è stato eseguito). Passato automaticamente da `app.js` quando presente.
+- **`hyperparameters`**: sovrascrive uno o più dei parametri di `DEFAULT_HYPERPARAMETERS` in `model.js` (rho di Dixon-Coles, esponenti attacco/difesa, divisore/clamp Elo, pesi momentum, soglie di riposo, sconto Elo per neopromosse). Vedi `npm run tune`.
+- **`refereeHomeBias`**: scostamento nel tasso di vittorie casalinghe per uno specifico arbitro (da `referee_stats`). Nessuna fonte usata da questa pipeline conosce l'arbitro di una partita futura prima dell'annuncio: va passato a mano per una partita specifica, non è automatico.
+
 ## Avvio locale
 
 ```bash
@@ -85,13 +96,16 @@ Aprire `http://localhost:8000`.
 ## Test e backtest
 
 ```bash
-python -m py_compile scripts/update_europe_data.py scripts/update_uefa_data.py scripts/update_top5_data.py
+python -m py_compile scripts/update_europe_data.py scripts/update_uefa_data.py scripts/update_top5_data.py scripts/understat_team_api.py scripts/enrich_competitions_players.py
+npm run test:py
 npm test
 npm run check
 npm run backtest
+npm run backtest:market
+npm run tune
 ```
 
-I test verificano catalogo Big Five + UEFA, esclusione dei campionati minori, cutoff comune, normalizzazione delle probabilità, invariabilità dei pronostici Big Five dopo l'aggiunta dei dati europei e le nuove regressioni di calibrazione venue-neutral/xG-Elo.
+I test verificano catalogo Big Five + UEFA, esclusione dei campionati minori, cutoff comune, normalizzazione delle probabilità, invariabilità dei pronostici Big Five dopo l'aggiunta dei dati europei, le regressioni di calibrazione venue-neutral/xG-Elo, `teamContext` (retrocompatibilità, direzione degli effetti, clamp) e gli iperparametri (deep-merge, cold-start neopromosse, bias arbitro).
 
 Il backtest usa soltanto informazioni disponibili prima di ogni gara e riporta log loss, Brier multiclass, Ranked Probability Score e accuracy. È possibile limitare l'analisi, per esempio:
 
@@ -99,15 +113,39 @@ Il backtest usa soltanto informazioni disponibili prima di ogni gara e riporta l
 npm run backtest -- --competition ita.1 --since 2025-08-01 --max 500
 ```
 
+`npm run backtest:market` confronta le stesse previsioni con le quote di chiusura de-vigate: è l'unico modo per sapere se il modello ha un vantaggio reale sul mercato, non solo un log loss basso preso da solo. Richiede che il dataset sia stato rigenerato dopo che `update_top5_data.py` conserva le quote (vedi sopra).
+
+`npm run tune` cerca, per coordinate descent, una combinazione di iperparametri che migliori il backtest rispetto ai default. **Rischio di overfitting reale** con 16 dimensioni cercate su una sola finestra: valida sempre il risultato su un periodo successivo e non usato per il tuning prima di portarlo in produzione.
+
 ## Aggiornamento e deploy
 
-- `.github/workflows/update-data.yml` aggiorna il dataset quattro volte al giorno;
-- `.github/workflows/validate-pr.yml` valida JavaScript, test e costruzione del dataset;
+Per rigenerare `data/matches.json` in locale (utile per verificare una correzione prima di spingerla su GitHub):
+
+```bash
+pip install -r requirements.txt
+python scripts/update_top5_data.py --history-seasons 4
+python scripts/enrich_competitions_players.py
+```
+
+Sovrascrive `data/matches.json` nella cartella corrente — nessun parametro `--target-season` necessario: viene calcolato da solo dalla data odierna (vedi `resolve_target_season`). Passa `--target-season 2728` solo per forzare una stagione diversa da quella corrente.
+
+- `.github/workflows/update-data.yml` aggiorna il dataset quattro volte al giorno, poi arricchisce `team_context` con `enrich_competitions_players.py`; installa `requirements.txt` (solo `requests`, usata per lo scraping Understat con sessione/cookie persistenti — senza, l'endpoint AJAX di Understat risponde vuoto);
+- `.github/workflows/validate-pr.yml` valida JavaScript, test e costruzione del dataset (smoke build con `--skip-understat`);
 - `.github/workflows/pages.yml` pubblica GitHub Pages.
+
+## Schedina
+
+`schedina.html` genera, su richiesta esplicita (pulsante "Genera schedina", nessuna chiamata automatica), una combinazione di esiti 1X2 del prossimo turno di una lega scelta, verso una quota target, selezionata per massimizzare la probabilità combinata stimata dal modello tra le combinazioni che rientrano nella quota (tolleranza ±15%).
+
+Le quote in tempo reale vengono richieste a [the-odds-api.com](https://the-odds-api.com/) (piano gratuito: 500 richieste/mese, nessuna carta) tramite una chiave personale, inserita e conservata solo nel browser (`localStorage`, mai nel repository). Il campionato su the-odds-api.com viene individuato dinamicamente interrogando il loro catalogo sport invece di usare uno `sport_key` fisso nel codice: se il match non è univoco, la pagina mostra le opzioni disponibili per una scelta manuale invece di indovinare.
+
+`schedina.js` contiene la logica pura (selezione candidati, ricerca della combinazione ottimale, abbinamento nomi/date) testata in `tests/schedina.test.js`; il fetch delle quote live non è verificabile da questo ambiente di sviluppo (nessun accesso di rete a domini di quote) — verificato solo con una risposta simulata che replica lo schema documentato dell'API.
+
+Nota matematica mostrata nell'interfaccia: ogni selezione aggiuntiva in una schedina multipla moltiplica il margine del bookmaker oltre che le quote, rendendola la struttura di scommessa meno favorevole al giocatore anche quando ogni singola quota è equa. La probabilità mostrata è la stima del modello, non una garanzia.
 
 ## Limiti
 
-Le previsioni sono probabilistiche e non includono notizie dell'ultimo minuto, formazioni ufficiali, infortuni, meteo o informazioni tattiche non presenti nelle fonti pubbliche. Il progetto non costituisce una promessa di rendimento economico.
+Le previsioni sono probabilistiche e non includono notizie dell'ultimo minuto, formazioni ufficiali confermate, infortuni non curati manualmente, meteo o informazioni tattiche non presenti nelle fonti pubbliche. Gli slug Understat usati dal fallback `getTeamData` sono dedotti dalla convenzione nota del sito: controllare i log al primo run reale (segnalano esplicitamente le squadre con 0 partite risolte). Il progetto non costituisce una promessa di rendimento economico; le quote di chiusura sono tra gli stimatori più efficienti disponibili, batterle in modo sistematico e statisticamente significativo è difficile per costruzione.
 
 ## Licenza e fonti
 

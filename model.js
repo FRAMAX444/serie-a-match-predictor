@@ -13,6 +13,40 @@ const dateAtNoon = (value) => new Date(`${String(value).slice(0, 10)}T12:00:00Z`
 const blend = (observed, baseline, reliability) => baseline + reliability * (observed - baseline);
 const mean = (left, right) => Math.max(0.01, (left + right) / 2);
 
+// Ogni valore qui è esattamente la costante che prima era scritta a mano nel corpo delle
+// funzioni sotto: usare DEFAULT_HYPERPARAMETERS (il default di predictFromMatches) produce
+// output identico bit per bit a prima di questo refactor. Esposti cosi' perché
+// scripts/tune_hyperparameters.mjs possa cercarne una combinazione migliore contro il
+// backtest, invece di lasciarli numeri magici irraggiungibili dall'esterno.
+export const DEFAULT_HYPERPARAMETERS = Object.freeze({
+  rho: -0.07,
+  eloDivisor: 1100,
+  eloClamp: 0.34,
+  momentumShortWeight: 0.65,
+  momentumScale: 0.055,
+  momentumClamp: 0.16,
+  attackExponents: Object.freeze({ goals: 0.22, xg: 0.43, sot: 0.18, shots: 0.07, venue: 0.10 }),
+  defenseExponents: Object.freeze({ goals: 0.27, xg: 0.45, sot: 0.18, shots: 0.05, venue: 0.05 }),
+  restFactor: Object.freeze({ veryShort: 0.92, short: 0.965, moderate: 0.99, long: 0.985 }),
+  // Non è una costante "estratta" dal codice preesistente: prima le neopromosse partivano
+  // da un Elo piatto 1500 senza alcun prior. Default 0 (nessun effetto): come teamContext e
+  // refereeHomeBias, è opt-in finché non validi un valore diverso da zero via backtest — un
+  // numero non fittato sui dati non deve cambiare in automatico il comportamento calibrato
+  // esistente. Per provarlo: hyperparameters: { newcomerEloDiscount: -65 } (o altro valore).
+  newcomerEloDiscount: 0,
+});
+
+function mergeHyperparameters(overrides) {
+  if (!overrides) return DEFAULT_HYPERPARAMETERS;
+  return {
+    ...DEFAULT_HYPERPARAMETERS,
+    ...overrides,
+    attackExponents: { ...DEFAULT_HYPERPARAMETERS.attackExponents, ...overrides.attackExponents },
+    defenseExponents: { ...DEFAULT_HYPERPARAMETERS.defenseExponents, ...overrides.defenseExponents },
+    restFactor: { ...DEFAULT_HYPERPARAMETERS.restFactor, ...overrides.restFactor },
+  };
+}
+
 export function poissonPmf(k, lambda) {
   if (lambda <= 0) return k === 0 ? 1 : 0;
   let factorial = 1;
@@ -121,10 +155,43 @@ function decayInactiveElo(state, matchDate) {
   state.elo = state.baselineElo + (state.elo - state.baselineElo) * retention;
 }
 
-function applyMatch(states, match, crossCompetition = false) {
-  const initialElo = crossCompetition ? safe(match.league_strength, 1500) : 1500;
-  const homeState = states.get(match.home_team) || emptyState(initialElo);
-  const awayState = states.get(match.away_team) || emptyState(initialElo);
+// !states.has(team) da solo tratterebbe ogni squadra come "nuova" al bordo di OGNI
+// finestra di previsione, perché chronological è già filtrato da warmupStart in poi: una
+// big al suo 15° anno di massima serie sembrerebbe "nuova" solo perché la sua partita più
+// vecchia dentro la finestra è anche la prima che applyMatch() vede. Una squadra è
+// genuinamente nuova solo se la sua prima partita nella finestra coincide con la sua prima
+// partita nell'intero dataset non filtrato (nessuna storia da nessuna parte, prima di lì).
+function newcomerTeams(matches, chronological) {
+  const earliestOverall = new Map();
+  for (const match of matches) {
+    for (const team of [match.home_team, match.away_team]) {
+      if (!team) continue;
+      const current = earliestOverall.get(team);
+      if (!current || match.date < current) earliestOverall.set(team, match.date);
+    }
+  }
+  const earliestInWindow = new Map();
+  for (const match of chronological) {
+    for (const team of [match.home_team, match.away_team]) {
+      if (!team || earliestInWindow.has(team)) continue;
+      earliestInWindow.set(team, match.date);
+    }
+  }
+  const newcomers = new Set();
+  for (const [team, windowDate] of earliestInWindow) {
+    if (earliestOverall.get(team) === windowDate) newcomers.add(team);
+  }
+  return newcomers;
+}
+
+function applyMatch(states, match, crossCompetition = false, hyperparameters = DEFAULT_HYPERPARAMETERS, newcomers = null) {
+  const leagueBaseline = safe(match.league_strength, 1500);
+  const homeIsNewcomer = !crossCompetition && Boolean(newcomers?.has(match.home_team)) && !states.has(match.home_team);
+  const awayIsNewcomer = !crossCompetition && Boolean(newcomers?.has(match.away_team)) && !states.has(match.away_team);
+  const homeInitialElo = crossCompetition ? leagueBaseline : 1500 + (homeIsNewcomer ? hyperparameters.newcomerEloDiscount : 0);
+  const awayInitialElo = crossCompetition ? leagueBaseline : 1500 + (awayIsNewcomer ? hyperparameters.newcomerEloDiscount : 0);
+  const homeState = states.get(match.home_team) || emptyState(homeInitialElo);
+  const awayState = states.get(match.away_team) || emptyState(awayInitialElo);
   states.set(match.home_team, homeState);
   states.set(match.away_team, awayState);
 
@@ -257,11 +324,41 @@ function weightedCompetitionAverages(matches, cutoffDate, halfLifeDays) {
   return Object.fromEntries(Object.entries(sums).map(([key, value]) => [key, value / weightTotal]));
 }
 
-function restFactor(days) {
-  if (days <= 3) return 0.92;
-  if (days === 4) return 0.965;
-  if (days === 5) return 0.99;
-  if (days > 21) return 0.985;
+// Fattori pre-partita opzionali (formazione probabile/infortuni/neopromosse), prodotti da
+// enrich_competitions_players.py in team_context e assenti finché quello script non gira
+// nella pipeline. Senza options.teamContext (o senza una voce per la squadra) ogni fattore
+// resta 1 e la formula del lambda è identica a prima di questa modifica: nessun rischio per
+// le previsioni esistenti finché non lo passi esplicitamente.
+function contextFactor(teamContext, team, key, min, max) {
+  const entry = teamContext && team ? teamContext[team] : null;
+  const value = entry ? safe(entry[key], 1) : 1;
+  return clamp(value, min, max);
+}
+
+// lineup_strength è già clampato [0.82, 1.12] alla fonte e riflette la formazione
+// probabile corrente: si applica per intero. availability_attack/promotion_attack sono
+// popolati solo via override manuale in context_overrides.json (default 1 = nessun
+// aggiustamento): riclampati qui per difesa, nel caso in un override manuale finisca un
+// valore fuori scala.
+function attackContext(teamContext, team) {
+  const lineup = contextFactor(teamContext, team, "lineup_strength", 0.8, 1.15);
+  const availability = contextFactor(teamContext, team, "availability_attack", 0.75, 1.2);
+  const promotion = contextFactor(teamContext, team, "promotion_attack", 0.75, 1.2);
+  return clamp(lineup * availability * promotion, 0.7, 1.3);
+}
+
+function defenseContext(teamContext, team) {
+  const availability = contextFactor(teamContext, team, "availability_defense", 0.75, 1.2);
+  const promotion = contextFactor(teamContext, team, "promotion_defense", 0.75, 1.2);
+  return clamp(availability * promotion, 0.7, 1.3);
+}
+
+function restFactor(days, hyperparameters = DEFAULT_HYPERPARAMETERS) {
+  const { veryShort, short, moderate, long } = hyperparameters.restFactor;
+  if (days <= 3) return veryShort;
+  if (days === 4) return short;
+  if (days === 5) return moderate;
+  if (days > 21) return long;
   return 1;
 }
 
@@ -284,10 +381,11 @@ function outcomeName(probabilities, homeTeam, awayTeam) {
 }
 
 export function predictFromMatches(matches, rawOptions) {
-  const options = { windowDays: 540, halfLifeDays: 120, competitionId: "", ...rawOptions };
+  const options = { windowDays: 540, halfLifeDays: 120, competitionId: "", teamContext: null, hyperparameters: null, refereeHomeBias: 0, ...rawOptions };
   if (!SUPPORTED_COMPETITION_IDS.has(options.competitionId)) {
     throw new Error("Competizione non supportata: usa i Big Five o una delle tre coppe UEFA.");
   }
+  const hyperparameters = mergeHyperparameters(options.hyperparameters);
 
   const europeanTarget = EUROPE_COMPETITION_IDS.has(options.competitionId);
   const predictionDate = dateAtNoon(options.date);
@@ -311,7 +409,8 @@ export function predictFromMatches(matches, rawOptions) {
   const baselineSelection = selectBaselineTraining(training, options.competitionId);
   const baselineTraining = baselineSelection.matches;
   const states = new Map();
-  chronological.forEach((match) => applyMatch(states, match, europeanTarget));
+  const newcomers = newcomerTeams(matches, chronological);
+  chronological.forEach((match) => applyMatch(states, match, europeanTarget, hyperparameters, newcomers));
   const home = stateMetrics(states.get(options.homeTeam) || emptyState(), "home", predictionDate);
   const away = stateMetrics(states.get(options.awayTeam) || emptyState(), "away", predictionDate);
   const league = weightedCompetitionAverages(baselineTraining, cutoffDate, options.halfLifeDays);
@@ -323,41 +422,58 @@ export function predictFromMatches(matches, rawOptions) {
   // General team form is venue-neutral. Only venue-specific splits are compared with
   // home/away league baselines; this avoids systematically suppressing home attack
   // and inflating away attack when general metrics are used.
-  const homeAttack = Math.pow(clamp(blend(home.gf5, neutralGoals, home.sampleReliability) / neutralGoals, 0.5, 1.8), 0.22)
-    * Math.pow(clamp(blend(home.xgFor5, neutralXg, home.sampleReliability) / neutralXg, 0.5, 1.8), 0.43)
-    * Math.pow(clamp(blend(home.sot5, neutralSot, home.sampleReliability) / neutralSot, 0.6, 1.6), 0.18)
-    * Math.pow(clamp(blend(home.shots5, neutralShots, home.sampleReliability) / neutralShots, 0.65, 1.5), 0.07)
-    * Math.pow(clamp(blend(home.venueGf5, league.homeGoals, home.sampleReliability * 0.7) / league.homeGoals, 0.55, 1.65), 0.10);
-  const awayDefense = Math.pow(clamp(blend(away.ga5, neutralGoals, away.sampleReliability) / neutralGoals, 0.5, 1.9), 0.27)
-    * Math.pow(clamp(blend(away.xgAgainst5, neutralXg, away.sampleReliability) / neutralXg, 0.5, 1.9), 0.45)
-    * Math.pow(clamp(blend(away.sotAgainst5, neutralSot, away.sampleReliability) / neutralSot, 0.6, 1.7), 0.18)
-    * Math.pow(clamp(blend(away.shotsAgainst5, neutralShots, away.sampleReliability) / neutralShots, 0.65, 1.6), 0.05)
-    * Math.pow(clamp(blend(away.venueGa5, league.homeGoals, away.sampleReliability * 0.7) / league.homeGoals, 0.6, 1.7), 0.05);
+  const ae = hyperparameters.attackExponents;
+  const de = hyperparameters.defenseExponents;
+  const homeAttack = Math.pow(clamp(blend(home.gf5, neutralGoals, home.sampleReliability) / neutralGoals, 0.5, 1.8), ae.goals)
+    * Math.pow(clamp(blend(home.xgFor5, neutralXg, home.sampleReliability) / neutralXg, 0.5, 1.8), ae.xg)
+    * Math.pow(clamp(blend(home.sot5, neutralSot, home.sampleReliability) / neutralSot, 0.6, 1.6), ae.sot)
+    * Math.pow(clamp(blend(home.shots5, neutralShots, home.sampleReliability) / neutralShots, 0.65, 1.5), ae.shots)
+    * Math.pow(clamp(blend(home.venueGf5, league.homeGoals, home.sampleReliability * 0.7) / league.homeGoals, 0.55, 1.65), ae.venue);
+  const awayDefense = Math.pow(clamp(blend(away.ga5, neutralGoals, away.sampleReliability) / neutralGoals, 0.5, 1.9), de.goals)
+    * Math.pow(clamp(blend(away.xgAgainst5, neutralXg, away.sampleReliability) / neutralXg, 0.5, 1.9), de.xg)
+    * Math.pow(clamp(blend(away.sotAgainst5, neutralSot, away.sampleReliability) / neutralSot, 0.6, 1.7), de.sot)
+    * Math.pow(clamp(blend(away.shotsAgainst5, neutralShots, away.sampleReliability) / neutralShots, 0.65, 1.6), de.shots)
+    * Math.pow(clamp(blend(away.venueGa5, league.homeGoals, away.sampleReliability * 0.7) / league.homeGoals, 0.6, 1.7), de.venue);
 
-  const awayAttack = Math.pow(clamp(blend(away.gf5, neutralGoals, away.sampleReliability) / neutralGoals, 0.5, 1.85), 0.22)
-    * Math.pow(clamp(blend(away.xgFor5, neutralXg, away.sampleReliability) / neutralXg, 0.5, 1.85), 0.43)
-    * Math.pow(clamp(blend(away.sot5, neutralSot, away.sampleReliability) / neutralSot, 0.6, 1.65), 0.18)
-    * Math.pow(clamp(blend(away.shots5, neutralShots, away.sampleReliability) / neutralShots, 0.65, 1.55), 0.07)
-    * Math.pow(clamp(blend(away.venueGf5, league.awayGoals, away.sampleReliability * 0.7) / league.awayGoals, 0.55, 1.7), 0.10);
-  const homeDefense = Math.pow(clamp(blend(home.ga5, neutralGoals, home.sampleReliability) / neutralGoals, 0.5, 1.9), 0.27)
-    * Math.pow(clamp(blend(home.xgAgainst5, neutralXg, home.sampleReliability) / neutralXg, 0.5, 1.9), 0.45)
-    * Math.pow(clamp(blend(home.sotAgainst5, neutralSot, home.sampleReliability) / neutralSot, 0.6, 1.7), 0.18)
-    * Math.pow(clamp(blend(home.shotsAgainst5, neutralShots, home.sampleReliability) / neutralShots, 0.65, 1.6), 0.05)
-    * Math.pow(clamp(blend(home.venueGa5, league.awayGoals, home.sampleReliability * 0.7) / league.awayGoals, 0.6, 1.7), 0.05);
+  const awayAttack = Math.pow(clamp(blend(away.gf5, neutralGoals, away.sampleReliability) / neutralGoals, 0.5, 1.85), ae.goals)
+    * Math.pow(clamp(blend(away.xgFor5, neutralXg, away.sampleReliability) / neutralXg, 0.5, 1.85), ae.xg)
+    * Math.pow(clamp(blend(away.sot5, neutralSot, away.sampleReliability) / neutralSot, 0.6, 1.65), ae.sot)
+    * Math.pow(clamp(blend(away.shots5, neutralShots, away.sampleReliability) / neutralShots, 0.65, 1.55), ae.shots)
+    * Math.pow(clamp(blend(away.venueGf5, league.awayGoals, away.sampleReliability * 0.7) / league.awayGoals, 0.55, 1.7), ae.venue);
+  const homeDefense = Math.pow(clamp(blend(home.ga5, neutralGoals, home.sampleReliability) / neutralGoals, 0.5, 1.9), de.goals)
+    * Math.pow(clamp(blend(home.xgAgainst5, neutralXg, home.sampleReliability) / neutralXg, 0.5, 1.9), de.xg)
+    * Math.pow(clamp(blend(home.sotAgainst5, neutralSot, home.sampleReliability) / neutralSot, 0.6, 1.7), de.sot)
+    * Math.pow(clamp(blend(home.shotsAgainst5, neutralShots, home.sampleReliability) / neutralShots, 0.65, 1.6), de.shots)
+    * Math.pow(clamp(blend(home.venueGa5, league.awayGoals, home.sampleReliability * 0.7) / league.awayGoals, 0.6, 1.7), de.venue);
 
   const eloDiff = home.elo - away.elo;
-  const eloHome = Math.exp(clamp(eloDiff / 1100, -0.34, 0.34));
-  const eloAway = Math.exp(clamp(-eloDiff / 1100, -0.34, 0.34));
-  const momentum = (0.65 * home.ppg3 + 0.35 * home.ppg10) - (0.65 * away.ppg3 + 0.35 * away.ppg10);
-  const formHome = Math.exp(clamp(momentum * 0.055, -0.16, 0.16));
-  const formAway = Math.exp(clamp(-momentum * 0.055, -0.16, 0.16));
+  // Scostamento storico (regolarizzato) del tasso di vittorie casalinghe sotto uno
+  // specifico arbitro rispetto alla media di lega, calcolato da compute_referee_stats()
+  // in update_europe_data.py (payload.referee_stats). Nessuna fonte usata da questa
+  // pipeline (ESPN/UEFA/Football-Data) espone l'arbitro di una partita futura prima
+  // dell'annuncio ufficiale: resta 0 (nessun effetto) finché non lo passi esplicitamente
+  // per una partita specifica, es. quando lo apprendi a ridosso del match.
+  const refereeBias = clamp(safe(options.refereeHomeBias, 0), -0.12, 0.12);
+  const eloHome = Math.exp(clamp(eloDiff / hyperparameters.eloDivisor, -hyperparameters.eloClamp, hyperparameters.eloClamp) + refereeBias);
+  const eloAway = Math.exp(clamp(-eloDiff / hyperparameters.eloDivisor, -hyperparameters.eloClamp, hyperparameters.eloClamp) - refereeBias);
+  const momentum = (hyperparameters.momentumShortWeight * home.ppg3 + (1 - hyperparameters.momentumShortWeight) * home.ppg10)
+    - (hyperparameters.momentumShortWeight * away.ppg3 + (1 - hyperparameters.momentumShortWeight) * away.ppg10);
+  const formHome = Math.exp(clamp(momentum * hyperparameters.momentumScale, -hyperparameters.momentumClamp, hyperparameters.momentumClamp));
+  const formAway = Math.exp(clamp(-momentum * hyperparameters.momentumScale, -hyperparameters.momentumClamp, hyperparameters.momentumClamp));
 
-  let lambdaHome = league.homeGoals * homeAttack * awayDefense * eloHome * formHome * restFactor(home.restDays);
-  let lambdaAway = league.awayGoals * awayAttack * homeDefense * eloAway * formAway * restFactor(away.restDays);
+  const homeContextAttack = attackContext(options.teamContext, options.homeTeam);
+  const awayContextAttack = attackContext(options.teamContext, options.awayTeam);
+  const homeContextDefense = defenseContext(options.teamContext, options.homeTeam);
+  const awayContextDefense = defenseContext(options.teamContext, options.awayTeam);
+
+  let lambdaHome = league.homeGoals * homeAttack * awayDefense * eloHome * formHome * restFactor(home.restDays, hyperparameters)
+    * homeContextAttack / awayContextDefense;
+  let lambdaAway = league.awayGoals * awayAttack * homeDefense * eloAway * formAway * restFactor(away.restDays, hyperparameters)
+    * awayContextAttack / homeContextDefense;
   lambdaHome = clamp(lambdaHome, 0.18, 4.1);
   lambdaAway = clamp(lambdaAway, 0.16, 3.9);
 
-  const probabilities = matrixProbabilities(scoreMatrix(lambdaHome, lambdaAway, 8));
+  const probabilities = matrixProbabilities(scoreMatrix(lambdaHome, lambdaAway, 8, hyperparameters.rho));
   const quality = dataQuality(home, away, training.length, baselineTraining.length);
   return {
     lambdaHome,
@@ -376,6 +492,15 @@ export function predictFromMatches(matches, rawOptions) {
     cutoffDate: String(options.cutoffDate || options.date).slice(0, 10),
     xgCoverage: (home.xgCoverage + away.xgCoverage) / 2,
     competitionId: options.competitionId,
+    context: {
+      applied: Boolean(options.teamContext),
+      homeAttack: homeContextAttack,
+      awayAttack: awayContextAttack,
+      homeDefense: homeContextDefense,
+      awayDefense: awayContextDefense,
+    },
+    refereeBias,
+    hyperparameters,
     calibration: {
       neutralGeneralBaseline: true,
       metricHalfLifeDays: 70,

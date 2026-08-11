@@ -1,0 +1,49 @@
+/* Pagina schedina.html: stessa shell/variabili di settings.html (tema chiaro), non il tema
+   scuro del modale partita — è una pagina a sé, non un componente del modale. */
+
+.schedina-legs {
+  display: grid;
+  gap: .5rem;
+  margin-top: .25rem;
+}
+
+.schedina-leg {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  gap: .6rem;
+  align-items: center;
+  padding: .6rem .75rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-subtle);
+  font-size: .82rem;
+}
+
+.schedina-leg__match { color: var(--text); font-weight: 650; }
+.schedina-leg__pick { color: var(--primary-dark); font-weight: 750; }
+.schedina-leg__odds,
+.schedina-leg__prob { font-variant-numeric: tabular-nums; text-align: right; }
+.schedina-leg__odds { color: var(--text-soft); }
+.schedina-leg__prob { font-weight: 750; color: var(--primary-dark); }
+
+.schedina-note {
+  margin: 1rem 0 0;
+  padding: .75rem .9rem;
+  border: 1px dashed var(--line-strong);
+  border-radius: 10px;
+  color: var(--text-soft);
+  font-size: .74rem;
+  line-height: 1.55;
+}
+
+#schedina-status[data-tone="warn"] { color: #92620a; }
+#schedina-status[data-tone="error"] { color: #b3261e; }
+#schedina-status[data-tone="ok"] { color: #1a7f4f; }
+
+@media (max-width: 640px) {
+  .schedina-leg {
+    grid-template-columns: 1fr 1fr;
+    row-gap: .15rem;
+  }
+  .schedina-leg__match { grid-column: 1 / -1; }
+}

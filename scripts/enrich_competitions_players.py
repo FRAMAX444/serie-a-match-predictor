@@ -166,6 +166,9 @@ def parse_summary(payload: object, event_date: str) -> list[tuple[str, dict[str,
                 "minutes": minutes,
                 "goals": numeric_value(stats, "goals", "goal", "G"),
                 "assists": numeric_value(stats, "assists", "goalAssists", "A"),
+                "yellow_cards": numeric_value(stats, "yellowCards", "yellowCard", "YC"),
+                "red_cards": numeric_value(stats, "redCards", "redCard", "RC"),
+                "shots": numeric_value(stats, "totalShots", "shotsTotal", "SH"),
                 "rating": numeric_value(stats, "rating", "playerRating"),
                 "date": event_date,
             }))
@@ -240,6 +243,9 @@ def fetch_player_samples(
                 "minutes": 0.0,
                 "goals": 0.0,
                 "assists": 0.0,
+                "yellow_cards": 0.0,
+                "red_cards": 0.0,
+                "shots": 0.0,
                 "ratings": [],
                 "last_seen": player["date"],
             })
@@ -248,6 +254,9 @@ def fetch_player_samples(
             current["minutes"] += float(player["minutes"])
             current["goals"] += float(player["goals"])
             current["assists"] += float(player["assists"])
+            current["yellow_cards"] += float(player["yellow_cards"])
+            current["red_cards"] += float(player["red_cards"])
+            current["shots"] += float(player["shots"])
             if float(player["rating"]) > 0:
                 current["ratings"].append(float(player["rating"]))
             current["last_seen"] = max(str(current["last_seen"]), str(player["date"]))
@@ -280,6 +289,9 @@ def rounded_player(player: dict[str, object]) -> dict[str, object]:
         "minutes": int(round(float(player.get("minutes") or 0))),
         "goals": int(round(float(player.get("goals") or 0))),
         "assists": int(round(float(player.get("assists") or 0))),
+        "yellow_cards": int(round(float(player.get("yellow_cards") or 0))),
+        "red_cards": int(round(float(player.get("red_cards") or 0))),
+        "shots": int(round(float(player.get("shots") or 0))),
         "rating": round(sum(ratings) / len(ratings), 2) if ratings else None,
         "impact": round(player_score(player), 3),
         "last_seen": player.get("last_seen"),
@@ -479,7 +491,7 @@ def main() -> None:
             except Exception as error:
                 print(f"Logo {competition_id}: {error}", file=sys.stderr)
                 metadata_cache[competition_id] = {}
-        competition = base.competition_payload(descriptor, current, "ESPN public scoreboard")
+        competition = base.competition_payload(descriptor, current, "ESPN public scoreboard", target_code)
         competitions_by_id[competition_id] = add_competition_metadata(
             competition,
             descriptor,

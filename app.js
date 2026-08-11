@@ -193,6 +193,11 @@ function predictionOptions() {
     windowDays: model.windowDays,
     halfLifeDays: model.halfLifeDays,
     competitionId: selectedCompetitionId(),
+    // Popolato da enrich_competitions_players.py (formazione probabile, disponibilità,
+    // neopromosse). Se lo script non è ancora stato eseguito payload.team_context è
+    // undefined: predictFromMatches tratta questo caso come "nessun aggiustamento",
+    // comportamento identico a prima dell'introduzione della feature.
+    teamContext: payload?.team_context || null,
   };
 }
 
@@ -209,6 +214,25 @@ function exactScoreRows(scores) {
 
 function comparisonRow(home, label, away, formatter = (value) => number(value, 2)) {
   return `<div class="comparison-row"><strong>${formatter(home)}</strong><span>${label}</span><strong>${formatter(away)}</strong></div>`;
+}
+
+// Media sulle ultime `count` partite giocate da `team` (in qualsiasi competizione tracciata)
+// per una coppia di campi home/away — usata per corner/cartellini/possesso, che non sono
+// (ancora) un input del modello: solo contesto storico mostrato nella tab "Dati extra".
+// null se non ci sono abbastanza dati (i campi sono popolati solo dopo che la pipeline è
+// stata rigenerata con MATCH_FIELDS esteso).
+function recentTeamAverage(matches, team, homeField, awayField, count = 5) {
+  const rows = (matches || [])
+    .filter((match) => match.home_team === team || match.away_team === team)
+    .filter((match) => {
+      const value = match.home_team === team ? match[homeField] : match[awayField];
+      return value !== null && value !== undefined;
+    })
+    .sort((left, right) => String(right.date).localeCompare(String(left.date)))
+    .slice(0, count);
+  if (!rows.length) return null;
+  const total = rows.reduce((sum, match) => sum + Number(match.home_team === team ? match[homeField] : match[awayField]), 0);
+  return total / rows.length;
 }
 
 function qualityBadgeMarkup(result) {
@@ -234,7 +258,7 @@ function fixtureDetailsMarkup(fixture, result) {
   ` : "";
 
   return `
-    <div class="fixture-details fixture-modal__details">
+    <div class="fixture-details fixture-modal__details" data-modal-panel="overview" id="fixture-modal-panel-overview" role="tabpanel" aria-labelledby="fixture-modal-tab-overview">
       <div class="detail-column">
         <div class="detail-heading"><h3>Risultati esatti</h3><span>${escapeHtml(result.cutoffDate)}</span></div>
         <ol class="score-list">${exactScoreRows(probabilities.scores)}</ol>
@@ -254,6 +278,98 @@ function fixtureDetailsMarkup(fixture, result) {
         <div class="comparison-table">${comparison}</div>
         <p class="context-line">Modello core: xG/gol, tiri, forma recente, Elo, rendimento casa/trasferta e riposo.</p>
       </div>
+    </div>
+  `;
+}
+
+// Tab "Dati extra": tutto ciò che non fa (ancora) parte del modello core mostrato sopra.
+// - Contesto pre-partita: i moltiplicatori di team_context, se enrich_competitions_players.py
+//   è stato eseguito e ha prodotto una voce per queste due squadre (altrimenti stato vuoto,
+//   non un valore fittizio).
+// - Corner/cartellini/possesso: media sulle ultime 5 partite disponibili per squadra, dati
+//   storici conservati dalla pipeline ma NON un input del modello — mostrati come contesto,
+//   etichettati come tali, non come "ciò che ha determinato questo pronostico".
+// Le quote di mercato non compaiono qui: nessuna fonte usata da questa pipeline fornisce le
+// quote di una partita futura non ancora giocata (Football-Data.co.uk è post-partita). Il
+// confronto con il mercato resta disponibile solo in backtest (npm run backtest:market).
+function playerStatsRow(player) {
+  const cards = player.red_cards > 0
+    ? `${player.yellow_cards}🟨 ${player.red_cards}🟥`
+    : player.yellow_cards > 0 ? `${player.yellow_cards}🟨` : "—";
+  return `<div class="player-row">
+    <span class="player-row__name">${escapeHtml(player.name)}<small>${escapeHtml(player.position || "")}</small></span>
+    <span class="player-row__stat" title="Gol nelle partite campionate">${player.goals}g</span>
+    <span class="player-row__stat" title="Assist nelle partite campionate">${player.assists}a</span>
+    <span class="player-row__stat" title="Tiri totali nelle partite campionate">${player.shots}t</span>
+    <span class="player-row__stat player-row__cards" title="Cartellini nelle partite campionate">${cards}</span>
+  </div>`;
+}
+
+// player_context (da enrich_competitions_players.py) contiene, per squadra, i 5 giocatori
+// più impattanti tra le partite campionate di recente (non l'intera stagione): un indice
+// composito di minuti/gol/assist/rating, non un ranking dedicato a cartellini o tiri — quei
+// due sono mostrati come colonne aggiuntive sugli STESSI giocatori chiave, non come una
+// classifica separata "più ammoniti" o "più tiri". Assente finché enrich_competitions_players.py
+// non è stato eseguito, o se una squadra non ha formazioni recenti campionate.
+function playersSectionMarkup(fixture) {
+  const homePlayers = payload?.player_context?.[fixture.home_team]?.top_players || [];
+  const awayPlayers = payload?.player_context?.[fixture.away_team]?.top_players || [];
+  if (!homePlayers.length && !awayPlayers.length) {
+    return `
+      <div class="detail-column detail-column--wide">
+        <div class="detail-heading"><h3>Giocatori chiave</h3><span>gol, assist, tiri, cartellini</span></div>
+        <p class="fixture-modal__empty">Non disponibile per questa previsione</p>
+      </div>
+    `;
+  }
+  return `
+    <div class="detail-column detail-column--wide">
+      <div class="detail-heading"><h3>Giocatori chiave</h3><span>ultime formazioni campionate · gol, assist, tiri, cartellini</span></div>
+      <div class="players-columns">
+        <div class="players-team">
+          <h4>${escapeHtml(fixture.home_team)}</h4>
+          ${homePlayers.length ? homePlayers.map(playerStatsRow).join("") : `<p class="fixture-modal__empty">Nessun dato</p>`}
+        </div>
+        <div class="players-team">
+          <h4>${escapeHtml(fixture.away_team)}</h4>
+          ${awayPlayers.length ? awayPlayers.map(playerStatsRow).join("") : `<p class="fixture-modal__empty">Nessun dato</p>`}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function fixtureExtraDetailsMarkup(fixture, result) {
+  const context = result.context;
+  const contextRows = context?.applied ? [
+    comparisonRow(context.homeAttack, "Attacco (contesto squadra)", context.awayAttack, (value) => `×${number(value, 2)}`),
+    comparisonRow(context.homeDefense, "Difesa avversaria (contesto squadra)", context.awayDefense, (value) => `×${number(value, 2)}`),
+  ].join("") : "";
+
+  const recentStats = [
+    ["home_corners", "away_corners", "Corner (ultime 5)", (value) => number(value, 1)],
+    ["home_yellow", "away_yellow", "Cartellini gialli (ultime 5)", (value) => number(value, 1)],
+    ["home_possession", "away_possession", "Possesso % (ultime 5)", (value) => `${number(value, 0)}%`],
+  ];
+  const recentRows = recentStats
+    .map(([homeField, awayField, label, formatter]) => {
+      const homeValue = recentTeamAverage(payload?.matches, fixture.home_team, homeField, awayField);
+      const awayValue = recentTeamAverage(payload?.matches, fixture.away_team, homeField, awayField);
+      return homeValue !== null && awayValue !== null ? comparisonRow(homeValue, label, awayValue, formatter) : "";
+    })
+    .join("");
+
+  return `
+    <div class="fixture-details fixture-modal__details" data-modal-panel="extra" id="fixture-modal-panel-extra" role="tabpanel" aria-labelledby="fixture-modal-tab-extra" hidden>
+      <div class="detail-column detail-column--wide">
+        <div class="detail-heading"><h3>Contesto pre-partita</h3><span>×1 = nessun aggiustamento · sopra = favorevole · sotto = sfavorevole</span></div>
+        ${contextRows ? `<div class="comparison-table">${contextRows}</div>` : `<p class="fixture-modal__empty">Non disponibile per questa previsione</p>`}
+      </div>
+      <div class="detail-column detail-column--wide">
+        <div class="detail-heading"><h3>Corner, cartellini, possesso</h3><span>non un input del modello</span></div>
+        ${recentRows ? `<div class="comparison-table">${recentRows}</div>` : `<p class="fixture-modal__empty">Dati non ancora disponibili</p>`}
+      </div>
+      ${playersSectionMarkup(fixture)}
     </div>
   `;
 }
@@ -294,7 +410,14 @@ function fixtureModalMarkup(item) {
       </div>
       <p class="fixture-modal__outcome">Esito più probabile: <strong>${result.mostLikelyOutcome.key} · ${escapeHtml(result.mostLikelyOutcome.name)}</strong></p>
     </div>
+    <div class="fixture-modal__tabs">
+      <div class="fixture-modal__tablist" role="tablist" aria-label="Sezioni analisi partita">
+        <button class="fixture-modal__tab" type="button" role="tab" id="fixture-modal-tab-overview" aria-controls="fixture-modal-panel-overview" data-modal-tab="overview" aria-selected="true">Analisi</button>
+        <button class="fixture-modal__tab" type="button" role="tab" id="fixture-modal-tab-extra" aria-controls="fixture-modal-panel-extra" data-modal-tab="extra" aria-selected="false">Dati extra</button>
+      </div>
+    </div>
     ${fixtureDetailsMarkup(fixture, result)}
+    ${fixtureExtraDetailsMarkup(fixture, result)}
   `;
 }
 
@@ -356,6 +479,17 @@ function openFixtureModal(index, trigger) {
   modal.hidden = false;
   document.body.classList.add("fixture-modal-open");
   content.querySelector("[data-modal-close]")?.focus();
+}
+
+function switchFixtureModalTab(tabName) {
+  const content = $("fixture-modal-content");
+  if (!content) return;
+  content.querySelectorAll("[data-modal-tab]").forEach((button) => {
+    button.setAttribute("aria-selected", String(button.dataset.modalTab === tabName));
+  });
+  content.querySelectorAll("[data-modal-panel]").forEach((panel) => {
+    panel.hidden = panel.dataset.modalPanel !== tabName;
+  });
 }
 
 function closeFixtureModal(restoreFocus = true) {
@@ -458,7 +592,10 @@ $("fixtures-grid").addEventListener("click", (event) => {
 $("fixture-modal").addEventListener("click", (event) => {
   if (event.target === $("fixture-modal") || event.target.closest("[data-modal-close]")) {
     closeFixtureModal();
+    return;
   }
+  const tabButton = event.target.closest("[data-modal-tab]");
+  if (tabButton) switchFixtureModalTab(tabButton.dataset.modalTab);
 });
 document.addEventListener("keydown", (event) => {
   const modal = $("fixture-modal");

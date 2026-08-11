@@ -4,8 +4,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node tests/data-fetch-cache.test.js && node tests/model.test.js && node tests/model-calibration.test.js && node tests/global-settings.test.js && node tests/multi-league.test.js && node tests/admin-auth.test.js && node tests/fixture-modal-probabilities.test.js",
+    "test": "node tests/data-fetch-cache.test.js && node tests/model.test.js && node tests/model-calibration.test.js && node tests/team-context.test.js && node tests/hyperparameters.test.js && node tests/schedina.test.js && node tests/global-settings.test.js && node tests/multi-league.test.js && node tests/admin-auth.test.js && node tests/fixture-modal-probabilities.test.js",
+    "test:py": "python -m unittest discover -s tests -p \"test_*.py\" -v",
     "backtest": "node scripts/backtest_model.mjs",
-    "check": "node --check data-fetch-cache.js && node --check app.js && node --check all-team-crests.js && node --check preferences.js && node --check settings.js && node --check competition-preference.js && node --check league-picker.js && node --check model.js && node --check matchdays.js && node --check fixture-modal-enhancements.js && node --check scripts/backtest_model.mjs && node --check firebase-config.js && node --check firebase-client.js && node --check global-settings.js && node --check admin-auth.js && node --check admin.js"
+    "backtest:market": "node scripts/backtest_vs_market.mjs",
+    "tune": "node scripts/tune_hyperparameters.mjs",
+    "check": "node --check data-fetch-cache.js && node --check app.js && node --check all-team-crests.js && node --check preferences.js && node --check settings.js && node --check competition-preference.js && node --check league-picker.js && node --check model.js && node --check matchdays.js && node --check fixture-modal-enhancements.js && node --check schedina.js && node --check schedina-page.js && node --check scripts/backtest_model.mjs && node --check scripts/backtest_vs_market.mjs && node --check scripts/tune_hyperparameters.mjs && node --check firebase-config.js && node --check firebase-client.js && node --check global-settings.js && node --check admin-auth.js && node --check admin.js"
   }
 }

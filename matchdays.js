@@ -74,6 +74,31 @@ function groupRounds(fixtures) {
 
 function inferRounds(fixtures) {
   const ordered = fixtures.slice().sort((a, b) => a.date.localeCompare(b.date) || a.sourceIndex - b.sourceIndex);
+  // Le coppe UEFA non hanno quasi mai un round numerico esplicito, ma quasi sempre un
+  // round_label testuale affidabile (turno di qualificazione, andata/ritorno, matchday di
+  // fase campionato...): raggrupparle per quello evita di mischiare percorsi/turni diversi
+  // solo perché cadono a pochi giorni di distanza (vedi assign_rounds in update_europe_data.py,
+  // stesso raggruppamento lato server — questo è solo il fallback client se mai capitasse
+  // di ricevere dati senza round assegnato dal backend).
+  const labeled = ordered.filter((fixture) => (fixture.round_label || "").trim());
+  if (labeled.length >= Math.max(1, Math.round(ordered.length * 0.75))) {
+    const labelOrder = [];
+    const labelGroups = new Map();
+    ordered.forEach((fixture) => {
+      const label = (fixture.round_label || "").trim() || "Turno";
+      if (!labelGroups.has(label)) {
+        labelGroups.set(label, []);
+        labelOrder.push(label);
+      }
+      labelGroups.get(label).push(fixture);
+    });
+    return labelOrder.map((label, index) => ({
+      round: index + 1,
+      label,
+      fixtures: labelGroups.get(label),
+      ...dateRange(labelGroups.get(label)),
+    }));
+  }
   const groups = [];
   ordered.forEach((fixture) => {
     const current = groups.at(-1);

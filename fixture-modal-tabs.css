@@ -1,0 +1,129 @@
+/* Tab switcher per il pannello dettagli del modale partita: separa la vista "Analisi" di
+   base (invariata) da "Dati extra" (contesto pre-partita, corner/cartellini/possesso
+   storico), invece di allungare la vista principale con tutto quanto aggiunto in seguito.
+   Stessa palette neutra scura di ui-cleanup.css/popup-layout-fixes.css (gli ultimi due
+   file caricati prima di questo: qui si prosegue lo stesso linguaggio, non se ne introduce
+   uno nuovo). Nessun colore di squadra qui: come nel resto del pannello dettagli, il colore
+   resta riservato alla sola barra 1X2 nell'hero. */
+
+.fixture-modal__panel .fixture-modal__tabs {
+  padding: 14px clamp(18px, 3vw, 26px) 0;
+  background: #191b20;
+}
+
+.fixture-modal__panel .fixture-modal__tablist {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid rgba(255, 255, 255, .1);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .035);
+}
+
+.fixture-modal__panel .fixture-modal__tab {
+  flex: 1 1 0;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 999px;
+  color: rgba(229, 231, 235, .66);
+  background: transparent;
+  font: inherit;
+  font-size: .76rem;
+  font-weight: 750;
+  letter-spacing: -.005em;
+  cursor: pointer;
+  transition: background .15s ease, color .15s ease;
+}
+
+.fixture-modal__panel .fixture-modal__tab:hover {
+  color: #f7f7f8;
+}
+
+.fixture-modal__panel .fixture-modal__tab[aria-selected="true"] {
+  color: #191b20;
+  background: #e5e7eb;
+}
+
+.fixture-modal__panel .fixture-modal__tab:focus-visible {
+  outline: 2px solid rgba(229, 231, 235, .7);
+  outline-offset: 2px;
+}
+
+.fixture-modal__panel [data-modal-panel][hidden] {
+  display: none;
+}
+
+.fixture-modal__panel .fixture-modal__empty {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 18px;
+  border: 1px dashed rgba(255, 255, 255, .16);
+  border-radius: 12px;
+  color: rgba(229, 231, 235, .48);
+  font-size: .76rem;
+  text-align: center;
+}
+
+.fixture-modal__panel .players-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+.fixture-modal__panel .players-team h4 {
+  margin: 0 0 6px;
+  color: #f7f7f8;
+  font-size: .78rem;
+  font-weight: 750;
+}
+
+.fixture-modal__panel .player-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 3px 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, .06);
+  font-size: .74rem;
+}
+
+.fixture-modal__panel .player-row:last-child { border-bottom: none; }
+
+.fixture-modal__panel .player-row__name {
+  flex: 1 1 100%;
+  overflow: hidden;
+  color: #eef0f3;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fixture-modal__panel .player-row__name small {
+  margin-left: 4px;
+  color: rgba(229, 231, 235, .5);
+  font-weight: 500;
+}
+
+.fixture-modal__panel .player-row__stat {
+  flex: 0 0 auto;
+  color: rgba(229, 231, 235, .7);
+  font-variant-numeric: tabular-nums;
+}
+
+.fixture-modal__panel .player-row__cards { min-width: 34px; }
+
+@media (max-width: 620px) {
+  .fixture-modal__panel .fixture-modal__tabs {
+    padding: 12px 14px 0;
+  }
+
+  .fixture-modal__panel .fixture-modal__tab {
+    padding: 8px 6px;
+    font-size: .72rem;
+  }
+
+  .fixture-modal__panel .players-columns {
+    grid-template-columns: 1fr;
+    gap: 18px;
+  }
+}
