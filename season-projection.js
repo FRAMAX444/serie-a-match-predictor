@@ -4,7 +4,11 @@ const DAY_MS = 86400000;
 const ITALY_COMPETITION_ID = "ita.1";
 
 const dateOnly = (value) => String(value || "").slice(0, 10);
-const hasScore = (fixture) => Number.isFinite(Number(fixture?.home_goals)) && Number.isFinite(Number(fixture?.away_goals));
+const hasValue = (value) => value !== null && value !== undefined && value !== "";
+const hasScore = (fixture) => hasValue(fixture?.home_goals)
+  && hasValue(fixture?.away_goals)
+  && Number.isFinite(Number(fixture.home_goals))
+  && Number.isFinite(Number(fixture.away_goals));
 
 function addDays(value, days) {
   const date = new Date(`${dateOnly(value)}T12:00:00Z`);
