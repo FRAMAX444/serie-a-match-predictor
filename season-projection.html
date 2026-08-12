@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="description" content="Proiezione non ricorsiva della classifica finale di Serie A usando lo snapshot corrente del modello." />
-  <title>Proiezione Serie A · European Match Predictor</title>
+  <meta name="description" content="Campionato completo di Serie A con risultati reali, previsioni delle gare rimanenti e classifica finale proiettata." />
+  <title>Serie A Calculator · Campionato completo</title>
   <link rel="stylesheet" href="styles.css" />
   <link rel="stylesheet" href="global.css" />
   <link rel="stylesheet" href="season-projection.css" />
@@ -15,17 +15,17 @@
       <div>
         <span class="projection-eyebrow">SERIE A CALCULATOR</span>
         <h1 id="projection-season">Serie A</h1>
-        <p>Proiezione finale calcolata con un unico snapshot dei dati reali disponibili alla giornata attuale.</p>
+        <p>Campionato completo: risultati reali già disputati, previsione di tutte le gare rimanenti e classifica finale proiettata.</p>
       </div>
       <a class="secondary-button projection-back" href="index.html">← Pronostici</a>
     </header>
 
     <section class="projection-callout">
       <div>
-        <strong>Previsione non ricorsiva</strong>
-        <p>Ogni gara rimanente viene stimata indipendentemente con lo stesso stato del modello. I risultati previsti non modificano forma, Elo o statistiche delle partite successive.</p>
+        <strong>Previsione non ricorsiva alla giornata attuale</strong>
+        <p>Ogni gara futura viene stimata indipendentemente con lo stesso snapshot del modello. I risultati previsti non modificano forma, Elo o statistiche delle partite successive.</p>
       </div>
-      <button id="projection-button" class="primary-button" type="button" disabled>Calcola classifica finale</button>
+      <button id="projection-button" class="primary-button" type="button" disabled>Calcola campionato completo</button>
     </section>
     <p id="projection-error" class="error projection-error" role="alert" hidden></p>
 
@@ -38,7 +38,7 @@
             <span class="projection-eyebrow">CLASSIFICA PREVISTA</span>
             <h2>Classifica finale</h2>
           </div>
-          <p>Ordinamento: punti, differenza reti, gol fatti.</p>
+          <p>Risultati reali già acquisiti + risultati previsti delle gare ancora da disputare. Ordinamento: punti, differenza reti, gol fatti.</p>
         </div>
         <div class="projection-table-wrap">
           <table class="projection-table">
@@ -55,10 +55,10 @@
       <section class="projection-card">
         <div class="projection-card__heading">
           <div>
-            <span class="projection-eyebrow">PARTITE RIMANENTI</span>
-            <h2>Pronostici giornata per giornata</h2>
+            <span class="projection-eyebrow">CAMPIONATO COMPLETO</span>
+            <h2>Tutte le giornate</h2>
           </div>
-          <p>Il punteggio mostrato è il risultato esatto con probabilità più alta secondo il modello.</p>
+          <p>Ogni giornata mostra i risultati reali delle gare concluse e il risultato previsto, con probabilità 1X2, per quelle future.</p>
         </div>
         <div id="projection-rounds" class="projection-rounds"></div>
       </section>
