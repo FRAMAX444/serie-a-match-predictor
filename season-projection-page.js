@@ -10,6 +10,11 @@ const escapeHtml = (value) => String(value ?? "").replace(/[&<>'\"]/g, (characte
 }[character]));
 const formatDate = (value) => new Intl.DateTimeFormat("it-IT", { day: "numeric", month: "long", year: "numeric" })
   .format(new Date(`${value}T12:00:00Z`));
+const hasValue = (value) => value !== null && value !== undefined && value !== "";
+const hasScore = (fixture) => hasValue(fixture?.home_goals)
+  && hasValue(fixture?.away_goals)
+  && Number.isFinite(Number(fixture.home_goals))
+  && Number.isFinite(Number(fixture.away_goals));
 
 let payload;
 let calendar;
@@ -57,40 +62,75 @@ function renderStandingRow(row) {
   </tr>`;
 }
 
-function renderPrediction(prediction) {
+function fixtureKey(fixture) {
+  return fixture.id || [fixture.round, fixture.date, fixture.home_team, fixture.away_team].join("|");
+}
+
+function renderPlayedFixture(fixture) {
+  return `<div class="projection-fixture projection-fixture--played">
+    <span class="projection-fixture__teams">${escapeHtml(fixture.home_team)} <strong>${Number(fixture.home_goals)}–${Number(fixture.away_goals)}</strong> ${escapeHtml(fixture.away_team)}</span>
+    <span class="projection-fixture__meta"><b class="projection-status projection-status--played">FINALE</b></span>
+  </div>`;
+}
+
+function renderPredictedFixture(prediction) {
   const p = prediction.result.probabilities;
-  return `<div class="projection-fixture">
+  return `<div class="projection-fixture projection-fixture--predicted">
     <span class="projection-fixture__teams">${escapeHtml(prediction.fixture.home_team)} <strong>${prediction.homeGoals}–${prediction.awayGoals}</strong> ${escapeHtml(prediction.fixture.away_team)}</span>
-    <span class="projection-fixture__probabilities">1 ${percent(p.homeWin)} · X ${percent(p.draw)} · 2 ${percent(p.awayWin)}</span>
+    <span class="projection-fixture__meta">
+      <b class="projection-status projection-status--predicted">PREVISIONE</b>
+      <span class="projection-fixture__probabilities">1 ${percent(p.homeWin)} · X ${percent(p.draw)} · 2 ${percent(p.awayWin)}</span>
+    </span>
+  </div>`;
+}
+
+function renderUnresolvedFixture(fixture) {
+  return `<div class="projection-fixture projection-fixture--pending">
+    <span class="projection-fixture__teams">${escapeHtml(fixture.home_team)} <strong>–</strong> ${escapeHtml(fixture.away_team)}</span>
+    <span class="projection-fixture__meta"><b class="projection-status">DA CALCOLARE</b></span>
   </div>`;
 }
 
 function renderRounds(projection) {
-  const grouped = new Map();
-  projection.predictions.forEach((prediction) => {
-    const round = Number(prediction.fixture.round || 0);
-    if (!grouped.has(round)) grouped.set(round, []);
-    grouped.get(round).push(prediction);
-  });
+  const predictionsByFixture = new Map(
+    projection.predictions.map((prediction) => [fixtureKey(prediction.fixture), prediction]),
+  );
+  const currentRoundIndex = calendar.matchdays.findIndex((matchday) =>
+    matchday.fixtures.some((fixture) => !hasScore(fixture)),
+  );
+  const openIndex = currentRoundIndex >= 0 ? currentRoundIndex : Math.max(0, calendar.matchdays.length - 1);
 
-  return [...grouped.entries()].sort((a, b) => a[0] - b[0]).map(([round, predictions], index) => {
-    const matchday = calendar.matchdays.find((item) => item.round === round);
-    return `<details class="projection-round" ${index === 0 ? "open" : ""}>
-      <summary><span>${escapeHtml(matchday ? matchdayLabel(matchday) : `Giornata ${round}`)}</span><strong>${predictions.length} partite previste</strong></summary>
-      <div class="projection-round__fixtures">${predictions.map(renderPrediction).join("")}</div>
+  return calendar.matchdays.map((matchday, index) => {
+    const fixtures = matchday.fixtures.map((fixture) => {
+      if (hasScore(fixture)) return renderPlayedFixture(fixture);
+      const prediction = predictionsByFixture.get(fixtureKey(fixture));
+      return prediction ? renderPredictedFixture(prediction) : renderUnresolvedFixture(fixture);
+    }).join("");
+    const playedCount = matchday.fixtures.filter(hasScore).length;
+    const predictedCount = matchday.fixtures.length - playedCount;
+    const summary = predictedCount
+      ? `${matchday.fixtures.length} partite · ${playedCount} finali · ${predictedCount} previste`
+      : `${matchday.fixtures.length} partite · giornata completata`;
+
+    return `<details class="projection-round" ${index === openIndex ? "open" : ""}>
+      <summary><span>${escapeHtml(matchdayLabel(matchday))}</span><strong>${summary}</strong></summary>
+      <div class="projection-round__fixtures">${fixtures}</div>
     </details>`;
   }).join("");
 }
 
 function renderProjection(projection) {
+  const totalMatches = calendar.matchdays.reduce((total, matchday) => total + matchday.fixtures.length, 0);
   $("projection-results").hidden = false;
   $("projection-summary").innerHTML = `
     <div><span>Stagione</span><strong>${escapeHtml(calendar.season || "Serie A")}</strong></div>
     <div><span>Snapshot modello</span><strong>${escapeHtml(formatDate(projection.snapshotDate))}</strong></div>
-    <div><span>Già giocate</span><strong>${projection.playedMatches}</strong></div>
-    <div><span>Da prevedere</span><strong>${projection.remainingMatches}</strong></div>`;
+    <div><span>Giornate</span><strong>${calendar.matchdays.length}</strong></div>
+    <div><span>Partite totali</span><strong>${totalMatches}</strong></div>
+    <div><span>Finali reali</span><strong>${projection.playedMatches}</strong></div>
+    <div><span>Previsioni</span><strong>${projection.remainingMatches}</strong></div>`;
   $("projection-table-body").innerHTML = projection.standings.map(renderStandingRow).join("");
-  $("projection-rounds").innerHTML = renderRounds(projection) || '<p class="projection-empty">Il campionato è già terminato: la tabella coincide con la classifica reale disponibile nel dataset.</p>';
+  $("projection-rounds").innerHTML = renderRounds(projection);
 }
 
 async function runProjection() {
@@ -109,7 +149,7 @@ async function runProjection() {
     error.hidden = false;
   } finally {
     button.disabled = false;
-    button.textContent = "Ricalcola proiezione";
+    button.textContent = "Ricalcola campionato";
   }
 }
 
