@@ -2,6 +2,9 @@ import { predictFromMatches } from "./model.js";
 
 const DAY_MS = 86400000;
 const ITALY_COMPETITION_ID = "ita.1";
+const EXPECTED_TEAMS = 20;
+const EXPECTED_MATCHDAYS = 38;
+const EXPECTED_MATCHES = 380;
 
 const dateOnly = (value) => String(value || "").slice(0, 10);
 const hasValue = (value) => value !== null && value !== undefined && value !== "";
@@ -28,6 +31,28 @@ export function deriveSnapshotDate(calendar) {
   if (completedDates.length) return addDays(completedDates.at(-1), 1);
   const upcomingDates = fixtures.filter((fixture) => !hasScore(fixture)).map((fixture) => dateOnly(fixture.date)).filter(Boolean).sort();
   return upcomingDates[0] || new Date().toISOString().slice(0, 10);
+}
+
+export function analyzeSeasonCoverage(calendar) {
+  const fixtures = fixturesFromCalendar(calendar);
+  const teamCounts = new Map((calendar?.teams || []).map((team) => [team, 0]));
+  fixtures.forEach((fixture) => {
+    teamCounts.set(fixture.home_team, (teamCounts.get(fixture.home_team) || 0) + 1);
+    teamCounts.set(fixture.away_team, (teamCounts.get(fixture.away_team) || 0) + 1);
+  });
+  const balanced = calendar?.teams?.length === EXPECTED_TEAMS
+    && [...teamCounts.values()].every((count) => count === EXPECTED_MATCHDAYS);
+  const matchdays = calendar?.matchdays?.length || 0;
+  return {
+    teams: calendar?.teams?.length || 0,
+    matchdays,
+    matches: fixtures.length,
+    expectedTeams: EXPECTED_TEAMS,
+    expectedMatchdays: EXPECTED_MATCHDAYS,
+    expectedMatches: EXPECTED_MATCHES,
+    balanced,
+    complete: balanced && matchdays === EXPECTED_MATCHDAYS && fixtures.length === EXPECTED_MATCHES,
+  };
 }
 
 function emptyRow(team) {
@@ -113,6 +138,31 @@ export function buildProjectedStandings(calendar, predictions = []) {
     .map((row, index) => ({ ...row, position: index + 1 }));
 }
 
+function syntheticMatch(prediction) {
+  const homeXg = Number(prediction.result?.lambdaHome);
+  const awayXg = Number(prediction.result?.lambdaAway);
+  return {
+    id: `sim-${prediction.fixture.id || [prediction.fixture.round, prediction.fixture.date, prediction.fixture.home_team, prediction.fixture.away_team].join("-")}`,
+    date: dateOnly(prediction.fixture.date),
+    competition_id: ITALY_COMPETITION_ID,
+    competition_name: "Serie A",
+    competition_type: "domestic",
+    home_team: prediction.fixture.home_team,
+    away_team: prediction.fixture.away_team,
+    home_goals: prediction.homeGoals,
+    away_goals: prediction.awayGoals,
+    home_xg: Number.isFinite(homeXg) ? homeXg : undefined,
+    away_xg: Number.isFinite(awayXg) ? awayXg : undefined,
+    simulated: true,
+  };
+}
+
+function historyBeforeSnapshot(matches, snapshotDate) {
+  return (matches || [])
+    .filter((match) => hasScore(match) && dateOnly(match.date) && dateOnly(match.date) < snapshotDate)
+    .map((match) => ({ ...match }));
+}
+
 export function projectSeasonSnapshot(matches, calendar, rawOptions = {}, predictor = predictFromMatches) {
   if (!calendar?.competition || calendar.competition.id !== ITALY_COMPETITION_ID) {
     throw new Error("La proiezione stagionale è disponibile per la Serie A.");
@@ -120,6 +170,7 @@ export function projectSeasonSnapshot(matches, calendar, rawOptions = {}, predic
 
   const fixtures = fixturesFromCalendar(calendar);
   const remaining = fixtures.filter((fixture) => !hasScore(fixture));
+  const coverage = analyzeSeasonCoverage(calendar);
   if (!remaining.length) {
     return {
       snapshotDate: deriveSnapshotDate(calendar),
@@ -127,32 +178,64 @@ export function projectSeasonSnapshot(matches, calendar, rawOptions = {}, predic
       standings: buildProjectedStandings(calendar, []),
       playedMatches: fixtures.filter(hasScore).length,
       remainingMatches: 0,
+      recursive: true,
+      coverage,
     };
   }
 
-  const { snapshotDate: requestedSnapshotDate, ...modelOptions } = rawOptions;
+  const {
+    snapshotDate: requestedSnapshotDate,
+    recursive = true,
+    ...modelOptions
+  } = rawOptions;
   const snapshotDate = dateOnly(requestedSnapshotDate) || deriveSnapshotDate(calendar);
-  const predictions = remaining
+  const predictions = [];
+  const orderedRemaining = remaining
     .slice()
-    .sort((left, right) => dateOnly(left.date).localeCompare(dateOnly(right.date)) || Number(left.round || 0) - Number(right.round || 0))
-    .map((fixture) => {
-      const result = predictor(matches, {
-        ...modelOptions,
-        homeTeam: fixture.home_team,
-        awayTeam: fixture.away_team,
-        date: snapshotDate,
-        cutoffDate: snapshotDate,
-        competitionId: ITALY_COMPETITION_ID,
-      });
-      const bestScore = result?.probabilities?.scores?.[0];
-      if (!bestScore) throw new Error(`Risultato esatto non disponibile per ${fixture.home_team} - ${fixture.away_team}.`);
-      return {
-        fixture,
-        result,
-        homeGoals: Number(bestScore.home),
-        awayGoals: Number(bestScore.away),
-      };
+    .sort((left, right) => dateOnly(left.date).localeCompare(dateOnly(right.date)) || Number(left.round || 0) - Number(right.round || 0));
+
+  // In modalità ricorsiva usiamo solo risultati realmente noti allo snapshot e aggiungiamo
+  // i risultati simulati al termine di ogni data di gara. In questo modo partite dello stesso
+  // giorno restano indipendenti tra loro, mentre giornate successive ereditano forma/Elo e
+  // giorni di riposo prodotti dal percorso simulato. Il filtro iniziale impedisce leakage se
+  // projectSeasonSnapshot viene usato con uno snapshot storico.
+  const simulationHistory = recursive ? historyBeforeSnapshot(matches, snapshotDate) : matches;
+  let activeDate = null;
+  let pendingForDate = [];
+  const flushDate = () => {
+    if (recursive && pendingForDate.length) {
+      pendingForDate.forEach((prediction) => simulationHistory.push(syntheticMatch(prediction)));
+    }
+    pendingForDate = [];
+  };
+
+  orderedRemaining.forEach((fixture) => {
+    const fixtureDate = dateOnly(fixture.date) || snapshotDate;
+    if (recursive && activeDate !== null && fixtureDate !== activeDate) flushDate();
+    activeDate = fixtureDate;
+
+    const predictionDate = recursive ? fixtureDate : snapshotDate;
+    const result = predictor(simulationHistory, {
+      ...modelOptions,
+      homeTeam: fixture.home_team,
+      awayTeam: fixture.away_team,
+      date: predictionDate,
+      cutoffDate: predictionDate,
+      competitionId: ITALY_COMPETITION_ID,
     });
+    const bestScore = result?.probabilities?.scores?.[0];
+    if (!bestScore) throw new Error(`Risultato esatto non disponibile per ${fixture.home_team} - ${fixture.away_team}.`);
+    const prediction = {
+      fixture,
+      result,
+      homeGoals: Number(bestScore.home),
+      awayGoals: Number(bestScore.away),
+      scoreProbability: Number(bestScore.probability || 0),
+    };
+    predictions.push(prediction);
+    pendingForDate.push(prediction);
+  });
+  flushDate();
 
   return {
     snapshotDate,
@@ -160,5 +243,7 @@ export function projectSeasonSnapshot(matches, calendar, rawOptions = {}, predic
     standings: buildProjectedStandings(calendar, predictions),
     playedMatches: fixtures.filter(hasScore).length,
     remainingMatches: remaining.length,
+    recursive,
+    coverage,
   };
 }

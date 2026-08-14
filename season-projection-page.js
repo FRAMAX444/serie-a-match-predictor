@@ -37,6 +37,7 @@ function predictionOptions() {
     windowDays: model.windowDays,
     halfLifeDays: model.halfLifeDays,
     teamContext: payload?.team_context || null,
+    recursive: true,
   };
 }
 
@@ -75,11 +76,12 @@ function renderPlayedFixture(fixture) {
 
 function renderPredictedFixture(prediction) {
   const p = prediction.result.probabilities;
+  const exact = prediction.scoreProbability > 0 ? ` · score ${percent(prediction.scoreProbability)}` : "";
   return `<div class="projection-fixture projection-fixture--predicted">
     <span class="projection-fixture__teams">${escapeHtml(prediction.fixture.home_team)} <strong>${prediction.homeGoals}–${prediction.awayGoals}</strong> ${escapeHtml(prediction.fixture.away_team)}</span>
     <span class="projection-fixture__meta">
-      <b class="projection-status projection-status--predicted">PREVISIONE</b>
-      <span class="projection-fixture__probabilities">1 ${percent(p.homeWin)} · X ${percent(p.draw)} · 2 ${percent(p.awayWin)}</span>
+      <b class="projection-status projection-status--predicted">SIMULATA</b>
+      <span class="projection-fixture__probabilities">1 ${percent(p.homeWin)} · X ${percent(p.draw)} · 2 ${percent(p.awayWin)}${exact}</span>
     </span>
   </div>`;
 }
@@ -109,7 +111,7 @@ function renderRounds(projection) {
     const playedCount = matchday.fixtures.filter(hasScore).length;
     const predictedCount = matchday.fixtures.length - playedCount;
     const summary = predictedCount
-      ? `${matchday.fixtures.length} partite · ${playedCount} finali · ${predictedCount} previste`
+      ? `${matchday.fixtures.length} partite · ${playedCount} finali · ${predictedCount} simulate`
       : `${matchday.fixtures.length} partite · giornata completata`;
 
     return `<details class="projection-round" ${index === openIndex ? "open" : ""}>
@@ -119,18 +121,34 @@ function renderRounds(projection) {
   }).join("");
 }
 
+function coverageLabel(coverage) {
+  if (coverage.complete) return `${coverage.matchdays}/${coverage.expectedMatchdays} giornate · completa`;
+  return `${coverage.matchdays}/${coverage.expectedMatchdays} giornate · ${coverage.matches}/${coverage.expectedMatches} partite`;
+}
+
 function renderProjection(projection) {
   const totalMatches = calendar.matchdays.reduce((total, matchday) => total + matchday.fixtures.length, 0);
   $("projection-results").hidden = false;
   $("projection-summary").innerHTML = `
     <div><span>Stagione</span><strong>${escapeHtml(calendar.season || "Serie A")}</strong></div>
-    <div><span>Snapshot modello</span><strong>${escapeHtml(formatDate(projection.snapshotDate))}</strong></div>
-    <div><span>Giornate</span><strong>${calendar.matchdays.length}</strong></div>
+    <div><span>Snapshot reale</span><strong>${escapeHtml(formatDate(projection.snapshotDate))}</strong></div>
+    <div><span>Modalità</span><strong>${projection.recursive ? "Ricorsiva giornata per giornata" : "Snapshot fisso"}</strong></div>
+    <div><span>Copertura calendario</span><strong>${escapeHtml(coverageLabel(projection.coverage))}</strong></div>
     <div><span>Partite totali</span><strong>${totalMatches}</strong></div>
     <div><span>Finali reali</span><strong>${projection.playedMatches}</strong></div>
-    <div><span>Previsioni</span><strong>${projection.remainingMatches}</strong></div>`;
+    <div><span>Partite simulate</span><strong>${projection.remainingMatches}</strong></div>`;
   $("projection-table-body").innerHTML = projection.standings.map(renderStandingRow).join("");
   $("projection-rounds").innerHTML = renderRounds(projection);
+
+  const coverageNotice = $("projection-coverage-notice");
+  if (projection.coverage.complete) {
+    coverageNotice.textContent = "Calendario completo verificato: 38 giornate, 380 partite e 38 gare per squadra.";
+    coverageNotice.dataset.tone = "ok";
+  } else {
+    coverageNotice.textContent = `Attenzione: il dataset contiene ${projection.coverage.matchdays}/38 giornate e ${projection.coverage.matches}/380 partite. La simulazione copre tutto ciò che è presente, ma non può inventare fixture mancanti.`;
+    coverageNotice.dataset.tone = "warn";
+  }
+  coverageNotice.hidden = false;
 }
 
 async function runProjection() {
@@ -138,18 +156,18 @@ async function runProjection() {
   const error = $("projection-error");
   error.hidden = true;
   button.disabled = true;
-  button.textContent = "Calcolo…";
+  button.textContent = "Simulazione…";
   await new Promise((resolve) => setTimeout(resolve, 30));
   try {
     const projection = projectSeasonSnapshot(payload.matches, calendar, predictionOptions());
     renderProjection(projection);
     $("projection-results").scrollIntoView({ behavior: "smooth", block: "start" });
   } catch (caught) {
-    error.textContent = caught.message || "Errore durante la proiezione del campionato.";
+    error.textContent = caught.message || "Errore durante la simulazione del campionato.";
     error.hidden = false;
   } finally {
     button.disabled = false;
-    button.textContent = "Ricalcola campionato";
+    button.textContent = "Ricalcola stagione";
   }
 }
 
