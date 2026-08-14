@@ -179,7 +179,11 @@ export function matchOddsToFixtures(predictions, oddsEvents) {
 
 export function buildCandidates(entries, minLegProbability = 0.35, rawOptions = {}) {
   const options = typeof rawOptions === "object" && rawOptions ? rawOptions : {};
-  const minEdge = Number.isFinite(Number(options.minEdge)) ? Number(options.minEdge) : null;
+  const rawMinEdge = options.minEdge;
+  const parsedMinEdge = rawMinEdge === null || rawMinEdge === undefined || rawMinEdge === ""
+    ? null
+    : Number(rawMinEdge);
+  const minEdge = Number.isFinite(parsedMinEdge) ? parsedMinEdge : null;
   const candidates = [];
   entries.forEach((entry, fixtureIndex) => {
     if (!entry.matched) return;
