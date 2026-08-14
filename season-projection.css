@@ -27,6 +27,9 @@
 .projection-callout p { max-width: 760px; margin-top: .2rem; font-size: .9rem; }
 .projection-callout .primary-button { min-width: 220px; justify-content: center; }
 .projection-error { margin-top: .8rem; }
+#projection-coverage-notice { margin: .8rem 0 0; }
+#projection-coverage-notice[data-tone="warn"] { color: #92620a; }
+#projection-coverage-notice[data-tone="ok"] { color: #1a7f4f; }
 .projection-results { margin-top: 1rem; }
 .projection-summary {
   display: grid;
