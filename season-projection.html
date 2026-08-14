@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="description" content="Campionato completo di Serie A con risultati reali, previsioni delle gare rimanenti e classifica finale proiettata." />
-  <title>Serie A Calculator · Campionato completo</title>
+  <meta name="description" content="Simulatore completo della Serie A: risultati reali, simulazione ricorsiva di tutte le gare rimanenti e classifica finale." />
+  <title>Serie A Simulator · Stagione completa</title>
   <link rel="stylesheet" href="styles.css" />
   <link rel="stylesheet" href="global.css" />
   <link rel="stylesheet" href="season-projection.css" />
@@ -13,20 +13,21 @@
   <main class="page-shell projection-shell">
     <header class="projection-header">
       <div>
-        <span class="projection-eyebrow">SERIE A CALCULATOR</span>
+        <span class="projection-eyebrow">SERIE A SIMULATOR</span>
         <h1 id="projection-season">Serie A</h1>
-        <p>Campionato completo: risultati reali già disputati, previsione di tutte le gare rimanenti e classifica finale proiettata.</p>
+        <p>Simula l'intera stagione: conserva i risultati reali già disputati, predice tutte le gare rimanenti in ordine cronologico e costruisce la classifica finale.</p>
       </div>
       <a class="secondary-button projection-back" href="index.html">← Pronostici</a>
     </header>
 
     <section class="projection-callout">
       <div>
-        <strong>Previsione non ricorsiva alla giornata attuale</strong>
-        <p>Ogni gara futura viene stimata indipendentemente con lo stesso snapshot del modello. I risultati previsti non modificano forma, Elo o statistiche delle partite successive.</p>
+        <strong>Simulazione ricorsiva giornata per giornata</strong>
+        <p>Ogni gara usa la sua data reale. Al termine di una data di gioco, i risultati simulati entrano nello storico e possono influenzare forma, Elo e riposo delle gare successive. Le partite dello stesso giorno restano indipendenti tra loro.</p>
       </div>
-      <button id="projection-button" class="primary-button" type="button" disabled>Calcola campionato completo</button>
+      <button id="projection-button" class="primary-button" type="button" disabled>Simula tutta la stagione</button>
     </section>
+    <p id="projection-coverage-notice" class="settings-status" aria-live="polite" hidden></p>
     <p id="projection-error" class="error projection-error" role="alert" hidden></p>
 
     <section id="projection-results" class="projection-results" aria-live="polite" hidden>
@@ -35,16 +36,16 @@
       <section class="projection-card">
         <div class="projection-card__heading">
           <div>
-            <span class="projection-eyebrow">CLASSIFICA PREVISTA</span>
+            <span class="projection-eyebrow">CLASSIFICA SIMULATA</span>
             <h2>Classifica finale</h2>
           </div>
-          <p>Risultati reali già acquisiti + risultati previsti delle gare ancora da disputare. Ordinamento: punti, differenza reti, gol fatti.</p>
+          <p>Risultati reali già acquisiti + percorso simulato di tutte le gare ancora da disputare. Ordinamento: punti, differenza reti, gol fatti.</p>
         </div>
         <div class="projection-table-wrap">
           <table class="projection-table">
             <thead>
               <tr>
-                <th>#</th><th>Squadra</th><th>G att.</th><th>Pt att.</th><th>Pt prev.</th><th>G</th><th>V</th><th>N</th><th>P</th><th>GF</th><th>GS</th><th>DR</th><th>Pt</th>
+                <th>#</th><th>Squadra</th><th>G att.</th><th>Pt att.</th><th>Pt sim.</th><th>G</th><th>V</th><th>N</th><th>P</th><th>GF</th><th>GS</th><th>DR</th><th>Pt</th>
               </tr>
             </thead>
             <tbody id="projection-table-body"></tbody>
@@ -55,10 +56,10 @@
       <section class="projection-card">
         <div class="projection-card__heading">
           <div>
-            <span class="projection-eyebrow">CAMPIONATO COMPLETO</span>
+            <span class="projection-eyebrow">STAGIONE COMPLETA</span>
             <h2>Tutte le giornate</h2>
           </div>
-          <p>Ogni giornata mostra i risultati reali delle gare concluse e il risultato previsto, con probabilità 1X2, per quelle future.</p>
+          <p>Ogni giornata mostra i risultati reali delle gare concluse e, per quelle future, il risultato simulato con probabilità 1X2 e probabilità del punteggio esatto scelto.</p>
         </div>
         <div id="projection-rounds" class="projection-rounds"></div>
       </section>
