@@ -95,6 +95,10 @@ const edgeEntries = [{
   bookmakers: { home: "A", draw: "B", away: "C" },
   result: { probabilities: { homeWin: 0.60, draw: 0.22, awayWin: 0.18 } },
 }];
+const noEdgeFilter = buildCandidates(edgeEntries, 0.20, { minEdge: null });
+assert.equal(noEdgeFilter.length, 2, "minEdge=null deve disattivare davvero il filtro e mantenere anche edge negativi sopra la soglia probabilità");
+assert.ok(noEdgeFilter.some((candidate) => candidate.key === "X"));
+
 const valueCandidates = buildCandidates(edgeEntries, 0.20, { minEdge: 0.02 });
 assert.equal(valueCandidates.length, 1, "solo l'1 ha edge almeno +2pp");
 assert.equal(valueCandidates[0].key, "1");
