@@ -380,6 +380,59 @@ function outcomeName(probabilities, homeTeam, awayTeam) {
   ].sort((left, right) => right.probability - left.probability)[0];
 }
 
+// Proietta probabilità per-partita (non medie storiche grezze) per un singolo giocatore, a
+// partire dai tassi per-90 minuti già calcolati in player_context (enrich_competitions_players.py)
+// e dal lambda/gf5 che predictFromMatches calcola comunque per la squadra. Il gol è ancorato
+// al lambda SPECIFICO di questa partita (tramite la quota storica di gol-squadra del
+// giocatore): una squadra che affronta un avversario debole alza il lambda, e con esso la
+// probabilità di gol del giocatore, in coerenza col resto del modello — non una stima isolata
+// che ignora il contesto della partita. Gli assist scalano con lo stesso rapporto
+// lambda-di-oggi/media-storica, senza inventare un secondo canale scollegato. I cartellini
+// usano solo il tasso storico del giocatore: nessun collegamento al lambda gol, e
+// refereeHomeBias (se noto) resta un canale separato non ancora incrociato con questo.
+//
+// Limiti onesti: assume che il tasso storico per-90 resti stabile, non sa se il giocatore
+// partirà titolare in QUESTA partita specifica, non regola per il ruolo dell'avversario
+// nella fase difensiva contro questo giocatore in particolare, e minutesShare (minuti medi
+// per presenza) è una proxy grezza dei minuti attesi, non una previsione di formazione.
+export function estimatePlayerMarkets(player, teamLambda, teamRecentGoalsFor) {
+  const minutesShare = player.appearances > 0 ? clamp(player.minutes / (player.appearances * 90), 0, 1) : 0;
+  const expectedMinutes = 90 * minutesShare;
+  const minutesFactor = expectedMinutes / 90;
+
+  const share = teamRecentGoalsFor > 0 ? clamp(safe(player.goals_per90, 0) / teamRecentGoalsFor, 0, 0.85) : 0;
+  const expectedGoals = Math.max(0, teamLambda) * share * minutesFactor;
+
+  const teamScaling = teamRecentGoalsFor > 0 ? clamp(teamLambda / teamRecentGoalsFor, 0.4, 2.2) : 1;
+  const expectedAssists = Math.max(0, safe(player.assists_per90, 0)) * minutesFactor * teamScaling;
+
+  const expectedCards = Math.max(0, safe(player.yellow_per90, 0) + safe(player.red_per90, 0)) * minutesFactor;
+
+  // I tiri seguono l'intensità offensiva della squadra in QUESTA partita tanto quanto gli
+  // assist (riusa lo stesso teamScaling): una squadra che il modello prevede più pericolosa
+  // del solito genera più occasioni da tiro per i suoi giocatori offensivi, non solo più
+  // gol. A differenza di gol/assist non c'è un tetto storico sul "team recent" (i tiri non
+  // sono limitati al numero di gol segnati), quindi qui teamScaling agisce come moltiplicatore
+  // puro sul tasso storico del giocatore. Calibrazione Monte Carlo in
+  // scripts/validate_player_probabilities.py e docs/player-probability-study.md.
+  const expectedShots = Math.max(0, safe(player.shots_per90, 0)) * minutesFactor * teamScaling;
+  const zeroShotProbability = poissonPmf(0, expectedShots);
+  const oneShotProbability = poissonPmf(1, expectedShots);
+
+  return {
+    expectedMinutes: Math.round(expectedMinutes),
+    expectedShots: Math.round(expectedShots * 100) / 100,
+    anytimeScorerProbability: clamp(1 - Math.exp(-expectedGoals), 0, 0.95),
+    assistProbability: clamp(1 - Math.exp(-expectedAssists), 0, 0.9),
+    cardProbability: clamp(1 - Math.exp(-expectedCards), 0, 0.85),
+    // shotProbability: almeno 1 tiro nella partita (P(X>=1) = 1 - P(X=0)).
+    shotProbability: clamp(1 - zeroShotProbability, 0, 0.97),
+    // multiShotProbability: almeno 2 tiri (P(X>=2) = 1 - P(X=0) - P(X=1)), utile per mercati
+    // "Over 1.5 tiri" del giocatore.
+    multiShotProbability: clamp(1 - zeroShotProbability - oneShotProbability, 0, 0.97),
+  };
+}
+
 export function predictFromMatches(matches, rawOptions) {
   const options = { windowDays: 540, halfLifeDays: 120, competitionId: "", teamContext: null, hyperparameters: null, refereeHomeBias: 0, ...rawOptions };
   if (!SUPPORTED_COMPETITION_IDS.has(options.competitionId)) {

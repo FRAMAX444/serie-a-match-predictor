@@ -1,10 +1,16 @@
-import { predictMatchdayFromMatches } from "./model.js";
+import { predictMatchdayFromMatches, estimatePlayerMarkets } from "./model.js";
 import { buildCompetitionCatalog, buildMatchdays } from "./matchdays.js";
 
 export const ODDS_API_KEY_STORAGE = "serie-a-predictor-odds-api-key";
 const ODDS_API_BASE = "https://api.the-odds-api.com/v4";
-const HOUR_MS = 3600000;
 
+// Ogni voce: termini di ricerca in ordine di priorità (il primo che produce ESATTAMENTE
+// un risultato tra i campionati attivi vince) più un blocklist per escludere campionati
+// femminili/giovanili/riserve che potrebbero condividere una parola chiave (es.
+// "bundesliga" da solo matcherebbe anche "Frauen-Bundesliga" o "2. Bundesliga").
+// I sport_key esatti di the-odds-api.com non sono verificabili dal vivo da qui (nessun
+// dominio di quote nella rete consentita): per questo la scoperta è dinamica via /v4/sports/
+// invece di un valore hardcoded, con fallback a scelta manuale se il match non è univoco.
 export const LEAGUE_SEARCH_TERMS = {
   "eng.1": ["epl", "premier league"],
   "esp.1": ["la liga", "laliga"],
@@ -15,6 +21,8 @@ export const LEAGUE_SEARCH_TERMS = {
 const EXCLUDE_TERMS = ["women", "frauen", "u21", "u20", "u19", "youth", "reserve", " 2", "ii ", "b -"];
 
 const NAME_OVERRIDES = {
+  // Nomi canonici della pipeline (spesso italianizzati, vedi NAME_MAP in
+  // update_europe_data.py) -> forma inglese più probabile usata dalle API di quote.
   "Bayern Monaco": "Bayern Munich", "Dortmund": "Borussia Dortmund", "Lipsia": "RB Leipzig",
   "Francoforte": "Eintracht Frankfurt", "PSG": "Paris Saint Germain", "Marsiglia": "Marseille",
   "Lione": "Lyon", "Atletico Madrid": "Atletico Madrid", "Man United": "Manchester United",
@@ -37,69 +45,6 @@ function namesMatch(pipelineName, oddsApiName) {
   return left === right || left.includes(right) || right.includes(left);
 }
 
-function median(values) {
-  if (!values.length) return null;
-  const sorted = values.slice().sort((left, right) => left - right);
-  const middle = Math.floor(sorted.length / 2);
-  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
-}
-
-function fixtureTimestamp(fixture) {
-  const kickoff = Date.parse(fixture.kickoff || "");
-  if (Number.isFinite(kickoff)) return kickoff;
-  const date = String(fixture.date || "").slice(0, 10);
-  const noon = Date.parse(`${date}T12:00:00Z`);
-  return Number.isFinite(noon) ? noon : NaN;
-}
-
-function eventMatchesFixture(fixture, candidate) {
-  if (!namesMatch(fixture.home_team, candidate.home_team || "")
-    || !namesMatch(fixture.away_team, candidate.away_team || "")) return false;
-  const fixtureTime = fixtureTimestamp(fixture);
-  const eventTime = Date.parse(candidate.commence_time || "");
-  if (Number.isFinite(fixtureTime) && Number.isFinite(eventTime)) {
-    return Math.abs(eventTime - fixtureTime) <= 36 * HOUR_MS;
-  }
-  return String(candidate.commence_time || "").slice(0, 10) === String(fixture.date || "").slice(0, 10);
-}
-
-function outcomeOddsSummary(event, outcomeName) {
-  const offers = [];
-  (event.bookmakers || []).forEach((bookmaker) => {
-    const market = (bookmaker.markets || []).find((entry) => entry.key === "h2h");
-    const outcome = market?.outcomes?.find((entry) => entry.name === outcomeName);
-    if (outcome && Number.isFinite(outcome.price) && outcome.price > 1) {
-      offers.push({
-        price: outcome.price,
-        bookmaker: bookmaker.title || bookmaker.key || "Bookmaker",
-      });
-    }
-  });
-  if (!offers.length) return { consensus: null, best: null, bookmaker: null };
-  const best = offers.reduce((current, offer) => offer.price > current.price ? offer : current, offers[0]);
-  return {
-    consensus: median(offers.map((offer) => offer.price)),
-    best: best.price,
-    bookmaker: best.bookmaker,
-  };
-}
-
-function fairMarketProbabilities(odds) {
-  const home = Number(odds?.home);
-  const draw = Number(odds?.draw);
-  const away = Number(odds?.away);
-  if (![home, draw, away].every((value) => Number.isFinite(value) && value > 1)) return null;
-  const inverse = { home: 1 / home, draw: 1 / draw, away: 1 / away };
-  const overround = inverse.home + inverse.draw + inverse.away;
-  if (!(overround > 0)) return null;
-  return {
-    home: inverse.home / overround,
-    draw: inverse.draw / overround,
-    away: inverse.away / overround,
-    overround,
-  };
-}
-
 export function getStoredOddsApiKey() {
   try {
     return localStorage.getItem(ODDS_API_KEY_STORAGE) || "";
@@ -113,10 +58,15 @@ export function setStoredOddsApiKey(key) {
     if (key) localStorage.setItem(ODDS_API_KEY_STORAGE, key.trim());
     else localStorage.removeItem(ODDS_API_KEY_STORAGE);
   } catch {
-    /* storage non disponibile */
+    /* storage non disponibile: la chiave andrà semplicemente re-inserita ad ogni sessione */
   }
 }
 
+// Interroga il catalogo sport (chiamata leggera, non conteggiata nella quota nella
+// documentazione di the-odds-api.com) e prova a individuare un unico campionato di calcio
+// attivo che corrisponda a uno dei termini di ricerca per la lega scelta, escludendo le
+// categorie in EXCLUDE_TERMS. Se il match non è univoco, ritorna tutti i candidati soccer
+// attivi: la UI chiede scelta manuale invece di indovinare.
 export async function discoverSportKey(apiKey, competitionId) {
   const response = await fetch(`${ODDS_API_BASE}/sports/?apiKey=${encodeURIComponent(apiKey)}`);
   if (!response.ok) throw new Error(`Catalogo sport non raggiungibile (HTTP ${response.status})`);
@@ -145,123 +95,70 @@ export async function fetchLeagueOdds(apiKey, sportKey) {
   return response.json();
 }
 
-// Per ogni esito conserviamo due valori distinti:
-// - consensusOdds: mediana delle quote disponibili, robusta agli outlier e usata per
-//   stimare la probabilità di mercato de-vigata;
-// - odds: miglior quota effettivamente trovata, usata per payout ed expected value.
+function averageOutcomeOdds(event, outcomeName) {
+  const prices = [];
+  (event.bookmakers || []).forEach((bookmaker) => {
+    const market = (bookmaker.markets || []).find((entry) => entry.key === "h2h");
+    const outcome = market?.outcomes?.find((entry) => entry.name === outcomeName);
+    if (outcome && Number.isFinite(outcome.price) && outcome.price > 1) prices.push(outcome.price);
+  });
+  if (!prices.length) return null;
+  return prices.reduce((sum, price) => sum + price, 0) / prices.length;
+}
+
+// Abbina ogni fixture del turno (per nome squadra, tollerante a forma inglese/italianizzata,
+// e data) alle quote medie di mercato per 1/X/2. Fixture senza corrispondenza tornano con
+// odds: null sui tre esiti: restano visibili come "senza quote" invece di sparire.
 export function matchOddsToFixtures(predictions, oddsEvents) {
   return predictions.map(({ fixture, result }) => {
-    const event = oddsEvents.find((candidate) => eventMatchesFixture(fixture, candidate));
-    if (!event) {
-      return {
-        fixture,
-        result,
-        odds: { home: null, draw: null, away: null },
-        consensusOdds: { home: null, draw: null, away: null },
-        bookmakers: { home: null, draw: null, away: null },
-        matched: false,
-      };
-    }
-
-    const home = outcomeOddsSummary(event, event.home_team);
-    const draw = outcomeOddsSummary(event, "Draw");
-    const away = outcomeOddsSummary(event, event.away_team);
-    return {
-      fixture,
-      result,
-      odds: { home: home.best, draw: draw.best, away: away.best },
-      consensusOdds: { home: home.consensus, draw: draw.consensus, away: away.consensus },
-      bookmakers: { home: home.bookmaker, draw: draw.bookmaker, away: away.bookmaker },
-      matched: true,
-    };
+    const event = oddsEvents.find((candidate) => {
+      const sameDay = String(candidate.commence_time || "").slice(0, 10) === String(fixture.date).slice(0, 10);
+      return sameDay
+        && namesMatch(fixture.home_team, candidate.home_team || "")
+        && namesMatch(fixture.away_team, candidate.away_team || "");
+    });
+    const odds = event ? {
+      home: averageOutcomeOdds(event, event.home_team),
+      draw: averageOutcomeOdds(event, "Draw"),
+      away: averageOutcomeOdds(event, event.away_team),
+    } : { home: null, draw: null, away: null };
+    return { fixture, result, odds, matched: Boolean(event) };
   });
 }
 
-export function buildCandidates(entries, minLegProbability = 0.35, rawOptions = {}) {
-  const options = typeof rawOptions === "object" && rawOptions ? rawOptions : {};
-  const rawMinEdge = options.minEdge;
-  const parsedMinEdge = rawMinEdge === null || rawMinEdge === undefined || rawMinEdge === ""
-    ? null
-    : Number(rawMinEdge);
-  const minEdge = Number.isFinite(parsedMinEdge) ? parsedMinEdge : null;
+// Costruisce le giocate candidate: una per esito con quota nota e probabilità del modello
+// sopra la soglia minima. minLegProbability di default esclude esiti "lunghi" a priori,
+// coerente con l'obiettivo "il più probabile possibile" — non ha senso includere un esito
+// al 12% in una schedina pensata per essere sicura.
+export function buildCandidates(entries, minLegProbability = 0.35) {
   const candidates = [];
   entries.forEach((entry, fixtureIndex) => {
     if (!entry.matched) return;
-    const market = fairMarketProbabilities(entry.consensusOdds || entry.odds);
-    const selections = [
-      {
-        key: "1",
-        label: `${entry.fixture.home_team} (1)`,
-        odds: entry.odds.home,
-        probability: entry.result.probabilities.homeWin,
-        marketProbability: market?.home ?? null,
-        bookmaker: entry.bookmakers?.home ?? null,
-      },
-      {
-        key: "X",
-        label: "Pareggio (X)",
-        odds: entry.odds.draw,
-        probability: entry.result.probabilities.draw,
-        marketProbability: market?.draw ?? null,
-        bookmaker: entry.bookmakers?.draw ?? null,
-      },
-      {
-        key: "2",
-        label: `${entry.fixture.away_team} (2)`,
-        odds: entry.odds.away,
-        probability: entry.result.probabilities.awayWin,
-        marketProbability: market?.away ?? null,
-        bookmaker: entry.bookmakers?.away ?? null,
-      },
+    const options = [
+      { key: "1", label: `${entry.fixture.home_team} (1)`, odds: entry.odds.home, probability: entry.result.probabilities.homeWin },
+      { key: "X", label: "Pareggio (X)", odds: entry.odds.draw, probability: entry.result.probabilities.draw },
+      { key: "2", label: `${entry.fixture.away_team} (2)`, odds: entry.odds.away, probability: entry.result.probabilities.awayWin },
     ];
-
-    selections.forEach((selection) => {
-      if (!Number.isFinite(selection.odds) || selection.odds <= 1 || selection.probability < minLegProbability) return;
-      const edge = Number.isFinite(selection.marketProbability)
-        ? selection.probability - selection.marketProbability
-        : null;
-      if (minEdge !== null && (!Number.isFinite(edge) || edge < minEdge)) return;
-      candidates.push({
-        fixtureIndex,
-        fixtureLabel: `${entry.fixture.home_team} - ${entry.fixture.away_team}`,
-        ...selection,
-        edge,
-        expectedValue: selection.probability * selection.odds - 1,
-        marketOverround: market?.overround ?? null,
-      });
+    options.forEach((option) => {
+      if (Number.isFinite(option.odds) && option.odds > 1 && option.probability >= minLegProbability) {
+        candidates.push({
+          fixtureIndex,
+          fixtureLabel: `${entry.fixture.home_team} - ${entry.fixture.away_team}`,
+          ...option,
+        });
+      }
     });
   });
   return candidates;
 }
 
-function objectiveScore(strategy, probability, odds) {
-  if (strategy === "expectedValue") return probability * odds - 1;
-  return probability;
-}
-
-function accumulatorMetrics(legs, combinedOdds, combinedProbability) {
-  const marketProbabilities = legs.map((leg) => leg.marketProbability).filter(Number.isFinite);
-  const combinedMarketProbability = marketProbabilities.length === legs.length
-    ? marketProbabilities.reduce((value, probability) => value * probability, 1)
-    : null;
-  return {
-    combinedExpectedValue: combinedProbability * combinedOdds - 1,
-    combinedMarketProbability,
-    combinedMarketEdge: Number.isFinite(combinedMarketProbability)
-      ? combinedProbability - combinedMarketProbability
-      : null,
-    averageLegEdge: legs.every((leg) => Number.isFinite(leg.edge))
-      ? legs.reduce((sum, leg) => sum + leg.edge, 0) / legs.length
-      : null,
-  };
-}
-
-export function bestAccumulator(candidates, targetOdds, tolerance = 0.15, maxLegs = 8, rawOptions = {}) {
-  if (typeof maxLegs === "object" && maxLegs) {
-    rawOptions = maxLegs;
-    maxLegs = Number(rawOptions.maxLegs) || 8;
-  }
-  const strategy = rawOptions?.objective === "expectedValue" ? "expectedValue" : "probability";
+// Cerca, tra le combinazioni con al più una selezione per partita, quella con quota
+// combinata entro tolleranza dal target e probabilità combinata (prodotto delle probabilità
+// del modello, assunte indipendenti tra partite) massima. Pota i rami dove la quota parziale
+// ha già superato il limite superiore: tutte le quote sono > 1, quindi da lì può solo
+// crescere. Con al più ~3 candidati qualificanti per partita e turni tipici di 8-10 gare
+// resta rapido senza bisogno di altre ottimizzazioni.
+export function bestAccumulator(candidates, targetOdds, tolerance = 0.15, maxLegs = 8) {
   const byFixture = new Map();
   candidates.forEach((candidate) => {
     if (!byFixture.has(candidate.fixtureIndex)) byFixture.set(candidate.fixtureIndex, []);
@@ -274,34 +171,16 @@ export function bestAccumulator(candidates, targetOdds, tolerance = 0.15, maxLeg
   let best = null;
   const chosen = [];
 
-  function consider(combinedOdds, combinedProbability) {
-    if (combinedOdds < minTarget || !chosen.length) return;
-    const score = objectiveScore(strategy, combinedProbability, combinedOdds);
-    const distance = Math.abs(Math.log(combinedOdds / targetOdds));
-    if (!best
-      || score > best.objectiveScore + 1e-12
-      || (Math.abs(score - best.objectiveScore) <= 1e-12 && distance < best.targetDistance - 1e-12)
-      || (Math.abs(score - best.objectiveScore) <= 1e-12 && Math.abs(distance - best.targetDistance) <= 1e-12 && chosen.length < best.legs.length)) {
-      best = {
-        legs: chosen.slice(),
-        combinedOdds,
-        combinedProbability,
-        objective: strategy,
-        objectiveScore: score,
-        targetDistance: distance,
-        ...accumulatorMetrics(chosen, combinedOdds, combinedProbability),
-      };
-    }
-  }
-
   function visit(index, combinedOdds, combinedProbability) {
-    if (combinedOdds > maxTarget || chosen.length > maxLegs) return;
+    if (combinedOdds > maxTarget) return;
+    if (chosen.length > maxLegs) return;
     if (index === fixtures.length) {
-      consider(combinedOdds, combinedProbability);
+      if (combinedOdds >= minTarget && chosen.length > 0 && (!best || combinedProbability > best.combinedProbability)) {
+        best = { legs: chosen.slice(), combinedOdds, combinedProbability };
+      }
       return;
     }
-    visit(index + 1, combinedOdds, combinedProbability);
-    if (chosen.length >= maxLegs) return;
+    visit(index + 1, combinedOdds, combinedProbability); // salta questa partita
     for (const candidate of fixtures[index]) {
       chosen.push(candidate);
       visit(index + 1, combinedOdds * candidate.odds, combinedProbability * candidate.probability);
@@ -313,16 +192,104 @@ export function bestAccumulator(candidates, targetOdds, tolerance = 0.15, maxLeg
   return best;
 }
 
+// --- Mercati sui singoli giocatori (marcatore in qualsiasi momento) -----------------------
+// Opt-in: una chiamata per evento (più costosa della quota 1X2 in blocco), e solo su
+// bookmaker USA (regions=us — the-odds-api.com documenta la copertura player-prop per le 5
+// leghe Big Five solo lì, non su eu). Il market key "player_goal_scorer_anytime" è la mia
+// migliore stima informata della convenzione the-odds-api.com — verificata via ricerca sulla
+// loro documentazione, NON testata dal vivo con una chiave reale (nessun accesso di rete a
+// domini di quote da questo ambiente). Se la chiamata fallisce o il piano non include questo
+// mercato, il fallback usa la quota equa stimata dal modello (1/probabilità) invece di far
+// fallire l'intera schedina: le giocate risultanti sono etichettate source:"model", non
+// source:"market", così resta chiaro cos'è una quota reale e cosa una stima.
+export async function fetchEventIds(apiKey, sportKey) {
+  const url = `${ODDS_API_BASE}/sports/${encodeURIComponent(sportKey)}/events/?apiKey=${encodeURIComponent(apiKey)}`;
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`Elenco eventi non raggiungibile (HTTP ${response.status})`);
+  return response.json();
+}
+
+export async function fetchPlayerPropOdds(apiKey, sportKey, eventId, market = "player_goal_scorer_anytime") {
+  const url = `${ODDS_API_BASE}/sports/${encodeURIComponent(sportKey)}/events/${encodeURIComponent(eventId)}/odds/?apiKey=${encodeURIComponent(apiKey)}&regions=us&markets=${encodeURIComponent(market)}&oddsFormat=decimal`;
+  const response = await fetch(url);
+  if (!response.ok) return null; // piano/mercato non disponibile per questo evento: gestito, non fatale
+  return response.json();
+}
+
+// Difensivo per costruzione: la forma esatta della risposta player-prop non è verificata dal
+// vivo, quindi ignora blocchi che non hanno la forma attesa invece di lanciare un'eccezione
+// su un formato leggermente diverso da quello documentato.
+export function parseAnytimeScorerOdds(eventOdds, market = "player_goal_scorer_anytime") {
+  const prices = new Map();
+  for (const bookmaker of eventOdds?.bookmakers || []) {
+    for (const marketBlock of bookmaker.markets || []) {
+      if (marketBlock.key !== market) continue;
+      for (const outcome of marketBlock.outcomes || []) {
+        const name = outcome.description || outcome.name;
+        const price = Number(outcome.price);
+        if (!name || !Number.isFinite(price) || price <= 1) continue;
+        if (!prices.has(name)) prices.set(name, []);
+        prices.get(name).push(price);
+      }
+    }
+  }
+  const averaged = new Map();
+  for (const [name, values] of prices) {
+    averaged.set(name, values.reduce((sum, value) => sum + value, 0) / values.length);
+  }
+  return averaged;
+}
+
+function matchPlayerOdds(playerName, oddsMap) {
+  const normalized = normalizeTeamName(playerName); // stessa normalizzazione delle squadre, funziona anche su nomi persona
+  for (const [oddsName, price] of oddsMap) {
+    if (normalizeTeamName(oddsName) === normalized) return price;
+  }
+  return null;
+}
+
+// Genera candidati "marcatore in qualsiasi momento" con la STESSA fixtureIndex delle giocate
+// 1X2 di quella partita: bestAccumulator sceglie al più un candidato per fixtureIndex, quindi
+// una selezione sul risultato e una sul marcatore della stessa partita restano
+// automaticamente alternative reciprocamente esclusive nella ricerca, non combinabili nella
+// stessa schedina — è così che si evita di trattare come indipendenti due eventi in realtà
+// correlati (un giocatore segna più facilmente se la sua squadra vince nettamente), senza
+// dover modellare esplicitamente quella correlazione.
+export function buildPlayerCandidates(entries, playerContextByTeam, options = {}) {
+  const { minLegProbability = 0.35, maxPlayersPerTeam = 3, oddsByFixture = null } = options;
+  const candidates = [];
+  entries.forEach((entry, fixtureIndex) => {
+    [
+      { team: entry.fixture.home_team, teamLambda: entry.result.lambdaHome, teamGoalsFor: entry.result.home?.gf5 || 0 },
+      { team: entry.fixture.away_team, teamLambda: entry.result.lambdaAway, teamGoalsFor: entry.result.away?.gf5 || 0 },
+    ].forEach(({ team, teamLambda, teamGoalsFor }) => {
+      const players = (playerContextByTeam?.[team]?.players || [])
+        .slice()
+        .sort((left, right) => (right.impact ?? 0) - (left.impact ?? 0))
+        .slice(0, maxPlayersPerTeam);
+      players.forEach((player) => {
+        const markets = estimatePlayerMarkets(player, teamLambda, teamGoalsFor);
+        if (markets.anytimeScorerProbability < minLegProbability) return;
+        const liveOdds = oddsByFixture ? matchPlayerOdds(player.name, oddsByFixture.get(fixtureIndex) || new Map()) : null;
+        const odds = liveOdds ?? 1 / Math.max(0.02, markets.anytimeScorerProbability);
+        candidates.push({
+          fixtureIndex,
+          fixtureLabel: `${entry.fixture.home_team} - ${entry.fixture.away_team}`,
+          key: "goalscorer",
+          label: `${player.name} marcatore`,
+          odds,
+          probability: markets.anytimeScorerProbability,
+          source: liveOdds !== null ? "market" : "model",
+        });
+      });
+    });
+  });
+  return candidates;
+}
+
 export async function generateSlip({
-  apiKey,
-  payload,
-  competitionId,
-  targetOdds,
-  tolerance = 0.15,
-  minLegProbability = 0.35,
-  minEdge = null,
-  strategy = "probability",
-  maxLegs = 4,
+  apiKey, payload, competitionId, targetOdds, tolerance = 0.15, minLegProbability = 0.35,
+  includePlayerMarkets = false, maxPlayersPerTeam = 3,
 }) {
   const catalog = buildCompetitionCatalog(payload);
   const competition = catalog.find((entry) => entry.id === competitionId);
@@ -343,8 +310,42 @@ export async function generateSlip({
 
   const oddsEvents = await fetchLeagueOdds(apiKey, discovery.key);
   const entries = matchOddsToFixtures(predictions, oddsEvents);
-  const candidates = buildCandidates(entries, minLegProbability, { minEdge });
-  const slip = bestAccumulator(candidates, targetOdds, tolerance, maxLegs, { objective: strategy });
+  let candidates = buildCandidates(entries, minLegProbability);
+  let playerOddsCoverage = null;
 
-  return { matchday, entries, candidates, slip, sportTitle: discovery.title };
+  if (includePlayerMarkets) {
+    const oddsByFixture = new Map();
+    let resolvedEvents = 0;
+    try {
+      const events = await fetchEventIds(apiKey, discovery.key);
+      for (let fixtureIndex = 0; fixtureIndex < entries.length; fixtureIndex += 1) {
+        const { fixture } = entries[fixtureIndex];
+        const event = events.find((candidate) => {
+          const sameDay = String(candidate.commence_time || "").slice(0, 10) === String(fixture.date).slice(0, 10);
+          return sameDay && normalizeTeamName(fixture.home_team) === normalizeTeamName(candidate.home_team || "")
+            && normalizeTeamName(fixture.away_team) === normalizeTeamName(candidate.away_team || "");
+        });
+        if (!event) continue;
+        try {
+          const eventOdds = await fetchPlayerPropOdds(apiKey, discovery.key, event.id);
+          if (eventOdds) {
+            oddsByFixture.set(fixtureIndex, parseAnytimeScorerOdds(eventOdds));
+            resolvedEvents += 1;
+          }
+        } catch (error) {
+          console.error(`Quote giocatori ${fixture.home_team}-${fixture.away_team}: ${error.message}`);
+        }
+      }
+    } catch (error) {
+      console.error(`Elenco eventi per mercati giocatori non disponibile: ${error.message}`);
+    }
+    const playerCandidates = buildPlayerCandidates(entries, payload.player_context, {
+      minLegProbability, maxPlayersPerTeam, oddsByFixture,
+    });
+    candidates = [...candidates, ...playerCandidates];
+    playerOddsCoverage = { eventsWithLiveOdds: resolvedEvents, totalFixtures: entries.length };
+  }
+
+  const slip = bestAccumulator(candidates, targetOdds, tolerance);
+  return { matchday, entries, candidates, slip, sportTitle: discovery.title, playerOddsCoverage };
 }

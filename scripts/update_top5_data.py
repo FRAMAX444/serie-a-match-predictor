@@ -8,7 +8,6 @@ import os
 import sys
 from datetime import datetime, timezone
 
-import serie_a_sdp as seriea
 import update_europe_data as base
 import update_uefa_data as uefa
 
@@ -93,19 +92,11 @@ def fetch_domestic_history(
     current: list[dict[str, object]] = []
     history: list[dict[str, object]] = []
     for start in starts:
-        rows: list[dict[str, object]] = []
-        if str(descriptor.get("id")) == "ita.1" and start == target_start:
-            try:
-                rows = seriea.fetch_season(descriptor, start)
-                print(f"Lega Serie A SDP {start}: {len(rows)} fixture ufficiali")
-            except Exception as error:
-                print(f"Lega Serie A SDP {start}: {error}; fallback ESPN", file=sys.stderr)
-        if not rows:
-            try:
-                rows = base.fetch_espn_events(descriptor, start, "domestic")
-            except Exception as error:
-                print(f"ESPN {descriptor['name']} {start}: {error}", file=sys.stderr)
-                rows = []
+        try:
+            rows = base.fetch_espn_events(descriptor, start, "domestic")
+        except Exception as error:
+            print(f"ESPN {descriptor['name']} {start}: {error}", file=sys.stderr)
+            rows = []
         if start == target_start:
             current = rows
         history.extend(item for item in rows if item.get("completed"))
@@ -127,16 +118,14 @@ def main() -> None:
     matches: list[dict[str, object]] = []
     fixture_count = 0
 
-    # Keep the domestic collection path unchanged for history/statistics. For the target
-    # Serie A calendar, prefer the official Lega Serie A SDP feed because it exposes the
-    # whole 380-match season in one response; ESPN remains the automatic fallback.
+    # Keep the domestic collection path unchanged: complete Big Five history and statistics.
     for descriptor in TOP_FIVE_LEAGUES:
         current, espn_history = fetch_domestic_history(descriptor, starts, target_start)
         if not current:
             current = base.existing_competition_fixtures(existing, str(descriptor["id"]), target_code)
             source = "dataset precedente conservato" if current else "calendario non ancora disponibile"
         else:
-            source = str(current[0].get("source") or "ESPN public scoreboard")
+            source = "ESPN public scoreboard"
 
         competitions.append(competition_payload(descriptor, current, source, target_start, "domestic", target_code))
         fixture_count += len(current)
@@ -224,7 +213,7 @@ def main() -> None:
             "european_training_matches": sum(str(item.get("competition_id")) in EUROPE_COMPETITION_IDS for item in matches),
         },
         "sources": {
-            "fixtures_results": "Lega Serie A official SDP API for the complete Serie A target calendar; UEFA public match API for European cups; ESPN public scoreboards for the other domestic leagues and as fallback",
+            "fixtures_results": "UEFA public match API for European cups; ESPN public scoreboards for domestic leagues and fallback",
             "match_statistics": "Football-Data.co.uk (odds, corners, cards, possession, referee retained) with ESPN fallback",
             "xg": "Understat datesData where the page still exposes it; getTeamData JSON endpoint per-team fallback otherwise; shot-based proxy when neither returns data",
             "model_inputs": "Goals/xG, shots, shots on target, form, Elo, venue, rest, and optional pre-match team_context (lineup/availability/promotion) or refereeHomeBias when supplied",

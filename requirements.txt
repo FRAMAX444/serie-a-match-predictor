@@ -1,1 +1,10 @@
 requests>=2.31
+
+# Solo per scripts/validate_player_probabilities.py (studio statistico Monte Carlo sulle
+# probabilità di tiro/assist dei giocatori) e i relativi test in
+# tests/test_player_probability_study.py. Non richieste per la pipeline dati principale
+# (update_top5_data.py, update_europe_data.py, enrich_competitions_players.py) né per
+# l'app web, che restano puro JS lato client.
+numpy>=1.26
+matplotlib>=3.8
+scipy>=1.11

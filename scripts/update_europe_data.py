@@ -43,7 +43,32 @@ DOMESTIC_LEAGUES = (
     {"id": "esp.1", "name": "LaLiga", "country": "Spain", "espn": "esp.1", "fd": "SP1", "understat": "La_liga", "strength": 1555},
     {"id": "ita.1", "name": "Serie A", "country": "Italy", "espn": "ita.1", "fd": "I1", "understat": "Serie_A", "strength": 1550},
     {"id": "ger.1", "name": "Bundesliga", "country": "Germany", "espn": "ger.1", "fd": "D1", "understat": "Bundesliga", "strength": 1540},
-    {"id": "fra.1", "name": "Ligue 1", "country": "France", "espn": "fra.1", "fd": "F1", "understat": "Ligue_1", "strength": 1520}
+    {"id": "fra.1", "name": "Ligue 1", "country": "France", "espn": "fra.1", "fd": "F1", "understat": "Ligue_1", "strength": 1520},
+    {"id": "ned.1", "name": "Eredivisie", "country": "Netherlands", "espn": "ned.1", "fd": "N1", "strength": 1495},
+    {"id": "por.1", "name": "Primeira Liga", "country": "Portugal", "espn": "por.1", "fd": "P1", "strength": 1495},
+    {"id": "bel.1", "name": "Belgian Pro League", "country": "Belgium", "espn": "bel.1", "fd": "B1", "strength": 1465},
+    {"id": "tur.1", "name": "Süper Lig", "country": "Turkey", "espn": "tur.1", "fd": "T1", "strength": 1455},
+    {"id": "sco.1", "name": "Scottish Premiership", "country": "Scotland", "espn": "sco.1", "fd": "SC0", "strength": 1445},
+    {"id": "aut.1", "name": "Austrian Bundesliga", "country": "Austria", "espn": "aut.1", "strength": 1445},
+    {"id": "sui.1", "name": "Swiss Super League", "country": "Switzerland", "espn": "sui.1", "strength": 1435},
+    {"id": "gre.1", "name": "Greek Super League", "country": "Greece", "espn": "gre.1", "fd": "G1", "strength": 1430},
+    {"id": "den.1", "name": "Danish Superliga", "country": "Denmark", "espn": "den.1", "strength": 1425},
+    {"id": "cze.1", "name": "Czech First League", "country": "Czechia", "espn": "cze.1", "strength": 1420},
+    {"id": "nor.1", "name": "Eliteserien", "country": "Norway", "espn": "nor.1", "strength": 1405},
+    {"id": "swe.1", "name": "Allsvenskan", "country": "Sweden", "espn": "swe.1", "strength": 1400},
+    {"id": "pol.1", "name": "Ekstraklasa", "country": "Poland", "espn": "pol.1", "strength": 1400},
+    {"id": "cro.1", "name": "Croatian HNL", "country": "Croatia", "espn": "cro.1", "strength": 1395},
+    {"id": "srb.1", "name": "Serbian SuperLiga", "country": "Serbia", "espn": "srb.1", "strength": 1390},
+    {"id": "ukr.1", "name": "Ukrainian Premier League", "country": "Ukraine", "espn": "ukr.1", "strength": 1390},
+    {"id": "rou.1", "name": "Romanian Liga I", "country": "Romania", "espn": "rou.1", "strength": 1380},
+    {"id": "isr.1", "name": "Israeli Premier League", "country": "Israel", "espn": "isr.1", "strength": 1380},
+    {"id": "hun.1", "name": "Hungarian NB I", "country": "Hungary", "espn": "hun.1", "strength": 1370},
+    {"id": "cyp.1", "name": "Cypriot First Division", "country": "Cyprus", "espn": "cyp.1", "strength": 1365},
+    {"id": "bul.1", "name": "Bulgarian First League", "country": "Bulgaria", "espn": "bul.1", "strength": 1360},
+    {"id": "svn.1", "name": "Slovenian PrvaLiga", "country": "Slovenia", "espn": "svn.1", "strength": 1350},
+    {"id": "svk.1", "name": "Slovak Super Liga", "country": "Slovakia", "espn": "svk.1", "strength": 1345},
+    {"id": "fin.1", "name": "Veikkausliiga", "country": "Finland", "espn": "fin.1", "strength": 1335},
+    {"id": "irl.1", "name": "League of Ireland", "country": "Ireland", "espn": "irl.1", "strength": 1325},
 )
 
 NAME_MAP = {
@@ -150,6 +175,37 @@ def numeric_stat(stats: object, *names: str) -> float | None:
     return None
 
 
+def card_counts_by_team(details: object) -> dict[str, dict[str, float]]:
+    """Cartellini per squadra ricavati dagli eventi di partita, non dalla lista 'statistics'.
+
+    Verificato sui dati live dello scoreboard ESPN: per una partita conclusa, 'statistics'
+    contiene tiri/tiri-in-porta/corner/possesso/assist ma MAI una voce cartellini gialli o
+    rossi — quindi numeric_stat(stats, "yellowCards", "YC") non trova mai corrispondenza e
+    restituisce sempre None. I cartellini esistono invece come eventi nella lista 'details'
+    del payload, ciascuno con i flag booleani 'yellowCard'/'redCard' e la squadra in
+    'team.id'. Usata come fallback quando numeric_stat non trova nulla."""
+    counts: dict[str, dict[str, float]] = {}
+    if not isinstance(details, list):
+        return counts
+    for entry in details:
+        if not isinstance(entry, dict):
+            continue
+        is_yellow = bool(entry.get("yellowCard"))
+        is_red = bool(entry.get("redCard"))
+        if not (is_yellow or is_red):
+            continue
+        team = entry.get("team") if isinstance(entry.get("team"), dict) else {}
+        team_id = str(team.get("id") or "")
+        if not team_id:
+            continue
+        bucket = counts.setdefault(team_id, {"yellow": 0.0, "red": 0.0})
+        if is_yellow:
+            bucket["yellow"] += 1
+        if is_red:
+            bucket["red"] += 1
+    return counts
+
+
 def event_round(event: dict[str, object], competition: dict[str, object]) -> tuple[int | None, str | None]:
     for candidate in (event.get("week"), competition.get("week")):
         if isinstance(candidate, dict):
@@ -217,14 +273,19 @@ def parse_espn_event(event: dict[str, object], descriptor: dict[str, object], se
             item["away_goals"] = int(float(sides["away"].get("score")))
         except (TypeError, ValueError):
             return None
+        card_counts = card_counts_by_team(competition.get("details"))
         for side in ("home", "away"):
             stats = sides[side].get("statistics")
-            item[f"{side}_shots"] = numeric_stat(stats, "shotsTotal", "totalShots", "SH")
+            side_id = home_id if side == "home" else away_id
+            events_side = card_counts.get(side_id or "", {"yellow": 0.0, "red": 0.0})
+            item[f"{side}_shots"] = numeric_stat(stats, "shotsTotal", "totalShots", "SH", "SHOT")
             item[f"{side}_sot"] = numeric_stat(stats, "shotsOnTarget", "SOG")
             item[f"{side}_corners"] = numeric_stat(stats, "wonCorners", "cornerKicks", "CK")
             item[f"{side}_possession"] = numeric_stat(stats, "possessionPct", "possession")
-            item[f"{side}_yellow"] = numeric_stat(stats, "yellowCards", "YC")
-            item[f"{side}_red"] = numeric_stat(stats, "redCards", "RC")
+            fallback_yellow = numeric_stat(stats, "yellowCards", "YC")
+            fallback_red = numeric_stat(stats, "redCards", "RC")
+            item[f"{side}_yellow"] = fallback_yellow if fallback_yellow is not None else events_side["yellow"]
+            item[f"{side}_red"] = fallback_red if fallback_red is not None else events_side["red"]
     return item
 
 
@@ -386,6 +447,21 @@ def fetch_understat_xg(league: dict[str, object], start_year: int) -> list[dict[
     return result
 
 
+def _teams_by_season(matches: list[dict[str, object]], competition_id: str) -> dict[int, set[str]]:
+    grouped: dict[int, set[str]] = defaultdict(set)
+    for item in matches:
+        if item.get("competition_id") != competition_id:
+            continue
+        start = season_start(str(item.get("season", "") or ""))
+        if start is None:
+            continue
+        for side in ("home", "away"):
+            team = item.get(f"{side}_team")
+            if team:
+                grouped[start].add(str(team))
+    return grouped
+
+
 def enrich_xg(matches: list[dict[str, object]], league: dict[str, object], starts: Iterable[int]) -> int:
     index = {(str(item["date"]), str(item["home_team"]), str(item["away_team"])): item for item in matches if item.get("competition_id") == league["id"]}
     enriched = 0
@@ -416,6 +492,7 @@ def enrich_xg(matches: list[dict[str, object]], league: dict[str, object], start
         except ImportError as error:
             print(f"Understat {league['name']}: fallback getTeamData non disponibile ({error})", file=sys.stderr)
             return enriched
+        by_season = _teams_by_season(matches, league["id"])
         for start in fallback_starts:
             team_universe = {
                 str(item[f"{side}_team"])
@@ -424,6 +501,30 @@ def enrich_xg(matches: list[dict[str, object]], league: dict[str, object], start
                 for side in ("home", "away")
                 if item.get(f"{side}_team")
             }
+            # Il turnover normale tra una stagione e l'altra (promozioni/retrocessioni) è
+            # tipicamente di 2-4 squadre in un campionato da 18-20. Se la maggioranza delle
+            # squadre di questo start-year non compare in NESSUN'ALTRA stagione tracciata
+            # della stessa competizione, è un segnale forte di dati contaminati (osservato:
+            # 10 squadre scozzesi di serie minori attribuite a esp.1 per una stagione appena
+            # iniziata con pochissime partite reali — quasi certamente una risposta anomala
+            # dell'API ESPN per una query con dataset scarso, non un problema di slug).
+            # Meglio saltare esplicitamente il fallback per questo start che tentare 404 su
+            # squadre quasi certamente sbagliate.
+            other_teams: set[str] = set()
+            for other_start, teams in by_season.items():
+                if other_start != start:
+                    other_teams |= teams
+            if other_teams:
+                unfamiliar = team_universe - other_teams
+                if len(team_universe) >= 5 and len(unfamiliar) / len(team_universe) > 0.6:
+                    print(
+                        f"Understat {league['name']} {start}: dataset sospetto, "
+                        f"{len(unfamiliar)}/{len(team_universe)} squadre mai viste in altre stagioni "
+                        f"di questa competizione (probabile contaminazione a monte, es. ESPN): "
+                        f"{', '.join(sorted(unfamiliar))}. Fallback saltato per questo start.",
+                        file=sys.stderr,
+                    )
+                    continue
             try:
                 rows = fetch_league_matches_via_team_api(start, team_universe, normalize_team)
             except Exception as error:

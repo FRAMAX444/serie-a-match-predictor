@@ -93,6 +93,58 @@ def event_rosters(payload: object) -> list[dict[str, object]]:
     return []
 
 
+def match_details(payload: object) -> list[dict[str, object]]:
+    """Trova la cronologia eventi (gol/cartellini) del match nel payload 'summary'.
+
+    Verificato sui dati live dello scoreboard ESPN: la lista 'statistics' di una partita
+    conclusa (sia a livello squadra sia, con ogni evidenza, a livello giocatore) contiene
+    tiri/possesso/falli/assist ma MAI una voce cartellini — i cartellini esistono SOLO come
+    eventi in 'details', ciascuno con i flag 'yellowCard'/'redCard' booleani e la lista
+    'athletesInvolved' con l'id del giocatore coinvolto. Usare numeric_value per i cartellini
+    (come per gol/assist/tiri) non trova quindi mai corrispondenza e restituisce sempre 0.
+    Qui cerchiamo la stessa lista 'details' in ogni punto plausibile del payload, dato che
+    l'endpoint 'summary' non ne garantisce la posizione quanto lo 'scoreboard' (verificato)."""
+    if not isinstance(payload, dict):
+        return []
+    direct = payload.get("details")
+    if isinstance(direct, list):
+        return [item for item in direct if isinstance(item, dict)]
+    header = payload.get("header") if isinstance(payload.get("header"), dict) else {}
+    competitions = header.get("competitions")
+    if isinstance(competitions, list) and competitions and isinstance(competitions[0], dict):
+        nested = competitions[0].get("details")
+        if isinstance(nested, list):
+            return [item for item in nested if isinstance(item, dict)]
+    for key in ("keyEvents", "plays"):
+        value = payload.get(key)
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, dict)]
+    return []
+
+
+def card_tally(details: list[dict[str, object]]) -> dict[str, dict[str, float]]:
+    tally: defaultdict[str, dict[str, float]] = defaultdict(lambda: {"yellow": 0.0, "red": 0.0})
+    for entry in details:
+        is_yellow = bool(entry.get("yellowCard"))
+        is_red = bool(entry.get("redCard"))
+        if not (is_yellow or is_red):
+            continue
+        involved = entry.get("athletesInvolved")
+        if not isinstance(involved, list):
+            continue
+        for athlete in involved:
+            if not isinstance(athlete, dict):
+                continue
+            player_id = str(athlete.get("id") or "")
+            if not player_id:
+                continue
+            if is_yellow:
+                tally[player_id]["yellow"] += 1
+            if is_red:
+                tally[player_id]["red"] += 1
+    return dict(tally)
+
+
 def numeric_value(stats: object, *names: str) -> float:
     wanted = {name.lower() for name in names}
     if isinstance(stats, dict):
@@ -135,6 +187,7 @@ def position_code(raw: object) -> str:
 
 def parse_summary(payload: object, event_date: str) -> list[tuple[str, dict[str, object]]]:
     parsed: list[tuple[str, dict[str, object]]] = []
+    cards = card_tally(match_details(payload))
     for group in event_rosters(payload):
         team_data = group.get("team") if isinstance(group.get("team"), dict) else {}
         team = base.normalize_team(str(
@@ -158,17 +211,23 @@ def parse_summary(payload: object, event_date: str) -> list[tuple[str, dict[str,
             subbed_in = bool(entry.get("subbedIn") or entry.get("enteredGame"))
             if not (starter or subbed_in or minutes > 0):
                 continue
+            player_id = str(athlete.get("id") or name)
+            # I cartellini vengono dal tally di eventi (vedi match_details/card_tally), non da
+            # numeric_value: nella lista 'stats' per-giocatore non esiste una voce cartellini
+            # da cercare, quindi numeric_value su "yellowCards"/"redCards" restituirebbe
+            # sempre 0 anche per un giocatore realmente ammonito.
+            player_cards = cards.get(player_id, {"yellow": 0.0, "red": 0.0})
             parsed.append((team, {
-                "id": str(athlete.get("id") or name),
+                "id": player_id,
                 "name": name,
                 "position": position_code(athlete.get("position") or entry.get("position")),
                 "starter": starter,
                 "minutes": minutes,
                 "goals": numeric_value(stats, "goals", "goal", "G"),
                 "assists": numeric_value(stats, "assists", "goalAssists", "A"),
-                "yellow_cards": numeric_value(stats, "yellowCards", "yellowCard", "YC"),
-                "red_cards": numeric_value(stats, "redCards", "redCard", "RC"),
-                "shots": numeric_value(stats, "totalShots", "shotsTotal", "SH"),
+                "yellow_cards": player_cards["yellow"],
+                "red_cards": player_cards["red"],
+                "shots": numeric_value(stats, "totalShots", "shotsTotal", "SH", "SHOT"),
                 "rating": numeric_value(stats, "rating", "playerRating"),
                 "date": event_date,
             }))
@@ -280,18 +339,29 @@ def player_score(player: dict[str, object]) -> float:
 
 def rounded_player(player: dict[str, object]) -> dict[str, object]:
     ratings = player.get("ratings") if isinstance(player.get("ratings"), list) else []
+    minutes = float(player.get("minutes") or 0)
+    per90 = (90 / minutes) if minutes > 0 else 0.0
     return {
         "id": player["id"],
         "name": player["name"],
         "position": player["position"],
         "appearances": int(player.get("appearances") or 0),
         "starts": int(player.get("starts") or 0),
-        "minutes": int(round(float(player.get("minutes") or 0))),
+        "minutes": int(round(minutes)),
         "goals": int(round(float(player.get("goals") or 0))),
         "assists": int(round(float(player.get("assists") or 0))),
         "yellow_cards": int(round(float(player.get("yellow_cards") or 0))),
         "red_cards": int(round(float(player.get("red_cards") or 0))),
         "shots": int(round(float(player.get("shots") or 0))),
+        # Tassi per 90 minuti: 0 se il giocatore non ha ancora minuti campionati, non un
+        # errore. Servono a model.js per stimare la probabilità di un evento in una
+        # specifica partita futura (vedi estimatePlayerMarkets), non solo a mostrare totali
+        # storici grezzi che dipendono dal numero di partite campionate.
+        "goals_per90": round(float(player.get("goals") or 0) * per90, 3),
+        "assists_per90": round(float(player.get("assists") or 0) * per90, 3),
+        "shots_per90": round(float(player.get("shots") or 0) * per90, 3),
+        "yellow_per90": round(float(player.get("yellow_cards") or 0) * per90, 3),
+        "red_per90": round(float(player.get("red_cards") or 0) * per90, 3),
         "rating": round(sum(ratings) / len(ratings), 2) if ratings else None,
         "impact": round(player_score(player), 3),
         "last_seen": player.get("last_seen"),
@@ -352,7 +422,7 @@ def build_player_context(
             "as_of": max(str(player.get("last_seen") or "") for player in players),
             "formation": formation_for(lineup),
             "probable_lineup": lineup,
-            "players": [rounded_player(player) for player in ranked[:24]],
+            "players": [rounded_player(player) for player in ranked],
             "top_players": [rounded_player(player) for player in ranked[:5]],
             "lineup_reliability": round(reliability, 3),
             "lineup_strength": round(lineup_strength, 4),

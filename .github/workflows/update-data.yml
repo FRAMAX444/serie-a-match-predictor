@@ -1,14 +1,6 @@
 name: Update European competition data
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - "scripts/update_top5_data.py"
-      - "scripts/serie_a_sdp.py"
-      - "tests/test_serie_a_sdp.py"
-      - ".github/workflows/update-data.yml"
   schedule:
     - cron: "23 2,8,14,20 * * *"
   workflow_dispatch:
@@ -53,7 +45,7 @@ jobs:
         run: python scripts/enrich_competitions_players.py --target-season "$TARGET_SEASON"
       - name: Validate generated inputs and model
         run: |
-          python -m py_compile scripts/update_europe_data.py scripts/update_uefa_data.py scripts/update_top5_data.py scripts/serie_a_sdp.py scripts/understat_team_api.py scripts/enrich_competitions_players.py
+          python -m py_compile scripts/update_europe_data.py scripts/update_uefa_data.py scripts/update_top5_data.py scripts/understat_team_api.py scripts/enrich_competitions_players.py
           python -m unittest discover -s tests -p "test_*.py" -v
           npm test
           npm run check

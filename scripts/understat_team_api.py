@@ -121,6 +121,7 @@ TEAM_SLUG_OVERRIDES = {
     "Athletic Bilbao": "Athletic_Club", "Ath Bilbao": "Athletic_Club", "Athletic": "Athletic_Club",
     "Atletico Madrid": "Atletico_Madrid", "Ath Madrid": "Atletico_Madrid",
     "Atlético": "Atletico_Madrid", "Atlético Madrid": "Atletico_Madrid",
+    "Atl. Madrid": "Atletico_Madrid",  # variante osservata in produzione (report 21/08/2026), stesso slug già verificato sopra
     "Real Betis": "Real_Betis", "Betis": "Real_Betis",
     "Celta Vigo": "Celta_Vigo", "Celta": "Celta_Vigo",
     "Alaves": "Alaves", "Alavés": "Alaves", "Deportivo Alaves": "Alaves", "Deportivo Alavés": "Alaves",
@@ -132,6 +133,28 @@ TEAM_SLUG_OVERRIDES = {
     "Sociedad": "Real_Sociedad", "Real Sociedad": "Real_Sociedad",
     "Valladolid": "Real_Valladolid", "Real Valladolid": "Real_Valladolid",
     "La Coruna": "Deportivo_La_Coruna", "Deportivo La Coruna": "Deportivo_La_Coruna",
+    # Variabili osservate in produzione (report 21/08/2026), stesso slug già verificato sopra —
+    # "Deportivo" da solo è la sigla breve che usa anche ESPN per questo club (riscontrato in un
+    # box score reale: "Deportivo La CoruñaDeportivoDEP"), "Dep. A Coruna" è un'abbreviazione
+    # equivalente.
+    "Deportivo": "Deportivo_La_Coruna", "Dep. A Coruna": "Deportivo_La_Coruna",
+    # Racing Santander e Deportivo La Coruna sono ENTRAMBE neopromosse in Liga 2026-27 (dalla
+    # Segunda 2025-26: Racing campione, Deportivo secondo) — compaiono quindi nel dataset per la
+    # prima volta con nomi mai normalizzati prima, il che spiega il fallimento di entrambe nello
+    # stesso report. A differenza di TUTTE le altre voci di questa tabella, però, questo slug NON
+    # è stato verificato dal vivo: understat.com blocca il fetch automatico via robots.txt e la
+    # ricerca web non ha restituito una pagina squadra indicizzata da cui confermarlo. È dedotto
+    # per analogia con le altre squadre della tabella che NON richiedono una forma abbreviata
+    # (Real_Sociedad, Celta_Vigo, Athletic_Club, Rayo_Vallecano: nome pieno, spazio->underscore,
+    # nessuna sorpresa), a differenza dei casi con sorpresa vera come "AC_Milan" o
+    # "RasenBallsport_Leipzig" che HANNO richiesto una forma diversa dall'euristica banale.
+    # Verifica manuale in 10 secondi: apri https://understat.com/team/Racing_Santander/2026 — se
+    # dà 404, Understat potrebbe non aver ancora incorporato la squadra neopromossa per questa
+    # stagione (in tal caso il fallimento non è uno slug sbagliato ma dati non ancora disponibili
+    # lato Understat, e fetch_league_matches_via_team_api lo gestisce già senza bloccare le altre
+    # squadre — vedi eccezione catturata per-squadra sotto).
+    "Racing": "Racing_Santander", "Santander": "Racing_Santander", "Racing Santander": "Racing_Santander",
+
 
     # Premier League — nessun fallimento nell'ultimo run, tabella già confermata funzionante
     "Man United": "Manchester_United", "Man City": "Manchester_City",

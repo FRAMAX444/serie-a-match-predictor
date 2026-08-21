@@ -1,14 +1,13 @@
 import { generateSlip, getStoredOddsApiKey, setStoredOddsApiKey, fetchLeagueOdds, matchOddsToFixtures, buildCandidates, bestAccumulator } from "./schedina.js";
-import { buildMatchdays } from "./matchdays.js";
+import { buildCompetitionCatalog, buildMatchdays } from "./matchdays.js";
 import { predictMatchdayFromMatches } from "./model.js";
 
 const $ = (id) => document.getElementById(id);
 const number = (value, digits = 2) => Number(value).toFixed(digits);
-const percent = (value, digits = 0) => `${(Number(value) * 100).toFixed(digits)}%`;
-const signedPercent = (value, digits = 1) => `${Number(value) >= 0 ? "+" : ""}${percent(value, digits)}`;
-const signedPoints = (value) => `${Number(value) >= 0 ? "+" : ""}${(Number(value) * 100).toFixed(1)} pp`;
+const percent = (value) => `${Math.round(value * 100)}%`;
 
 let payload = null;
+let pendingCandidates = null; // usato dal percorso di scelta manuale del campionato
 
 function setStatus(message, tone = "info") {
   const node = $("schedina-status");
@@ -34,94 +33,72 @@ function populateLeagues() {
 }
 
 function legRow(leg) {
-  const bookmaker = leg.bookmaker ? ` · ${leg.bookmaker}` : "";
-  const market = Number.isFinite(leg.marketProbability) ? percent(leg.marketProbability, 1) : "n/d";
-  const edge = Number.isFinite(leg.edge) ? signedPoints(leg.edge) : "n/d";
-  return `<div class="schedina-leg">
-    <span class="schedina-leg__match">${leg.fixtureLabel}</span>
-    <span class="schedina-leg__pick">${leg.label}</span>
-    <span class="schedina-leg__odds">@${number(leg.odds)}${bookmaker}</span>
-    <span class="schedina-leg__prob">Modello ${percent(leg.probability, 1)}</span>
-    <span class="schedina-leg__edge">Mercato ${market} · edge ${edge}</span>
-  </div>`;
+  const sourceBadge = leg.source === "model" ? `<span class="schedina-leg__source" title="Quota equa stimata dal modello: nessuna quota reale disponibile per questa selezione">stima</span>` : "";
+  return `<div class="schedina-leg"><span class="schedina-leg__match">${leg.fixtureLabel}</span><span class="schedina-leg__pick">${leg.label}${sourceBadge}</span><span class="schedina-leg__odds">@${number(leg.odds)}</span><span class="schedina-leg__prob">${percent(leg.probability)}</span></div>`;
 }
 
 function renderSlip(slip, coverageNote) {
   const section = $("schedina-result");
   if (!slip) {
     section.hidden = true;
-    setStatus(`Nessuna combinazione trovata con i filtri scelti. ${coverageNote} Prova una quota diversa, un edge minimo più basso o una soglia di probabilità meno restrittiva.`, "warn");
+    setStatus(`Nessuna combinazione trovata entro la tolleranza per questa quota target. ${coverageNote} Prova una quota diversa o una soglia di probabilità più bassa.`, "warn");
     return;
   }
-  const marketEdge = Number.isFinite(slip.combinedMarketEdge)
-    ? ` · edge combinato ${signedPoints(slip.combinedMarketEdge)}`
-    : "";
-  $("schedina-summary").textContent = `${slip.legs.length} selezioni · quota ${number(slip.combinedOdds)} · probabilità modello ${percent(slip.combinedProbability, 1)} · valore atteso teorico ${signedPercent(slip.combinedExpectedValue, 1)}${marketEdge}. ${coverageNote}`;
+  $("schedina-summary").textContent = `${slip.legs.length} selezioni · quota combinata ${number(slip.combinedOdds)} · probabilità stimata ${percent(slip.combinedProbability)}. ${coverageNote}`;
   $("schedina-legs").innerHTML = slip.legs.map(legRow).join("");
   section.hidden = false;
-  setStatus("Schedina calcolata.", "ok");
+  setStatus("Fatto.", "ok");
 }
 
-function coverageNote(entries) {
+function coverageNote(entries, playerOddsCoverage) {
   const total = entries.length;
   const matched = entries.filter((entry) => entry.matched).length;
-  return matched === total
+  const base = matched === total
     ? `Quote trovate per tutte le ${total} partite del turno.`
-    : `Quote trovate per ${matched} partite su ${total}; le altre sono state escluse.`;
-}
-
-function readOptions() {
-  const minEdgeRaw = $("schedina-min-edge").value;
-  return {
-    apiKey: $("schedina-api-key").value.trim(),
-    competitionId: $("schedina-competition").value,
-    targetOdds: Number($("schedina-target").value),
-    minLegProbability: Number($("schedina-min-probability").value),
-    minEdge: minEdgeRaw === "" ? null : Number(minEdgeRaw),
-    strategy: $("schedina-strategy").value,
-    maxLegs: Number($("schedina-max-legs").value),
-  };
+    : `Quote trovate per ${matched} partite su ${total} (le restanti non hanno un riscontro nelle quote live e sono state escluse).`;
+  if (!playerOddsCoverage) return base;
+  return `${base} Quote reali sui marcatori trovate per ${playerOddsCoverage.eventsWithLiveOdds}/${playerOddsCoverage.totalFixtures} partite (le altre selezioni giocatore usano una quota stimata dal modello, etichettata "stima").`;
 }
 
 async function runGeneration(sportKeyOverride) {
-  const options = readOptions();
-  if (!options.apiKey) { setStatus("Serve una chiave API di the-odds-api.com.", "warn"); return; }
-  if (!options.competitionId) { setStatus("Seleziona una lega.", "warn"); return; }
-  if (!Number.isFinite(options.targetOdds) || options.targetOdds <= 1) { setStatus("Inserisci una quota target valida (> 1).", "warn"); return; }
-  if (!Number.isInteger(options.maxLegs) || options.maxLegs < 1) { setStatus("Il numero massimo di selezioni non è valido.", "warn"); return; }
+  const apiKey = $("schedina-api-key").value.trim();
+  const competitionId = $("schedina-competition").value;
+  const targetOdds = Number($("schedina-target").value);
+  const minLegProbability = Number($("schedina-min-probability").value);
+  const includePlayerMarkets = $("schedina-player-markets").checked;
 
-  setStoredOddsApiKey(options.apiKey);
+  if (!apiKey) { setStatus("Serve una chiave API di the-odds-api.com.", "warn"); return; }
+  if (!competitionId) { setStatus("Seleziona una lega.", "warn"); return; }
+  if (!Number.isFinite(targetOdds) || targetOdds <= 1) { setStatus("Inserisci una quota target valida (> 1).", "warn"); return; }
+
+  setStoredOddsApiKey(apiKey);
   $("schedina-result").hidden = true;
   $("schedina-manual").hidden = true;
-  setStatus("Richiedo le quote in tempo reale e confronto modello/mercato…", "info");
+  setStatus(includePlayerMarkets ? "Richiedo le quote in tempo reale (incluse quelle sui giocatori, può richiedere qualche secondo in più)…" : "Richiedo le quote in tempo reale…", "info");
 
   try {
     if (sportKeyOverride) {
-      const calendar = buildMatchdays(payload, options.competitionId);
+      // Percorso di conferma manuale: la scoperta automatica del campionato non ha
+      // trovato un solo candidato, l'utente ha scelto a mano tra quelli disponibili.
+      // Solo 1X2 qui per semplicità: è un percorso raro, non vale la complessità dei
+      // mercati giocatore anche in questo ramo.
+      const calendar = buildMatchdays(payload, competitionId);
       const matchday = calendar.firstUpcoming || calendar.matchdays?.[0];
       if (!matchday) throw new Error("Nessun turno futuro trovato per questa lega.");
-      const { predictions } = predictMatchdayFromMatches(payload.matches, matchday.fixtures, { competitionId: options.competitionId });
-      const oddsEvents = await fetchLeagueOdds(options.apiKey, sportKeyOverride);
+      const { predictions } = predictMatchdayFromMatches(payload.matches, matchday.fixtures, { competitionId });
+      const oddsEvents = await fetchLeagueOdds(apiKey, sportKeyOverride);
       const entries = matchOddsToFixtures(predictions, oddsEvents);
-      const candidates = buildCandidates(entries, options.minLegProbability, { minEdge: options.minEdge });
-      const slip = bestAccumulator(candidates, options.targetOdds, 0.15, options.maxLegs, { objective: options.strategy });
+      const candidates = buildCandidates(entries, minLegProbability);
+      const slip = bestAccumulator(candidates, targetOdds, 0.15);
       renderSlip(slip, coverageNote(entries));
       return;
     }
 
-    const { entries, slip } = await generateSlip({
-      apiKey: options.apiKey,
-      payload,
-      competitionId: options.competitionId,
-      targetOdds: options.targetOdds,
-      minLegProbability: options.minLegProbability,
-      minEdge: options.minEdge,
-      strategy: options.strategy,
-      maxLegs: options.maxLegs,
-    });
-    renderSlip(slip, coverageNote(entries));
+    const { entries, slip, playerOddsCoverage } = await generateSlip({ apiKey, payload, competitionId, targetOdds, minLegProbability, includePlayerMarkets });
+    renderSlip(slip, coverageNote(entries, playerOddsCoverage));
   } catch (error) {
     if (error.candidates) {
+      pendingCandidates = { sportOptions: error.candidates, competitionId };
       const select = $("schedina-manual-select");
       select.replaceChildren(...error.candidates.map((sport) => new Option(`${sport.title || sport.key} (${sport.description || sport.key})`, sport.key)));
       $("schedina-manual").hidden = false;

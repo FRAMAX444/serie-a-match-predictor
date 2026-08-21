@@ -1,4 +1,4 @@
-import { predictMatchdayFromMatches } from "./model.js";
+import { predictMatchdayFromMatches, estimatePlayerMarkets } from "./model.js";
 import { buildCompetitionCatalog, buildMatchdays, matchdayLabel } from "./matchdays.js";
 import { DEFAULT_GLOBAL_SETTINGS, applyGlobalSettings, initializeGlobalSettings } from "./global-settings.js";
 import {
@@ -292,47 +292,56 @@ function fixtureDetailsMarkup(fixture, result) {
 // Le quote di mercato non compaiono qui: nessuna fonte usata da questa pipeline fornisce le
 // quote di una partita futura non ancora giocata (Football-Data.co.uk è post-partita). Il
 // confronto con il mercato resta disponibile solo in backtest (npm run backtest:market).
-function playerStatsRow(player) {
+function playerStatsRow(player, markets) {
   const cards = player.red_cards > 0
     ? `${player.yellow_cards}🟨 ${player.red_cards}🟥`
     : player.yellow_cards > 0 ? `${player.yellow_cards}🟨` : "—";
   return `<div class="player-row">
     <span class="player-row__name">${escapeHtml(player.name)}<small>${escapeHtml(player.position || "")}</small></span>
-    <span class="player-row__stat" title="Gol nelle partite campionate">${player.goals}g</span>
-    <span class="player-row__stat" title="Assist nelle partite campionate">${player.assists}a</span>
-    <span class="player-row__stat" title="Tiri totali nelle partite campionate">${player.shots}t</span>
-    <span class="player-row__stat player-row__cards" title="Cartellini nelle partite campionate">${cards}</span>
+    <span class="player-row__stat" title="Probabilità stimata di almeno un tiro in questa partita (2+ tiri: ${percent(markets.multiShotProbability)})">🎯 ${percent(markets.shotProbability)}</span>
+    <span class="player-row__stat" title="Probabilità stimata di segnare in questa partita">⚽ ${percent(markets.anytimeScorerProbability)}</span>
+    <span class="player-row__stat" title="Probabilità stimata di assist in questa partita">🅰 ${percent(markets.assistProbability)}</span>
+    <span class="player-row__stat" title="Probabilità stimata di ammonizione/espulsione in questa partita">🟨 ${percent(markets.cardProbability)}</span>
+    <span class="player-row__stat player-row__cards" title="Storico nelle partite campionate: gol, assist, tiri, cartellini">${player.goals}g ${player.assists}a ${player.shots}t ${cards}</span>
   </div>`;
 }
 
-// player_context (da enrich_competitions_players.py) contiene, per squadra, i 5 giocatori
-// più impattanti tra le partite campionate di recente (non l'intera stagione): un indice
-// composito di minuti/gol/assist/rating, non un ranking dedicato a cartellini o tiri — quei
-// due sono mostrati come colonne aggiuntive sugli STESSI giocatori chiave, non come una
-// classifica separata "più ammoniti" o "più tiri". Assente finché enrich_competitions_players.py
-// non è stato eseguito, o se una squadra non ha formazioni recenti campionate.
-function playersSectionMarkup(fixture) {
-  const homePlayers = payload?.player_context?.[fixture.home_team]?.top_players || [];
-  const awayPlayers = payload?.player_context?.[fixture.away_team]?.top_players || [];
+// player_context (da enrich_competitions_players.py) contiene, per squadra, TUTTI i
+// giocatori campionati di recente (non solo i più impattanti), con tassi per-90 minuti.
+// Le percentuali mostrate qui sono stime SPECIFICHE per questa partita (estimatePlayerMarkets
+// in model.js, ancorata al lambda di squadra già calcolato dal modello principale — non la
+// semplice media storica del giocatore), non lo storico grezzo: quello resta visibile a
+// fianco, in piccolo. Assente finché enrich_competitions_players.py non è stato eseguito, o
+// se una squadra non ha formazioni recenti campionate.
+function playersSectionMarkup(fixture, result) {
+  const homeContext = payload?.player_context?.[fixture.home_team];
+  const awayContext = payload?.player_context?.[fixture.away_team];
+  const homePlayers = homeContext?.players || [];
+  const awayPlayers = awayContext?.players || [];
   if (!homePlayers.length && !awayPlayers.length) {
     return `
       <div class="detail-column detail-column--wide">
-        <div class="detail-heading"><h3>Giocatori chiave</h3><span>gol, assist, tiri, cartellini</span></div>
+        <div class="detail-heading"><h3>Giocatori</h3><span>probabilità gol, assist, cartellino</span></div>
         <p class="fixture-modal__empty">Non disponibile per questa previsione</p>
       </div>
     `;
   }
+  const homeGoalsFor = result.home?.gf5 || 0;
+  const awayGoalsFor = result.away?.gf5 || 0;
+  const renderTeam = (players, teamLambda, teamGoalsFor) => players
+    .map((player) => playerStatsRow(player, estimatePlayerMarkets(player, teamLambda, teamGoalsFor)))
+    .join("");
   return `
     <div class="detail-column detail-column--wide">
-      <div class="detail-heading"><h3>Giocatori chiave</h3><span>ultime formazioni campionate · gol, assist, tiri, cartellini</span></div>
+      <div class="detail-heading"><h3>Giocatori</h3><span>probabilità stimate per questa partita · storico a fianco</span></div>
       <div class="players-columns">
         <div class="players-team">
           <h4>${escapeHtml(fixture.home_team)}</h4>
-          ${homePlayers.length ? homePlayers.map(playerStatsRow).join("") : `<p class="fixture-modal__empty">Nessun dato</p>`}
+          ${homePlayers.length ? renderTeam(homePlayers, result.lambdaHome, homeGoalsFor) : `<p class="fixture-modal__empty">Nessun dato</p>`}
         </div>
         <div class="players-team">
           <h4>${escapeHtml(fixture.away_team)}</h4>
-          ${awayPlayers.length ? awayPlayers.map(playerStatsRow).join("") : `<p class="fixture-modal__empty">Nessun dato</p>`}
+          ${awayPlayers.length ? renderTeam(awayPlayers, result.lambdaAway, awayGoalsFor) : `<p class="fixture-modal__empty">Nessun dato</p>`}
         </div>
       </div>
     </div>
@@ -369,7 +378,7 @@ function fixtureExtraDetailsMarkup(fixture, result) {
         <div class="detail-heading"><h3>Corner, cartellini, possesso</h3><span>non un input del modello</span></div>
         ${recentRows ? `<div class="comparison-table">${recentRows}</div>` : `<p class="fixture-modal__empty">Dati non ancora disponibili</p>`}
       </div>
-      ${playersSectionMarkup(fixture)}
+      ${playersSectionMarkup(fixture, result)}
     </div>
   `;
 }
