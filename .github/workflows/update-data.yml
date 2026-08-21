@@ -9,15 +9,17 @@ on:
         description: "Override stagione (es. 2728). Vuoto = calcolata automaticamente dalla data odierna."
         required: false
         default: ""
+  push:
+    branches:
+      - main
+    paths:
+      - "scripts/update_*.py"
+      - "scripts/enrich_competitions_players.py"
+      - "requirements.txt"
+      - ".github/workflows/update-data.yml"
 
 env:
-  # Vuoto di default: scripts/update_europe_data.py::resolve_target_season() la calcola
-  # da date.today() (likely_start_year). PRIMA era hardcoded a "2627": andava bene finché
-  # non arrivava la stagione successiva, poi qualcuno doveva ricordarsi di aggiornarlo a mano
-  # nel file YAML — altrimenti il dataset avrebbe continuato silenziosamente a scaricare la
-  # stagione sbagliata. Per un override puntuale, lancia il workflow manualmente e valorizza
-  # l'input "target_season".
-  TARGET_SEASON: ${{ github.event.inputs.target_season || '' }}
+  TARGET_SEASON: ${{ inputs.target_season || '' }}
 
 permissions:
   contents: write
@@ -29,8 +31,11 @@ concurrency:
 jobs:
   update:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -39,14 +44,19 @@ jobs:
           node-version: "22"
       - name: Install Python dependencies
         run: pip install -r requirements.txt
+      - name: Preserve previous player context
+        run: cp data/matches.json "$RUNNER_TEMP/matches.previous.json"
       - name: Build Big Five and UEFA dataset
         run: python scripts/update_top5_data.py --target-season "$TARGET_SEASON" --history-seasons 4
-      - name: Enrich team context (lineup, availability, promozioni)
-        run: python scripts/enrich_competitions_players.py --target-season "$TARGET_SEASON"
+      - name: Enrich team and player context
+        run: >-
+          python scripts/enrich_competitions_players.py
+          --target-season "$TARGET_SEASON"
+          --previous-data "$RUNNER_TEMP/matches.previous.json"
       - name: Validate generated inputs and model
         run: |
           python -m py_compile scripts/update_europe_data.py scripts/update_uefa_data.py scripts/update_top5_data.py scripts/understat_team_api.py scripts/enrich_competitions_players.py
-          python -m unittest discover -s tests -p "test_*.py" -v
+          npm run test:py
           npm test
           npm run check
       - name: Commit changed dataset
@@ -57,6 +67,6 @@ jobs:
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/matches.json
+          git add -- data/matches.json
           git commit -m "Update European predictor data"
-          git push
+          git push origin HEAD:main
