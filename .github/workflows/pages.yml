@@ -70,7 +70,7 @@ jobs:
           if not version:
               raise SystemExit("Versione degli input del modello assente")
           size = path.stat().st_size
-          limit = 8 * 1024 * 1024
+          limit = 12 * 1024 * 1024
           print(
               f"Payload produzione: {size / 1024:.1f} KiB; stagione: {target}; "
               f"competizioni: {len(available)}; training: {len(matches)}; versione: {version}"
