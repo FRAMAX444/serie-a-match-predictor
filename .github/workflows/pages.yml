@@ -4,9 +4,9 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
-
-env:
-  TARGET_SEASON: "2627"
+  workflow_run:
+    workflows: ["Update European competition data"]
+    types: [completed]
 
 permissions:
   contents: read
@@ -19,45 +19,62 @@ concurrency:
 
 jobs:
   test-and-deploy:
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Build compact production dataset
-        run: python scripts/update_top5_data.py --target-season "$TARGET_SEASON" --history-seasons 4 --skip-understat
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: Validate application and production payload
+      - name: Validate application and committed production payload
         run: |
-          python -m py_compile scripts/update_europe_data.py scripts/update_uefa_data.py scripts/update_top5_data.py
+          python -m py_compile scripts/update_europe_data.py scripts/update_uefa_data.py scripts/update_top5_data.py scripts/understat_team_api.py scripts/enrich_competitions_players.py
           npm test
           npm run check
           python - <<'PY'
           import json
+          import re
           from pathlib import Path
 
           path = Path("data/matches.json")
           payload = json.loads(path.read_text(encoding="utf-8"))
           expected = {"ucl", "uel", "uecl", "eng.1", "esp.1", "ita.1", "ger.1", "fra.1"}
-          available = {
-              str(item.get("id"))
+          competitions = {
+              str(item.get("id")): item
               for item in payload.get("competitions", [])
-              if isinstance(item, dict) and item.get("fixtures")
+              if isinstance(item, dict) and item.get("id")
+          }
+          available = {
+              competition_id
+              for competition_id, item in competitions.items()
+              if isinstance(item.get("fixtures"), list) and item.get("fixtures")
           }
           missing = sorted(expected - available)
           if missing:
               raise SystemExit(f"Competizioni mancanti nel deploy: {', '.join(missing)}")
-          if payload.get("model_inputs_version") != "4.1-top5-uefa-core":
-              raise SystemExit("Versione dataset di produzione non valida")
+          target = str(payload.get("target_season") or "")
+          if not re.fullmatch(r"\d{4}", target):
+              raise SystemExit(f"Stagione target non valida: {target!r}")
+          matches = payload.get("matches")
+          if not isinstance(matches, list) or len(matches) < 400:
+              raise SystemExit("Storico del dataset insufficiente")
+          version = str(payload.get("model_inputs_version") or "")
+          if not version:
+              raise SystemExit("Versione degli input del modello assente")
           size = path.stat().st_size
-          limit = 6 * 1024 * 1024
-          print(f"Payload produzione: {size / 1024:.1f} KiB; competizioni: {len(available)}")
+          limit = 12 * 1024 * 1024
+          print(
+              f"Payload produzione: {size / 1024:.1f} KiB; stagione: {target}; "
+              f"competizioni: {len(available)}; training: {len(matches)}; versione: {version}"
+          )
           if size > limit:
               raise SystemExit(f"Payload troppo pesante: {size} byte, limite {limit}")
           PY

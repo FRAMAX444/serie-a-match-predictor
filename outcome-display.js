@@ -16,7 +16,10 @@ export function chooseDisplayedOutcome(probabilities, homeTeam, awayTeam) {
   const favoriteEdge = favorite.probability - underdog.probability;
   const drawLead = draw.probability - favorite.probability;
 
-  const clearFavorite = favorite.probability >= 0.34 && favoriteEdge >= 0.12;
+  // La regola documentata considera già "chiara" una favorita avanti di 10 punti
+  // percentuali sull'altra squadra. Una piccola tolleranza evita che 0.36 - 0.26 venga
+  // escluso per l'approssimazione binaria dei floating point JavaScript.
+  const clearFavorite = favorite.probability >= 0.34 && favoriteEdge >= 0.10 - 1e-9;
   const drawOnlySlightlyAhead = drawLead <= 0.06;
   return clearFavorite && drawOnlySlightlyAhead ? favorite : draw;
 }
