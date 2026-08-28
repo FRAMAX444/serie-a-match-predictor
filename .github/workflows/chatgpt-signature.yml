@@ -1,0 +1,49 @@
+name: Build dataset signature
+
+on:
+  push:
+    branches:
+      - chatgpt-import-20260828-2236
+    paths:
+      - 'tmp_chatgpt_upload/SIGNATURE_REQUEST'
+
+permissions:
+  contents: write
+
+jobs:
+  signature:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Build rsync-style signature from main dataset
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          git show origin/main:data/matches.json > /tmp/old_matches.json
+          python3 - <<'PY'
+          import base64, hashlib, struct
+          from pathlib import Path
+
+          BLOCK = 8192
+          MOD = 65536
+          data = Path('/tmp/old_matches.json').read_bytes()
+          out = bytearray(b'RSG1' + struct.pack('<I', BLOCK))
+          count = len(data) // BLOCK
+          out += struct.pack('<I', count)
+          for idx in range(count):
+              block = data[idx*BLOCK:(idx+1)*BLOCK]
+              a = sum(block) % MOD
+              b = sum((BLOCK-i)*v for i,v in enumerate(block)) % MOD
+              weak = a | (b << 16)
+              strong = hashlib.sha256(block).digest()[:16]
+              out += struct.pack('<II', idx, weak) + strong
+          Path('tmp_chatgpt_upload/matches.sig.b64').write_text(base64.b64encode(out).decode('ascii'))
+          PY
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tmp_chatgpt_upload/matches.sig.b64
+          git commit -m "Build dataset transfer signature"
+          git push origin HEAD:chatgpt-import-20260828-2236
