@@ -1,0 +1,53 @@
+name: Apply exact ZIP replacement
+
+on:
+  push:
+    branches:
+      - chatgpt-exact-replace-20260828
+    paths:
+      - 'tmp_exact_upload/READY'
+
+permissions:
+  contents: write
+
+jobs:
+  replace-main:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout staging branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Rebuild package and replace main
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat tmp_exact_upload/part_*.txt | base64 -d > /tmp/replacement-exact.tar.xz
+          rm -rf /tmp/replacement && mkdir -p /tmp/replacement
+          tar -xJf /tmp/replacement-exact.tar.xz -C /tmp/replacement
+          test -f /tmp/replacement/__chatgpt_target_manifest.txt
+
+          git fetch origin main
+          git checkout -B chatgpt-exact-final origin/main
+
+          cp -a /tmp/replacement/. .
+          manifest=__chatgpt_target_manifest.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          import subprocess
+          target=set(Path("__chatgpt_target_manifest.txt").read_text().splitlines())
+          tracked=subprocess.check_output(["git","ls-files"],text=True).splitlines()
+          for p in tracked:
+              if p not in target:
+                  q=Path(p)
+                  if q.exists() or q.is_symlink():
+                      q.unlink()
+          PY
+          rm -f "$manifest"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f -A
+          git commit -m "Replace repository with uploaded ZIP contents"
+          git push origin HEAD:main
