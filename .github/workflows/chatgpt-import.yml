@@ -1,0 +1,40 @@
+name: Apply ChatGPT project import
+
+on:
+  push:
+    branches:
+      - chatgpt-import-20260828-2236
+    paths:
+      - 'tmp_chatgpt_upload/READY'
+
+permissions:
+  contents: write
+
+jobs:
+  apply-import:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout staging branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Reconstruct import and update main
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat tmp_chatgpt_upload/chunk_*.txt | base64 -d > /tmp/serie-a-delta.tar.xz
+          git fetch origin main
+          git checkout -B chatgpt-import-final origin/main
+          tar -xJf /tmp/serie-a-delta.tar.xz -C .
+          rm -f outcome-display.js tests/outcome-display.test.js
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes to import."
+          else
+            git commit -m "Import uploaded Serie A match predictor project"
+            git push origin HEAD:main
+          fi
+          git push origin --delete chatgpt-import-20260828-2236 || true
