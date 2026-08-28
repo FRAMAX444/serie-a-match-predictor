@@ -1,4 +1,4 @@
-name: Apply exact ZIP replacement
+name: Apply uploaded ZIP replacement
 
 on:
   push:
@@ -14,40 +14,37 @@ jobs:
   replace-main:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout staging branch
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Rebuild package and replace main
+      - name: Rebuild payload and replace main
         shell: bash
         run: |
           set -euo pipefail
-          cat tmp_exact_upload/part_*.txt | base64 -d > /tmp/replacement-exact.tar.xz
-          rm -rf /tmp/replacement && mkdir -p /tmp/replacement
-          tar -xJf /tmp/replacement-exact.tar.xz -C /tmp/replacement
-          test -f /tmp/replacement/__chatgpt_target_manifest.txt
+          cat tmp_exact_upload/part_*.txt | base64 -d > /tmp/final-rsync-payload.tar.xz
+          echo "dcc97761dc39a1a8ef96b096abdff047aafac3cf0fb0747f5ab4862ad6ee5f9a  /tmp/final-rsync-payload.tar.xz" | sha256sum -c -
+
+          rm -rf /tmp/payload && mkdir -p /tmp/payload
+          tar -xJf /tmp/final-rsync-payload.tar.xz -C /tmp/payload
+
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq rdiff
 
           git fetch origin main
-          git checkout -B chatgpt-exact-final origin/main
+          git checkout -B chatgpt-final-replacement origin/main
 
-          cp -a /tmp/replacement/. .
-          manifest=__chatgpt_target_manifest.txt
-          python3 - <<'PY'
-          from pathlib import Path
-          import subprocess
-          target=set(Path("__chatgpt_target_manifest.txt").read_text().splitlines())
-          tracked=subprocess.check_output(["git","ls-files"],text=True).splitlines()
-          for p in tracked:
-              if p not in target:
-                  q=Path(p)
-                  if q.exists() or q.is_symlink():
-                      q.unlink()
-          PY
-          rm -f "$manifest"
+          xz -dc /tmp/payload/__chatgpt_transfer__/matches.rsd.xz > /tmp/matches.rsd
+          rdiff patch data/matches.json /tmp/matches.rsd /tmp/matches.new.json
+          test "$(git hash-object /tmp/matches.new.json)" = "e4f6433b885a166b7866b281bed3c3aa1902602f"
+
+          rm -rf /tmp/payload/__chatgpt_transfer__
+          cp -a /tmp/payload/. .
+          mv /tmp/matches.new.json data/matches.json
+          rm -f outcome-display.js tests/outcome-display.test.js
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -f -A
+          git add -A
           git commit -m "Replace repository with uploaded ZIP contents"
           git push origin HEAD:main
