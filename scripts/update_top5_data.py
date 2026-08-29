@@ -103,9 +103,32 @@ def fetch_domestic_history(
     return current, history
 
 
+def existing_training_matches(
+    existing: dict[str, object],
+    starts: list[int],
+) -> list[dict[str, object]]:
+    """Keep the last valid training history as a safety net for transient source outages."""
+    rows = existing.get("matches")
+    if not isinstance(rows, list):
+        return []
+    allowed_seasons = {base.season_code(start) for start in starts}
+    allowed_competitions = TOP_FIVE_LEAGUE_IDS | EUROPE_COMPETITION_IDS
+    preserved = [
+        dict(item)
+        for item in rows
+        if isinstance(item, dict)
+        and str(item.get("competition_id") or "") in allowed_competitions
+        and str(item.get("season") or "") in allowed_seasons
+        and item.get("completed")
+        and item.get("home_goals") is not None
+        and item.get("away_goals") is not None
+    ]
+    return base.merge_matches(preserved)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--target-season", default=os.environ.get("TARGET_SEASON", "2627"))
+    parser.add_argument("--target-season", default=os.environ.get("TARGET_SEASON") or None)
     parser.add_argument("--history-seasons", type=int, default=4)
     parser.add_argument("--skip-understat", action="store_true")
     args = parser.parse_args()
@@ -113,10 +136,13 @@ def main() -> None:
     target_code, target_start = base.resolve_target_season(args.target_season)
     starts = list(reversed(range(target_start - max(2, args.history_seasons - 1), target_start + 1)))
     existing = base.load_existing_payload()
+    preserved_history = existing_training_matches(existing, starts)
 
     competitions: list[dict[str, object]] = []
-    matches: list[dict[str, object]] = []
+    matches: list[dict[str, object]] = list(preserved_history)
     fixture_count = 0
+    if preserved_history:
+        print(f"Fallback storico disponibile: {len(preserved_history)} gare valide conservate")
 
     # Keep the domestic collection path unchanged: complete Big Five history and statistics.
     for descriptor in TOP_FIVE_LEAGUES:
@@ -211,6 +237,7 @@ def main() -> None:
             "target_fixtures": fixture_count,
             "completed_training_matches": len(matches),
             "european_training_matches": sum(str(item.get("competition_id")) in EUROPE_COMPETITION_IDS for item in matches),
+            "preserved_training_matches": len(preserved_history),
         },
         "sources": {
             "fixtures_results": "UEFA public match API for European cups; ESPN public scoreboards for domestic leagues and fallback",

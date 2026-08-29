@@ -4,6 +4,10 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  workflow_run:
+    workflows: ["Update European competition data"]
+    types: [completed]
+
 
 permissions:
   contents: read
@@ -16,46 +20,57 @@ concurrency:
 
 jobs:
   test-and-deploy:
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      # Il deploy pubblica il dataset che sta nel repository, quello che update-data.yml
-      # costruisce (update_top5_data.py), arricchisce (enrich_competitions_players.py), valida e
-      # committa quattro volte al giorno — cioe' la stessa sequenza che si lancia in locale.
-      #
-      # PRIMA questo job ricostruiva data/matches.json da solo, con `--skip-understat` e senza
-      # l'arricchimento: il sito pubblicato serviva quindi un dataset diverso da quello validato,
-      # senza xG reali e senza player_context. Non e' una scelta di leggerezza, e' il difetto 18
-      # di MISTAKES.md. I controlli qui sotto sono la rete che impedisce di ricaderci.
-      - name: Validate application and production payload
+      - name: Validate application and committed production payload
+
         run: |
-          python -m py_compile scripts/update_europe_data.py scripts/update_uefa_data.py scripts/update_top5_data.py
+          python -m py_compile scripts/update_europe_data.py scripts/update_uefa_data.py scripts/update_top5_data.py scripts/understat_team_api.py scripts/enrich_competitions_players.py
           npm test
           npm run check
           python - <<'PY'
           import json
+          import re
           from pathlib import Path
 
           path = Path("data/matches.json")
           payload = json.loads(path.read_text(encoding="utf-8"))
           expected = {"ucl", "uel", "uecl", "eng.1", "esp.1", "ita.1", "ger.1", "fra.1"}
-          available = {
-              str(item.get("id"))
+          competitions = {
+              str(item.get("id")): item
               for item in payload.get("competitions", [])
-              if isinstance(item, dict) and item.get("fixtures")
+              if isinstance(item, dict) and item.get("id")
+          }
+          available = {
+              competition_id
+              for competition_id, item in competitions.items()
+              if isinstance(item.get("fixtures"), list) and item.get("fixtures")
           }
           missing = sorted(expected - available)
           if missing:
               raise SystemExit(f"Competizioni mancanti nel deploy: {', '.join(missing)}")
+          target = str(payload.get("target_season") or "")
+          if not re.fullmatch(r"\d{4}", target):
+              raise SystemExit(f"Stagione target non valida: {target!r}")
+          matches = payload.get("matches")
+          if not isinstance(matches, list) or len(matches) < 400:
+              raise SystemExit("Storico del dataset insufficiente")
+          version = str(payload.get("model_inputs_version") or "")
+          if not version:
+              raise SystemExit("Versione degli input del modello assente")
           # La versione la scrive chi COSTRUISCE il dataset. Che l'arricchimento sia stato
           # eseguito lo dice player_context qui sotto, non questa stringa.
           if payload.get("model_inputs_version") != "4.1-top5-uefa-core":
@@ -65,9 +80,6 @@ jobs:
                   "update_top5_data.py."
               )
           coverage = payload.get("coverage") or {}
-          # I due campi che il vecchio deploy azzerava in silenzio. Entrambi producono numeri
-          # plausibili quando mancano — il modello ripiega sul proxy dei tiri e i mercati sui
-          # giocatori spariscono dall'interfaccia — quindi vanno verificati, non guardati.
           if not payload.get("player_context"):
               raise SystemExit(
                   "player_context assente: il sito perderebbe mercati sui giocatori e "
@@ -81,9 +93,12 @@ jobs:
           size = path.stat().st_size
           limit = 12 * 1024 * 1024
           print(
-              f"Payload produzione: {size / 1024:.1f} KiB; competizioni: {len(available)}; "
+              f"Payload produzione: {size / 1024:.1f} KiB; stagione: {target}; "
+              f"competizioni: {len(available)}; training: {len(matches)}; "
               f"xG reali: {coverage.get('xg_actual_matches')}/{coverage.get('training_matches')}; "
-              f"squadre con rosa: {coverage.get('player_context_teams')}"
+              f"squadre con rosa: {coverage.get('player_context_teams')}; versione: {version}"
+          )
+
           )
           if size > limit:
               raise SystemExit(f"Payload troppo pesante: {size} byte, limite {limit}")
