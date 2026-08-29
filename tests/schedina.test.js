@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { buildCandidates, bestAccumulator, matchOddsToFixtures } from "../schedina.js";
 
 // 1) buildCandidates: filtra per quota nota E probabilità minima, esclude fixture senza match.
@@ -77,3 +78,26 @@ assert.equal(matched[0].odds.draw, 5.0);
 assert.equal(matched[1].matched, false, "fixture senza riscontro nelle quote live deve restare non abbinata, non causare un abbinamento errato");
 
 console.log("OK: algoritmo schedina (candidati, ricerca combinazione ottimale, abbinamento nomi/quote)");
+
+// --- Le due strade devono abbinare le partite allo stesso modo -------------------------------
+// Difetto del 28/08/2026: matchOddsToFixtures e collectEventOdds (allora collectPlayerOdds)
+// abbinavano le stesse partite
+// con due criteri diversi. Sulle STESSE fixture le quote 1X2 risultavano abbinate 10 su 10 e
+// quelle sui marcatori 7 su 10, e la differenza sembrava una lacuna del bookmaker invece che
+// un'incoerenza interna. Dal 28/08/2026 l'abbinamento è uno solo, assignEventsToFixtures().
+//
+// Il test controlla il sorgente: il comportamento richiederebbe la rete, e ciò che è andato
+// storto è proprio che due funzioni facessero la stessa cosa in due modi.
+const schedinaSource = readFileSync(new URL("../schedina.js", import.meta.url), "utf8");
+const collect = schedinaSource.slice(schedinaSource.indexOf("async function collectEventOdds"));
+const collectBody = collect.slice(0, collect.indexOf("\n}\n"));
+assert.match(
+  collectBody, /assignEventsToFixtures\(/,
+  "collectEventOdds deve usare assignEventsToFixtures(), lo stesso abbinamento di matchOddsToFixtures",
+);
+assert.doesNotMatch(
+  collectBody, /events\.find\(|normalizeTeamName\(fixture\.home_team\)\s*===/,
+  "un secondo criterio di abbinamento dentro collectEventOdds è esattamente il difetto",
+);
+
+console.log("OK: quote 1X2 e quote sui marcatori abbinano le partite con lo stesso criterio");

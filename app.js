@@ -1,4 +1,5 @@
 import { predictMatchdayFromMatches, estimatePlayerMarkets } from "./model.js";
+import { modelInputs } from "./prediction-inputs.js";
 import { buildCompetitionCatalog, buildMatchdays, matchdayLabel } from "./matchdays.js";
 import { DEFAULT_GLOBAL_SETTINGS, applyGlobalSettings, initializeGlobalSettings } from "./global-settings.js";
 import {
@@ -189,15 +190,17 @@ function predictionOptions() {
     windowDays: globalSettings.defaultWindowDays,
     halfLifeDays: globalSettings.defaultHalfLifeDays,
   } : personal;
+  // Ogni input che non identifica la partita passa da modelInputs(), che è la stessa funzione
+  // chiamata da scripts/backtest_model.mjs: è l'unico modo perché il modello misurato e quello
+  // che gira qui restino lo stesso modello (R14). Aggiungere un input a mano in questo oggetto
+  // fa fallire tests/prediction-input-parity.test.js — va dichiarato in prediction-inputs.js,
+  // dove arriva anche alla misura.
+  //
+  // Fino al 27/08/2026 qui passavano anche `teamContext` e `refereeStats`, che nessun backtest
+  // ha mai visto. Spenti: la misura appaiata e le ragioni stanno in prediction-inputs.js.
   return {
-    windowDays: model.windowDays,
-    halfLifeDays: model.halfLifeDays,
+    ...modelInputs({ windowDays: model.windowDays, halfLifeDays: model.halfLifeDays }),
     competitionId: selectedCompetitionId(),
-    // Popolato da enrich_competitions_players.py (formazione probabile, disponibilità,
-    // neopromosse). Se lo script non è ancora stato eseguito payload.team_context è
-    // undefined: predictFromMatches tratta questo caso come "nessun aggiustamento",
-    // comportamento identico a prima dell'introduzione della feature.
-    teamContext: payload?.team_context || null,
   };
 }
 
@@ -235,10 +238,31 @@ function recentTeamAverage(matches, team, homeField, awayField, count = 5) {
   return total / rows.length;
 }
 
+// L'etichetta mostrata è `confidence`, non `quality`. Sono due cose diverse e finora l'utente
+// vedeva la sbagliata: `quality.score` alimenta la calibrazione ed è saturo sui campionati
+// (1.000 in ogni fascia di stagione tranne la primissima), quindi alla prima giornata annunciava
+// la stessa fiducia di aprile — mentre lì il log loss misurato è 1.0435 contro ~0.990.
+// `confidence` non tocca nessuna previsione: dichiara soltanto cosa manca, e cosa manca è
+// scritto in `confidence.limits`.
 function qualityBadgeMarkup(result) {
-  return globalSettings.showDataQuality
-    ? `<span class="quality ${qualityClass(result.quality.label)}">${escapeHtml(result.quality.label)}</span>`
-    : "";
+  if (!globalSettings.showDataQuality) return "";
+  const confidence = result.confidence;
+  const reasons = (confidence?.limits || []).map((limit) => limit.text).join(" ");
+  const label = confidence?.label || result.quality.label;
+  return `<span class="quality ${qualityClass(label)}"${reasons ? ` title="${escapeHtml(reasons)}"` : ""}>${escapeHtml(label)}</span>`;
+}
+
+// Perché la confidenza è quella che è, in chiaro e non solo nel tooltip. Una previsione che si
+// dichiara poco affidabile senza dire di cosa manca è un'etichetta, non un'informazione.
+function confidenceNoticeMarkup(result) {
+  const limits = result.confidence?.limits || [];
+  if (!limits.length) return "";
+  return `
+    <div class="confidence-notice confidence-notice--${escapeHtml(String(result.confidence.label).toLowerCase())}">
+      <strong>Confidenza ${escapeHtml(result.confidence.label)}</strong>
+      <ul>${limits.map((limit) => `<li>${escapeHtml(limit.text)}</li>`).join("")}</ul>
+    </div>
+  `;
 }
 
 function fixtureDetailsMarkup(fixture, result) {
@@ -259,6 +283,7 @@ function fixtureDetailsMarkup(fixture, result) {
 
   return `
     <div class="fixture-details fixture-modal__details" data-modal-panel="overview" id="fixture-modal-panel-overview" role="tabpanel" aria-labelledby="fixture-modal-tab-overview">
+      ${confidenceNoticeMarkup(result)}
       <div class="detail-column">
         <div class="detail-heading"><h3>Risultati esatti</h3><span>${escapeHtml(result.cutoffDate)}</span></div>
         <ol class="score-list">${exactScoreRows(probabilities.scores)}</ol>
@@ -283,9 +308,6 @@ function fixtureDetailsMarkup(fixture, result) {
 }
 
 // Tab "Dati extra": tutto ciò che non fa (ancora) parte del modello core mostrato sopra.
-// - Contesto pre-partita: i moltiplicatori di team_context, se enrich_competitions_players.py
-//   è stato eseguito e ha prodotto una voce per queste due squadre (altrimenti stato vuoto,
-//   non un valore fittizio).
 // - Corner/cartellini/possesso: media sulle ultime 5 partite disponibili per squadra, dati
 //   storici conservati dalla pipeline ma NON un input del modello — mostrati come contesto,
 //   etichettati come tali, non come "ciò che ha determinato questo pronostico".
@@ -296,14 +318,41 @@ function playerStatsRow(player, markets) {
   const cards = player.red_cards > 0
     ? `${player.yellow_cards}🟨 ${player.red_cards}🟥`
     : player.yellow_cards > 0 ? `${player.yellow_cards}🟨` : "—";
+  // La fiducia dipende dai minuti realmente osservati per quel giocatore: senza mostrarla, una
+  // stima costruita su 20 minuti campionati sembrerebbe solida quanto una su 900.
+  const weak = markets.confidence < 0.4
+    ? `<span class="player-row__weak" title="Stima basata su pochi minuti osservati (${player.minutes}'): dominata dal valore medio del ruolo più che dal rendimento di questo giocatore">poco campionato</span>`
+    : "";
   return `<div class="player-row">
-    <span class="player-row__name">${escapeHtml(player.name)}<small>${escapeHtml(player.position || "")}</small></span>
-    <span class="player-row__stat" title="Probabilità stimata di almeno un tiro in questa partita (2+ tiri: ${percent(markets.multiShotProbability)})">🎯 ${percent(markets.shotProbability)}</span>
-    <span class="player-row__stat" title="Probabilità stimata di segnare in questa partita">⚽ ${percent(markets.anytimeScorerProbability)}</span>
-    <span class="player-row__stat" title="Probabilità stimata di assist in questa partita">🅰 ${percent(markets.assistProbability)}</span>
+    <span class="player-row__name">${escapeHtml(player.name)}<small>${escapeHtml(player.position || "")}</small>${weak}</span>
+    <span class="player-row__stat" title="Minuti attesi in questa partita, dalla probabilità di essere titolare (${percent(markets.startProbability)}) o di subentrare">⏱ ${markets.expectedMinutes}'</span>
+    <span class="player-row__stat" title="Probabilità stimata di almeno un tiro in questa partita (2+ tiri: ${percent(markets.multiShotProbability)} · almeno 1 in porta: ${percent(markets.shotOnTargetProbability)})">🎯 ${percent(markets.shotProbability)}</span>
+    <span class="player-row__stat" title="Probabilità stimata di segnare in questa partita (2+ gol: ${percent(markets.twoPlusGoalsProbability)})">⚽ ${percent(markets.anytimeScorerProbability)}</span>
+    <span class="player-row__stat" title="Probabilità stimata di assist in questa partita (gol o assist: ${percent(markets.goalOrAssistProbability)})">🅰 ${percent(markets.assistProbability)}</span>
     <span class="player-row__stat" title="Probabilità stimata di ammonizione/espulsione in questa partita">🟨 ${percent(markets.cardProbability)}</span>
-    <span class="player-row__stat player-row__cards" title="Storico nelle partite campionate: gol, assist, tiri, cartellini">${player.goals}g ${player.assists}a ${player.shots}t ${cards}</span>
+    <span class="player-row__stat player-row__cards" title="Storico nelle partite campionate: minuti, gol, assist, tiri, cartellini">${player.minutes}' ${player.goals}g ${player.assists}a ${player.shots}t ${cards}</span>
   </div>`;
+}
+
+// Formazione probabile: undici titolari per reparto, con il modulo effettivamente riportato da
+// ESPN quando disponibile. Prima questa informazione esisteva nel dataset ma non veniva mai
+// mostrata, e i moduli erano comunque inutilizzabili (2-7-1, 1-8-1) perché i ruoli non erano
+// mappati correttamente — vedi POSITION_GROUPS in enrich_competitions_players.py.
+function lineupMarkup(context, team) {
+  const lineup = context?.probable_lineup || [];
+  if (!lineup.length) return "";
+  const order = { GK: 0, DEF: 1, MID: 2, FWD: 3 };
+  const sorted = lineup.slice().sort((left, right) => (order[left.position] ?? 4) - (order[right.position] ?? 4));
+  const names = sorted
+    .map((player) => `<li><b>${escapeHtml(player.position || "—")}</b> ${escapeHtml(player.name)}</li>`)
+    .join("");
+  const source = context.formation_source === "ESPN" ? "modulo osservato" : "modulo ricostruito dai ruoli";
+  return `
+    <div class="players-team">
+      <h4>${escapeHtml(team)} <small>${escapeHtml(context.formation || "")} · ${source}</small></h4>
+      <ol class="lineup-list">${names}</ol>
+    </div>
+  `;
 }
 
 // player_context (da enrich_competitions_players.py) contiene, per squadra, TUTTI i
@@ -328,10 +377,23 @@ function playersSectionMarkup(fixture, result) {
   }
   const homeGoalsFor = result.home?.gf5 || 0;
   const awayGoalsFor = result.away?.gf5 || 0;
+  // I giocatori più probabilmente in campo per primi: ordinare per probabilità di essere
+  // titolare è più utile che ordinare per impatto storico, perché una schedina o una lettura
+  // pre-partita riguardano chi giocherà, non chi ha fatto di più nel campione.
   const renderTeam = (players, teamLambda, teamGoalsFor) => players
-    .map((player) => playerStatsRow(player, estimatePlayerMarkets(player, teamLambda, teamGoalsFor)))
+    .map((player) => ({ player, markets: estimatePlayerMarkets(player, teamLambda, teamGoalsFor) }))
+    .sort((left, right) => right.markets.expectedMinutes - left.markets.expectedMinutes)
+    .map(({ player, markets }) => playerStatsRow(player, markets))
+    .join("");
+  const lineups = [lineupMarkup(homeContext, fixture.home_team), lineupMarkup(awayContext, fixture.away_team)]
+    .filter(Boolean)
     .join("");
   return `
+    ${lineups ? `
+    <div class="detail-column detail-column--wide">
+      <div class="detail-heading"><h3>Formazioni probabili</h3><span>dedotte dalle formazioni recenti campionate, non annunci ufficiali</span></div>
+      <div class="players-columns">${lineups}</div>
+    </div>` : ""}
     <div class="detail-column detail-column--wide">
       <div class="detail-heading"><h3>Giocatori</h3><span>probabilità stimate per questa partita · storico a fianco</span></div>
       <div class="players-columns">
@@ -349,12 +411,6 @@ function playersSectionMarkup(fixture, result) {
 }
 
 function fixtureExtraDetailsMarkup(fixture, result) {
-  const context = result.context;
-  const contextRows = context?.applied ? [
-    comparisonRow(context.homeAttack, "Attacco (contesto squadra)", context.awayAttack, (value) => `×${number(value, 2)}`),
-    comparisonRow(context.homeDefense, "Difesa avversaria (contesto squadra)", context.awayDefense, (value) => `×${number(value, 2)}`),
-  ].join("") : "";
-
   const recentStats = [
     ["home_corners", "away_corners", "Corner (ultime 5)", (value) => number(value, 1)],
     ["home_yellow", "away_yellow", "Cartellini gialli (ultime 5)", (value) => number(value, 1)],
@@ -370,10 +426,6 @@ function fixtureExtraDetailsMarkup(fixture, result) {
 
   return `
     <div class="fixture-details fixture-modal__details" data-modal-panel="extra" id="fixture-modal-panel-extra" role="tabpanel" aria-labelledby="fixture-modal-tab-extra" hidden>
-      <div class="detail-column detail-column--wide">
-        <div class="detail-heading"><h3>Contesto pre-partita</h3><span>×1 = nessun aggiustamento · sopra = favorevole · sotto = sfavorevole</span></div>
-        ${contextRows ? `<div class="comparison-table">${contextRows}</div>` : `<p class="fixture-modal__empty">Non disponibile per questa previsione</p>`}
-      </div>
       <div class="detail-column detail-column--wide">
         <div class="detail-heading"><h3>Corner, cartellini, possesso</h3><span>non un input del modello</span></div>
         ${recentRows ? `<div class="comparison-table">${recentRows}</div>` : `<p class="fixture-modal__empty">Dati non ancora disponibili</p>`}

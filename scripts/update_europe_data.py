@@ -20,6 +20,7 @@ import math
 import os
 import re
 import sys
+import unicodedata
 import urllib.error
 import urllib.request
 from collections import defaultdict
@@ -94,6 +95,191 @@ NAME_MAP = {
 }
 
 
+# Alias della STESSA squadra scritti in modo diverso dalle diverse fonti. Non è cosmesi:
+# merge_matches() deduplica sulla chiave (competition_id, date, home_team, away_team) e
+# enrich_xg() aggancia le righe Understat sulla stessa chiave. Quando ESPN scrive "Atletico
+# Madrid" e Football-Data.co.uk scrive "Ath Madrid", la chiave non coincide e la stessa
+# partita reale resta nel dataset DUE volte, ciascuna con metà delle statistiche — la copia
+# ESPN con l'xG, la copia Football-Data con tiri e quote.
+#
+# Misure sul dataset del 24/08/2026 (8646 gare) prima di questa tabella:
+#   · 210 coppie di righe duplicate nei Big Five, 25 famiglie di alias;
+#   · Bundesliga 2425 con 22 identità di squadra invece di 18, LaLiga con 28 invece di 20:
+#     "Gladbach" 6 partite e "M'gladbach" 34, quindi Elo, forma e medie di quel club erano
+#     calcolati su frammenti di storia;
+#   · lo split attraversa il confine coppe/campionato — Athletic Bilbao aveva 114 gare come
+#     "Ath Bilbao" e 14 come "Athletic" in LaLiga, e 22 come "Athletic Bilbao" in Europa,
+#     con ZERO sovrapposizione: nelle previsioni di coppa quel club era una squadra senza
+#     storia, e lo stesso valeva per Lipsia/Leipzig e Rayo Vallecano/Vallecano;
+#   · copertura xG 35% in esp.1 e 34% in ger.1 contro 90-99% in Serie A — non per un
+#     problema di Understat (l'endpoint getTeamData risponde correttamente per tutte e
+#     cinque le leghe, verificato dal vivo il 25/08/2026) ma perché per quelle squadre la
+#     chiave di aggancio non esisteva.
+#
+# Il nome canonico scelto è quello che NAME_MAP e schedina.js già dichiarano dove esiste
+# (Francoforte, Lipsia, Athletic Bilbao, Atletico Madrid), altrimenti la variante già
+# dominante nel dataset: così la correzione sposta il minor numero possibile di righe.
+#
+# Le varianti che differiscono solo per accenti o punteggiatura ("Alavés"/"Alaves",
+# "St. Pauli"/"St Pauli", "Nott'm Forest"/"Nottm Forest") NON vanno elencate: le fonde
+# _fold_team_name() sotto. Qui vanno solo le abbreviazioni vere.
+TEAM_ALIASES = {
+    # Bundesliga
+    "M'gladbach": ("Gladbach", "Borussia M'gladbach", "Borussia Monchengladbach", "Monchengladbach", "Borussia Moenchengladbach"),
+    "Francoforte": ("Frankfurt", "Ein Frankfurt", "Eintracht Frankfurt", "Eintracht"),
+    "Werder Bremen": ("Bremen", "Werder"),
+    "FC Koln": ("Cologne", "Koln", "Colonia", "1. FC Koln", "FC Cologne"),
+    "Lipsia": ("Leipzig", "RB Leipzig", "RasenBallsport Leipzig"),
+    "Bayern Monaco": ("Bayern", "Bayern Munich", "Bayern Munchen", "FC Bayern Munchen"),
+    # "B. Dortmund" e' la forma dell'API UEFA: 102 gare domestiche contro 37 europee, separate.
+    "Dortmund": ("Borussia Dortmund", "BVB", "B. Dortmund"),
+    "Leverkusen": ("Bayer Leverkusen", "Bayer 04 Leverkusen"),
+    "Hoffenheim": ("TSG Hoffenheim", "1899 Hoffenheim"),
+    "Stuttgart": ("VfB Stuttgart",),
+    "Mainz": ("Mainz 05", "FSV Mainz 05"),
+    "Heidenheim": ("FC Heidenheim", "1. FC Heidenheim"),
+    "Hamburg": ("Hamburger SV",),
+    "Schalke": ("Schalke 04",),
+    # LaLiga
+    "Celta Vigo": ("Celta",),
+    "Rayo Vallecano": ("Rayo", "Vallecano"),
+    "Athletic Bilbao": ("Ath Bilbao", "Athletic", "Athletic Club"),
+    # "Atleti" e' la forma dell'API UEFA. Senza questa voce il club aveva 116 gare come
+    # "Atletico Madrid" nei campionati e 36 come "Atleti" in Europa, con ZERO sovrapposizione:
+    # esattamente lo split coppe/campionato che questa tabella era nata per chiudere.
+    "Atletico Madrid": ("Ath Madrid", "Atl. Madrid", "Atletico", "Atletico de Madrid", "Club Atletico de Madrid", "Atleti"),
+    "Espanyol": ("Espanol", "RCD Espanyol"),
+    "Real Sociedad": ("Sociedad",),
+    "Real Oviedo": ("Oviedo",),
+    "Real Valladolid": ("Valladolid",),
+    "Real Betis": ("Betis", "Real Betis Balompie"),
+    "Deportivo La Coruna": ("Deportivo", "Dep. A Coruna", "La Coruna", "Deportivo A Coruna"),
+    "Racing Santander": ("Racing", "Santander", "Racing de Santander"),
+    # Premier League
+    "Tottenham": ("Spurs", "Tottenham Hotspur"),
+    "Crystal Palace": ("C Palace",),
+    "Nottingham Forest": ("Nott'm Forest", "Nottm Forest", "Forest"),
+    "Sheffield United": ("Sheffield Utd",),
+    "Man United": ("Manchester United", "Man Utd"),
+    "Man City": ("Manchester City",),
+    "Newcastle": ("Newcastle United",),
+    "Wolves": ("Wolverhampton", "Wolverhampton Wanderers"),
+    "West Ham": ("West Ham United",),
+    "Brighton": ("Brighton & Hove Albion", "Brighton and Hove Albion"),
+    "Leeds": ("Leeds United",),
+    "Leicester": ("Leicester City",),
+    # Ligue 1
+    "Le Havre": ("Le Havre AC",),
+    "Clermont": ("Clermont Foot",),
+    "Saint-Etienne": ("St Etienne", "St. Etienne", "Saint Etienne", "AS Saint-Etienne"),
+    # ATTENZIONE: "Paris" NON va aggiunto qui. L'API UEFA chiama "Paris" il Paris Saint-Germain,
+    # ma in Ligue 1 "Paris" e' il Paris FC, un club diverso promosso nel 2025-26 — e i due
+    # coesistono nel dataset. Un alias globale li fonderebbe. La risoluzione e' quindi limitata
+    # alla fonte UEFA, in update_uefa_data.py (UEFA_TEAM_OVERRIDES).
+    "PSG": ("Paris Saint-Germain", "Paris SG", "Paris Saint Germain"),
+    "Marsiglia": ("Marseille", "Olympique Marseille", "Olympique de Marseille"),
+    "Lione": ("Lyon", "Olympique Lyon", "Olympique Lyonnais"),
+    # Serie A
+    "Inter": ("Internazionale", "Internazionale Milano", "Inter Milan"),
+    "Milan": ("AC Milan", "A.C. Milan"),
+    "Roma": ("AS Roma", "Roma FC", "A.S. Roma"),
+    "Napoli": ("SSC Napoli", "Napoli SSC"),
+    "Juventus": ("Juventus FC",),
+    "Hellas Verona": ("Verona",),
+    "Parma": ("Parma Calcio 1913",),
+}
+
+
+def _fold_team_name(name: str) -> str:
+    """Chiave insensibile ad accenti, punteggiatura e maiuscole.
+
+    Fonde da sola le varianti che differiscono solo per la grafia ("Alavés"/"Alaves",
+    "Cádiz"/"Cadiz", "St. Pauli"/"St Pauli", "Nott'm Forest"/"Nottm Forest"), che nel
+    dataset del 24/08/2026 erano 9 famiglie su 25: elencarle a mano in TEAM_ALIASES
+    avrebbe significato mantenere a mano righe che una funzione deriva senza sbagliare.
+    """
+    stripped = unicodedata.normalize("NFKD", name or "")
+    stripped = "".join(character for character in stripped if not unicodedata.combining(character))
+    return re.sub(r"[^a-z0-9]+", " ", stripped.lower()).strip()
+
+
+# Squadre le cui uniche varianti osservate differiscono per accenti o punteggiatura. Basta
+# dichiarare la grafia canonica: _fold_team_name() aggancia da sola ogni altra grafia della
+# stessa squadra, quindi qui NON va enumerata una variante per accento. La grafia scelta è
+# quella già dominante nel dataset del 24/08/2026, per spostare il minor numero di righe.
+CANONICAL_SPELLINGS = (
+    "St Pauli", "Alaves", "Almeria", "Cadiz", "Leganes",
+)
+
+
+# fold(alias) -> nome canonico. Include il fold del nome canonico stesso, altrimenti
+# normalize_team() non sarebbe idempotente sui nomi che differiscono dal canonico solo per
+# accenti (es. "Alavés" -> "Alaves" richiede una voce anche per il canonico "Alaves").
+_ALIAS_INDEX: dict[str, str] = {}
+for _canonical, _variants in TEAM_ALIASES.items():
+    for _variant in (_canonical, *_variants):
+        _folded = _fold_team_name(_variant)
+        _existing = _ALIAS_INDEX.get(_folded)
+        if _existing is not None and _existing != _canonical:
+            raise ValueError(
+                f"Alias ambiguo: {_variant!r} è dichiarato sia per {_existing!r} sia per {_canonical!r}"
+            )
+        _ALIAS_INDEX[_folded] = _canonical
+
+# I nomi canonici già dichiarati altrove valgono come voci dell'indice, ma non devono
+# sovrascrivere una famiglia esplicita: TEAM_ALIASES descrive il club intero, NAME_MAP una
+# grafia alla volta. setdefault() dà quindi la precedenza alla famiglia.
+for _canonical in (*CANONICAL_SPELLINGS, *NAME_MAP.values()):
+    _ALIAS_INDEX.setdefault(_fold_team_name(_canonical), _canonical)
+
+
+# TEAM_ALIASES copre le abbreviazioni, che richiedono di sapere che "Ath Madrid" è
+# l'Atletico. Restano le divergenze di sola grafia mai viste prima ("Malaga"/"Málaga"):
+# enumerarle a mano significherebbe scoprirle una alla volta a ogni run della pipeline. Due
+# nomi con lo stesso fold sono però la stessa squadra per costruzione — nessuna coppia di club
+# distinti dei Big Five collide dopo aver tolto accenti e punteggiatura — quindi qui la regola
+# è meccanica: vince la grafia più frequente nel dataset, a parità la più lunga (la forma
+# estesa "Real Oviedo" è più informativa dell'abbreviazione "Oviedo").
+#
+# Viveva solo in repair_dataset_identities.py, cioè fuori dalla pipeline. Conseguenza misurata
+# il 28/08/2026: la rigenerazione automatica — che gira quattro volte al giorno — reintroduceva
+# lo split a ogni esecuzione, il contratto lo intercettava, e qualcuno doveva eseguire la
+# riparazione a mano. Ora la pipeline la applica da sé prima di scrivere; lo strumento di
+# riparazione importa QUESTA funzione, così le due strade non possono divergere.
+#
+# Non è esprimibile come normalize_team() di un nome solo: per scegliere la grafia vincente
+# serve vedere tutti i nomi insieme, quindi è una passata sull'intero dataset.
+def resolve_spelling_collisions(names: Iterable[str]) -> dict[str, str]:
+    counts: dict[str, int] = defaultdict(int)
+    for name in names:
+        if name:
+            counts[str(name)] += 1
+    grouped: dict[str, list[str]] = defaultdict(list)
+    for name in counts:
+        grouped[_fold_team_name(name)].append(name)
+    mapping: dict[str, str] = {}
+    for variants in grouped.values():
+        if len(variants) < 2:
+            continue
+        winner = sorted(variants, key=lambda name: (-counts[name], -len(name), name))[0]
+        for name in variants:
+            if name != winner:
+                mapping[name] = winner
+    return mapping
+
+
+def apply_spelling_collisions(rows: Iterable[dict], mapping: dict[str, str]) -> int:
+    """Riscrive home_team/away_team secondo `mapping`. Ritorna il numero di riscritture."""
+    renamed = 0
+    for row in rows:
+        for side in ("home_team", "away_team"):
+            name = row.get(side)
+            if name in mapping:
+                row[side] = mapping[name]
+                renamed += 1
+    return renamed
+
+
 def clamp(value: float, minimum: float, maximum: float) -> float:
     return max(minimum, min(maximum, value))
 
@@ -101,7 +287,13 @@ def clamp(value: float, minimum: float, maximum: float) -> float:
 def normalize_team(name: str) -> str:
     clean = re.sub(r"\s+", " ", (name or "").strip())
     clean = re.sub(r"\s+(FC|CF|SC|AFC)$", "", clean, flags=re.I)
-    return NAME_MAP.get(clean, clean)
+    clean = NAME_MAP.get(clean, clean)
+    if not clean:
+        return clean
+    # L'indice degli alias ha l'ultima parola su NAME_MAP: NAME_MAP mappa una grafia alla
+    # volta ed è cresciuto per casi singoli, TEAM_ALIASES dichiara la famiglia intera. Se i
+    # due divergessero vincerebbe la famiglia, che è la definizione completa.
+    return _ALIAS_INDEX.get(_fold_team_name(clean), clean)
 
 
 def season_code(start_year: int) -> str:
@@ -794,6 +986,25 @@ def main() -> None:
     matches = merge_matches([*europe_history, *domestic_matches])
     if len(matches) < 180:
         raise SystemExit("Dati europei insufficienti: il dataset esistente non viene sovrascritto.")
+
+    # Fusione delle grafie PRIMA di compute_elo e build_team_context: dopo sarebbe inutile,
+    # perché l'Elo e il contesto sarebbero già stati calcolati sulle identità spezzate e solo
+    # i nomi risulterebbero uniti.
+    every_name = [
+        str(row[side])
+        for source in (matches, *[competition.get("fixtures") or [] for competition in competitions])
+        for row in source
+        for side in ("home_team", "away_team")
+        if row.get(side)
+    ]
+    spelling = resolve_spelling_collisions(every_name)
+    if spelling:
+        renamed = apply_spelling_collisions(matches, spelling)
+        for competition in competitions:
+            renamed += apply_spelling_collisions(competition.get("fixtures") or [], spelling)
+        participant_names = {spelling.get(name, name) for name in participant_names}
+        matches = merge_matches(matches)
+        print(f"grafie fuse: {len(spelling)} nomi, {renamed} riscritture ({', '.join(f'{k}->{v}' for k, v in sorted(spelling.items())[:6])})")
 
     participants = sorted(participant_names)
     elo, elo_as_of, match_counts = compute_elo(matches)

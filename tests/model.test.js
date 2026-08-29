@@ -108,11 +108,31 @@ const domesticWithEurope = predictFromMatches(matches, {
   windowDays: 730,
   halfLifeDays: 120,
 });
-assert.equal(domesticPrediction.lambdaHome, domesticWithEurope.lambdaHome);
-assert.equal(domesticPrediction.lambdaAway, domesticWithEurope.lambdaAway);
-assert.deepEqual(domesticPrediction.probabilities, domesticWithEurope.probabilities);
+// Invariante ristretta (25/08/2026). Prima chiedeva che aggiungere le partite europee non
+// cambiasse NULLA di una previsione domestica. Quella versione nascondeva un difetto reale:
+// `restDays` veniva calcolato sull'ultima partita di CAMPIONATO, quindi una squadra che
+// aveva giocato in Champions il mercoledì risultava riposata da sette giorni invece che da
+// tre. Misurato sul dataset: 5.1 giorni di riposo creduti in più, 6.0 dopo una trasferta
+// europea. Il calendario è un fatto, e ignorarlo non è una scelta conservativa.
+//
+// Quello che deve ancora valere — ed è la parte che l'invariante serviva davvero a proteggere
+// — è che le partite di coppa non entrino nella STORIA SPORTIVA su cui il modello è
+// calibrato: Elo, medie e numerosità del campione restano quelli delle sole gare domestiche.
+assert.equal(domesticPrediction.home.matches, domesticWithEurope.home.matches, "le coppe non entrano nelle medie");
+assert.equal(domesticPrediction.away.matches, domesticWithEurope.away.matches);
+assert.equal(domesticPrediction.trainingMatches, domesticWithEurope.trainingMatches);
+// L'Elo può invece differire, ed è corretto che lo faccia: `restDays` alimenta anche il
+// decadimento per inattività (eloRetention), e una squadra che ha giocato in Champions NON è
+// inattiva. La vecchia versione la trattava come tale, il che era il difetto — non la
+// proprietà da difendere. Le partite di coppa restano fuori dagli AGGIORNAMENTI dell'Elo,
+// che è la cosa che conta per la calibrazione; entrano solo nella risposta a "quando questa
+// squadra ha giocato l'ultima volta".
+// ...e che l'unico canale per cui le coppe possono muovere il lambda sia il riposo, cioè un
+// numero di giorni minore o uguale a quello dedotto dalle sole gare domestiche.
+assert.ok(domesticWithEurope.home.restDays <= domesticPrediction.home.restDays);
+assert.ok(domesticWithEurope.away.restDays <= domesticPrediction.away.restDays);
 assert.equal(domesticPrediction.competitionId, "ita.1");
-assert.equal(domesticPrediction.modelVersion, "5.0-calibrated-recency-xg-elo");
+assert.equal(domesticPrediction.modelVersion, "6.0-shrunk-asymmetry");
 assert.equal(domesticPrediction.baselineSource, "competition");
 assert.ok(domesticPrediction.baselineMatches >= 60);
 

@@ -381,3 +381,22 @@ body.has-custom-background .settings-card {
   .fixture-details { grid-template-columns: 1fr; }
   .detail-column--wide { grid-column: 1; }
 }
+
+/* Avviso di confidenza: perché questa previsione è meno affidabile, in chiaro e non solo nel
+   tooltip del badge. Occupa l'intera larghezza sopra le colonne del dettaglio, così non si
+   legge come una nota a margine di una delle due. */
+.confidence-notice {
+  grid-column: 1 / -1;
+  border-left: 3px solid #b9c2cc;
+  background: #f2f4f7;
+  border-radius: 6px;
+  padding: 0.6rem 0.85rem;
+  margin-bottom: 0.35rem;
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+.confidence-notice strong { display: block; margin-bottom: 0.25rem; }
+.confidence-notice ul { margin: 0; padding-left: 1.1rem; }
+.confidence-notice li { margin: 0.15rem 0; }
+.confidence-notice--bassa { border-left-color: #c2793f; background: #faf1e8; }
+.confidence-notice--media { border-left-color: #b9962f; background: #faf7e8; }

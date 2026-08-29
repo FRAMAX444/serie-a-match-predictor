@@ -4,7 +4,13 @@ import { predictFromMatches, DEFAULT_HYPERPARAMETERS } from "../model.js";
 const start = Date.UTC(2024, 0, 1);
 const isoDate = (offset) => new Date(start + offset * 86400000).toISOString().slice(0, 10);
 
-function balancedLeague(rounds = 30, teamCount = 10) {
+// `seasonSplitRound` divide il calendario in due stagioni. Serve al blocco 4: dopo la
+// correzione di §2.4 una squadra è "nuova" se non era in QUELLA competizione nella stagione
+// PRECEDENTE, quindi un fixture con una sola etichetta di stagione non contiene, per
+// definizione, nessuna neopromossa — non c'è una stagione precedente con cui confrontarla.
+// La vecchia definizione ("prima apparizione nell'intero dataset") non lo richiedeva, ed è
+// esattamente il motivo per cui non riconosceva il Frosinone.
+function balancedLeague(rounds = 30, teamCount = 10, seasonSplitRound = Infinity) {
   const teams = Array.from({ length: teamCount }, (_, index) => `Team-${index + 1}`);
   const rotation = teams.slice();
   const matches = [];
@@ -15,7 +21,8 @@ function balancedLeague(rounds = 30, teamCount = 10) {
       const home = (round + index) % 2 === 0 ? first : second;
       const away = home === first ? second : first;
       matches.push({
-        date: isoDate(round * 7), season: "2425", competition_id: "ita.1", competition_type: "domestic",
+        date: isoDate(round * 7), season: round < seasonSplitRound ? "2425" : "2526",
+        competition_id: "ita.1", competition_type: "domestic",
         home_team: home, away_team: away, home_goals: 2, away_goals: 1,
         home_xg: 1.72, away_xg: 1.02, home_shots: 14, away_shots: 9, home_sot: 5, away_sot: 3,
       });
@@ -69,9 +76,12 @@ assert.notEqual(normalGap.toFixed(6), sharperGap.toFixed(6), "eloDivisor deve av
 // invece alcuna storia da nessuna parte nel dataset completo.
 const windowDays = 200;
 const cutoffOffset = 760; // warmupStart = cutoff - windowDays - 420 = giorno 140: i veterani
-const veterans = balancedLeague(108, 10); // giocano da 0 a 749, quindi hanno storia prima
+// Confine di stagione al turno 54 (giorno 378, dentro la finestra di warmup): i veterani
+// giocano in entrambe le stagioni e restano continui, la neopromossa compare solo nella
+// seconda ed è quindi nuova rispetto alla precedente.
+const veterans = balancedLeague(108, 10, 54); // giocano da 0 a 749, quindi hanno storia prima
 const newcomerMatch = {
-  date: isoDate(cutoffOffset - 7), season: "2425", competition_id: "ita.1", competition_type: "domestic",
+  date: isoDate(cutoffOffset - 7), season: "2526", competition_id: "ita.1", competition_type: "domestic",
   home_team: "Neopromossa", away_team: "Team-1", home_goals: 1, away_goals: 1,
   home_xg: 1.1, away_xg: 1.1, home_shots: 10, away_shots: 10, home_sot: 4, away_sot: 4,
 };

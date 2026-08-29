@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm test *)",
+      "Bash(node scripts/backtest_vs_market.mjs --max 1200)",
+      "Bash(node scripts/diagnose_calibration.mjs --max 3000)",
+      "Bash(node scripts/diagnose_calibration.mjs --max 3000 --json ../tmp_ignore.json)",
+      "Bash(python3 -c ' *)",
+      "Bash(node --check model.js)",
+      "Bash(node tests/lambda-calibration.test.js)",
+      "Bash(python3 -m unittest discover -s tests -p \"test_*.py\")",
+      "Bash(python3 -c \"import requests; print\\('requests ok', requests.__version__\\)\")",
+      "Bash(python3 -m py_compile scripts/enrich_competitions_players.py)",
+      "Bash(node tests/player-markets.test.js)",
+      "Bash(node -e ' *)",
+      "Bash(node --check slip-builder.js)",
+      "Bash(node --check schedina.js)",
+      "Bash(node tests/slip-builder.test.js)",
+      "Bash(node --check schedina-page.js)",
+      "Bash(node --check app.js)",
+      "Bash(node tests/player-context-contract.test.js)",
+      "Bash(node scripts/backtest_model.mjs --max 3000)",
+      "Bash(npm run *)",
+      "Bash(python3 -m py_compile scripts/*.py)",
+      "Bash(netstat -ltn)",
+      "Read(//mnt/c/Users/cniky/OneDrive/Desktop/serie-a-match-predictor-completo/**)",
+      "Read(//tmp/**)"
+    ]
+  }
+}

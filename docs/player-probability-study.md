@@ -1,5 +1,29 @@
 # Studio statistico sulle probabilità di tiro e assist dei giocatori
 
+> **Aggiornamento (modello 6.0).** Questo studio descrive `estimatePlayerMarkets` nella sua
+> versione Poisson pura. La sua conclusione principale — §4.3: con una sovradispersione
+> realistica l'errore di calibrazione peggiora di 14 volte sui tiri e di 22 sui 2+ tiri, e il
+> modello risulta "sistematicamente troppo sicuro nella fascia alta" — **è stata applicata al
+> codice**: la distribuzione è ora una binomiale negativa (miscela Gamma-Poisson) con parametro
+> di forma per mercato, che è esattamente la famiglia usata qui come scenario di sensitività.
+> Sono cambiate insieme altre due cose:
+>
+> - i mercati sono calcolati come **miscela sugli scenari di impiego** (titolare / subentrato /
+>   in panchina) invece che sui minuti attesi. Il limite n. 4 elencato in §5 ("minuti
+>   discretizzati in 3 scenari") descriveva una semplificazione dello studio; nel modello i tre
+>   scenari sono ora la struttura vera, con i rispettivi pesi di probabilità;
+> - i tassi per-90 in ingresso hanno **shrinkage bayesiano verso un prior di ruolo**, che
+>   risponde direttamente al limite n. 1 di §5 ("non sappiamo se i tassi-per-90 su un campione
+>   ridotto siano essi stessi rumorosi": lo sono, e ora vengono trattati come tali).
+>
+> Restano validi e non toccati: la verifica di correttezza dell'implementazione (§4.1), la
+> metodologia (§3) e il fatto che **non esiste ancora una calibrazione contro esiti reali**
+> (§5.1, §6) — serve uno storico partita-per-partita che la pipeline non conserva. Rilanciare
+> `npm run study:players` ora misura la versione binomiale negativa, quindi i numeri assoluti
+> nelle tabelle qui sotto non sono più riproducibili tali e quali: vanno letti come la
+> misurazione che ha motivato il cambiamento.
+
+
 **Oggetto:** `estimatePlayerMarkets` in `model.js` — in particolare i due nuovi campi `shotProbability`/`multiShotProbability` e il campo esistente `assistProbability`.
 **Data:** 20 agosto 2026 · **Riproducibile con:** `npm run study:players` (richiede `pip install -r requirements.txt`)
 

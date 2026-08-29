@@ -168,6 +168,14 @@ export function buildMatchdays(payload, competitionId = null) {
     teams,
     matchdays,
     defaultRound,
+    // Va RESTITUITO, non solo calcolato. schedina.js e schedina-page.js leggono
+    // `calendar.firstUpcoming` per scegliere il turno su cui costruire la schedina: finché
+    // non era nell'oggetto valeva undefined, il fallback cadeva su matchdays[0] e la pagina
+    // chiedeva le quote del PRIMO turno della stagione — già giocato da giorni. Un'API di
+    // quote restituisce solo eventi futuri, quindi non trovava nulla e l'errore sembrava
+    // della chiave o del servizio. La pagina principale non se ne accorgeva perché usa
+    // `defaultRound`, che era restituito.
+    firstUpcoming,
     inferred: explicitCount !== fixtures.length,
   };
 }

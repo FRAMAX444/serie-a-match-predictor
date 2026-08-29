@@ -27,11 +27,13 @@ from __future__ import annotations
 
 import http.cookiejar
 import json
+import re
 import sys
 import time
 import unicodedata
 import urllib.parse
 import urllib.request
+from pathlib import Path
 from typing import Callable, Iterable
 
 try:
@@ -82,6 +84,18 @@ TEAM_SLUG_OVERRIDES = {
     # Serie A — solo Milan richiedeva una correzione (verificato: understat.com/team/AC_Milan/*)
     "Inter": "Inter", "Milan": "AC_Milan", "AC Milan": "AC_Milan",
     "Roma": "Roma", "Napoli": "Napoli", "Juventus": "Juventus",
+    # Understat chiama la squadra "Verona", non "Hellas Verona": senza questa voce
+    # slugify_team() produce "Hellas_Verona", che risponde 404. Il nome canonico della
+    # pipeline è diventato "Hellas Verona" con l'introduzione di TEAM_ALIASES, e la
+    # copertura xG della Serie A è rimasta al 90% invece che al 100% finché è mancata —
+    # una singola squadra su venti, cioè esattamente il 10% mancante. Il conteggio
+    # aggregato per lega non bastava a vederlo: serve la soglia per squadra.
+    "Hellas Verona": "Verona", "Verona": "Verona",
+    # understat.com/team/Parma/2024 risponde 200 OK — ma con le partite del Parma FC
+    # 2014-15, una entità diversa e ormai storica. Nessun errore, nessuna riga agganciata,
+    # 38 partite su 38 senza xG per tutta la stagione. Il club attuale è Parma_Calcio_1913
+    # (verificato dal vivo il 25/08/2026: stesso endpoint, righe 2024-25 corrette).
+    "Parma": "Parma_Calcio_1913", "Parma Calcio 1913": "Parma_Calcio_1913",
 
     # Bundesliga — roster confermato via understat.com/team/Eintracht_Frankfurt/2023 e
     # understat.com/team/Borussia_M.Gladbach/2024 (menu a tendina completo su entrambe)
@@ -112,6 +126,7 @@ TEAM_SLUG_OVERRIDES = {
     "Lione": "Lyon", "Lyon": "Lyon", "Olympique Lyon": "Lyon", "Olympique Lyonnais": "Lyon",
     "Monaco": "Monaco", "AS Monaco": "Monaco",
     "Le Havre AC": "Le_Havre", "Le Havre": "Le_Havre",
+    "Clermont": "Clermont_Foot", "Clermont Foot": "Clermont_Foot",
     "St Etienne": "Saint-Etienne", "St. Etienne": "Saint-Etienne", "St. Étienne": "Saint-Etienne",
     "Saint Etienne": "Saint-Etienne", "Saint-Etienne": "Saint-Etienne",
 
@@ -176,7 +191,30 @@ def resolve_slug(canonical_name: str) -> str:
     return TEAM_SLUG_OVERRIDES.get(canonical_name, slugify_team(canonical_name))
 
 
+# Cache su disco opzionale, spenta di default: la pipeline in CI deve continuare a leggere
+# dati freschi a ogni run. La accendono gli script di riparazione e di analisi, che possono
+# dover ripetere lo stesso backfill più volte mentre si corregge la tabella dei nomi — senza
+# cache ogni tentativo rifà ~400 richieste a understat.com, il che è lento per noi e scortese
+# verso di loro. Le risposte di una stagione conclusa non cambiano più, quindi cacharle non
+# introduce staleness dove conta.
+CACHE_DIR: "Path | None" = None
+
+
+def _cache_path(team_slug: str, year: int) -> "Path | None":
+    if CACHE_DIR is None:
+        return None
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    safe_slug = re.sub(r"[^A-Za-z0-9_.-]", "_", team_slug)
+    return CACHE_DIR / f"{safe_slug}-{year}.json"
+
+
 def fetch_team_data(team_slug: str, year: int) -> object:
+    cached = _cache_path(team_slug, year)
+    if cached is not None and cached.exists():
+        try:
+            return json.loads(cached.read_text(encoding="utf8"))
+        except (OSError, json.JSONDecodeError):
+            pass  # cache illeggibile: si riscarica, non è un errore fatale
     encoded_slug = urllib.parse.quote(team_slug, safe="_")
     page_url = f"https://understat.com/team/{encoded_slug}/{year}"
     api_url = f"https://understat.com/getTeamData/{encoded_slug}/{year}"
@@ -225,14 +263,22 @@ def fetch_team_data(team_slug: str, year: int) -> object:
                 raise ValueError("Understat rispose con HTML invece di JSON") from error
             raise ValueError(f"Understat rispose con JSON non valido: {error}") from error
 
+    def _store(payload: object) -> object:
+        if cached is not None:
+            try:
+                cached.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf8")
+            except OSError:
+                pass  # cache non scrivibile: non deve far fallire un fetch riuscito
+        return payload
+
     try:
-        return _load_json_from_api()
+        return _store(_load_json_from_api())
     except Exception as error:
         # Understat può rispondere con un payload vuoto su una richiesta iniziale; riprovare
         # una volta dopo un breve ritardo, così da non far fallire subito l'intero run.
         time.sleep(1.0)
         try:
-            return _load_json_from_api()
+            return _store(_load_json_from_api())
         except Exception as retry_error:
             raise ValueError(f"Understat {team_slug}/{year}: {error}; retry: {retry_error}") from retry_error
 
@@ -261,6 +307,18 @@ def parse_team_matches(payload: object, normalize_team: Callable[[str], str]) ->
     return [row for row in rows if row["home_team"] and row["away_team"] and row["date"]]
 
 
+def season_window(year: int) -> tuple[str, str]:
+    """Intervallo di date plausibile per la stagione che Understat indicizza con `year`.
+
+    Serve a intercettare uno slug che punta a un'ENTITÀ diversa invece che a una pagina
+    inesistente: understat.com/team/Parma/2024 risponde 200 OK con le partite del Parma FC
+    2014-15. Un 404 si vede subito, questo no — le righe arrivano, sono ben formate, e
+    semplicemente non agganciano nessuna partita del dataset. Senza questo controllo il
+    risultato è 38 partite su 38 senza xG e nessun messaggio di errore.
+    """
+    return (f"{year}-07-01", f"{year + 1}-08-31")
+
+
 def fetch_league_matches_via_team_api(
     year: int,
     team_universe: Iterable[str],
@@ -273,8 +331,10 @@ def fetch_league_matches_via_team_api(
     if not teams:
         return []
 
+    window_start, window_end = season_window(year)
     deduped: dict[tuple[str, str, str], dict[str, object]] = {}
     missing: list[str] = []
+    off_season: list[str] = []
     for index, team_name in enumerate(teams):
         try:
             payload = fetch_team_data(resolve_slug(team_name), year)
@@ -282,6 +342,10 @@ def fetch_league_matches_via_team_api(
         except Exception as error:  # una squadra fallita non deve bloccare le altre
             print(f"Understat getTeamData: {team_name} ({year}) fallita: {error}", file=sys.stderr)
             rows = []
+        in_window = [row for row in rows if window_start <= str(row["date"]) <= window_end]
+        if rows and not in_window:
+            off_season.append(f"{team_name} (slug {resolve_slug(team_name)}, date {rows[0]['date']}..{rows[-1]['date']})")
+        rows = in_window
         if not rows:
             missing.append(team_name)
         for row in rows:
@@ -290,6 +354,13 @@ def fetch_league_matches_via_team_api(
         if index < len(teams) - 1:
             time.sleep(REQUEST_PAUSE_SECONDS)
 
+    if off_season:
+        print(
+            f"Understat getTeamData {year}: {len(off_season)} squadre hanno risposto con partite "
+            f"FUORI dalla stagione richiesta ({window_start}..{window_end}) — lo slug punta a "
+            f"un'altra entità, non a una pagina mancante: {'; '.join(off_season)}",
+            file=sys.stderr,
+        )
     if missing:
         print(
             f"Understat getTeamData {year}: 0 partite per {len(missing)}/{len(teams)} squadre "

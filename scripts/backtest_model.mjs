@@ -3,8 +3,25 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { predictFromMatches } from "../model.js";
+import { modelInputs } from "../prediction-inputs.js";
 
 const SUPPORTED = new Set(["eng.1", "esp.1", "ita.1", "ger.1", "fra.1", "ucl", "uel", "uecl"]);
+
+// Le stesse opzioni che app.js costruisce per la pagina, dalla stessa funzione: se qui e là
+// divergono, il log loss stampato da questo script non descrive il modello che gira davvero
+// (R14). Fino al 27/08/2026 divergevano — vedi prediction-inputs.js. La partita è l'unica
+// cosa che cambia fra i due chiamanti, ed è l'unica scritta qui a mano.
+function predictionOptions(match) {
+  return {
+    ...modelInputs(),
+    homeTeam: match.home_team,
+    awayTeam: match.away_team,
+    date: match.date,
+    cutoffDate: match.date,
+    competitionId: match.competition_id,
+    season: match.season,
+  };
+}
 
 function parseArguments(argv) {
   const options = { file: "data/matches.json", competition: "", since: "", max: 1000 };
@@ -57,13 +74,7 @@ function evaluate(matches, options) {
   for (const match of candidates) {
     if ((position.get(match) ?? 0) < 100) continue;
     try {
-      const result = predictFromMatches(chronological, {
-        homeTeam: match.home_team,
-        awayTeam: match.away_team,
-        date: match.date,
-        cutoffDate: match.date,
-        competitionId: match.competition_id,
-      });
+      const result = predictFromMatches(chronological, predictionOptions(match));
       rows.push({ match, result });
     } catch (error) {
       if (!/Dati recenti insufficienti/i.test(String(error?.message || error))) throw error;

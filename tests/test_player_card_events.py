@@ -27,7 +27,7 @@ class PlayerCardEventsTests(unittest.TestCase):
                             # Nessuna voce cartellini qui: come nei payload reali.
                             "stats": [
                                 {"name": "minutes", "displayValue": "90"},
-                                {"name": "goals", "displayValue": "1"},
+                                {"name": "totalGoals", "displayValue": "1"},
                                 {"name": "assists", "displayValue": "0"},
                                 {"name": "totalShots", "displayValue": "3"},
                             ],
@@ -37,7 +37,7 @@ class PlayerCardEventsTests(unittest.TestCase):
                             "starter": True,
                             "stats": [
                                 {"name": "minutes", "displayValue": "90"},
-                                {"name": "goals", "displayValue": "0"},
+                                {"name": "totalGoals", "displayValue": "0"},
                                 {"name": "assists", "displayValue": "0"},
                                 {"name": "totalShots", "displayValue": "0"},
                             ],
@@ -52,7 +52,7 @@ class PlayerCardEventsTests(unittest.TestCase):
                             "starter": True,
                             "stats": [
                                 {"name": "minutes", "displayValue": "90"},
-                                {"name": "goals", "displayValue": "0"},
+                                {"name": "totalGoals", "displayValue": "0"},
                                 {"name": "assists", "displayValue": "0"},
                                 {"name": "totalShots", "displayValue": "2"},
                             ],
@@ -115,6 +115,59 @@ class PlayerCardEventsTests(unittest.TestCase):
         ]
         tally = enrich.card_tally(details)
         self.assertEqual(tally, {"9": {"yellow": 1.0, "red": 0.0}})
+
+    def test_goals_use_real_espn_field_name_not_naive_guess(self) -> None:
+        # Regressione mirata: "goals"/"goal" da soli sembrano un nome plausibile ma NON sono
+        # quello che ESPN usa davvero (verificato dal vivo sullo scoreboard di un Mondiale
+        # 2026 concluso: {"name":"totalGoals","abbreviation":"G",...}). Senza "totalGoals"
+        # nella wanted-list, numeric_value non trova mai corrispondenza — e siccome il campo
+        # "name" ha priorità sull'abbreviazione quando è presente (vedi numeric_value), anche
+        # includere "G" da solo NON basta a recuperare il valore. Risultato osservato in
+        # produzione: gol sempre a 0 per OGNI giocatore, non solo per chi non ha segnato —
+        # un pattern uniforme, non casuale, che è stato il primo indizio del bug.
+        payload = {
+            "rosters": [{
+                "team": {"displayName": "Alpha"},
+                "roster": [{
+                    "athlete": {"id": "111", "displayName": "Mario Rossi", "position": {"abbreviation": "F"}},
+                    "starter": True,
+                    "stats": [
+                        {"name": "minutes", "displayValue": "90"},
+                        {"name": "totalGoals", "abbreviation": "G", "displayValue": "2"},
+                        {"name": "goalAssists", "abbreviation": "A", "displayValue": "1"},
+                        {"name": "totalShots", "abbreviation": "SHOT", "displayValue": "5"},
+                    ],
+                }],
+            }],
+            "details": [],
+        }
+        parsed = enrich.parse_summary(payload, "2026-08-15")
+        self.assertEqual(len(parsed), 1)
+        _, player = parsed[0]
+        self.assertEqual(player["goals"], 2, "con il nome reale 'totalGoals' i gol non devono più risultare 0")
+        self.assertEqual(player["assists"], 1)
+        self.assertEqual(player["shots"], 5)
+
+    def test_goals_field_name_fallbacks_still_work_defensively(self) -> None:
+        # Se un'altra lega/endpoint usasse davvero "goals"/"goal"/"G" come unico nome, deve
+        # comunque funzionare: la wanted-list amplia, non sostituisce.
+        for field_name in ("goals", "goal"):
+            payload = {
+                "rosters": [{
+                    "team": {"displayName": "Alpha"},
+                    "roster": [{
+                        "athlete": {"id": "111", "displayName": "Mario Rossi"},
+                        "starter": True,
+                        "stats": [
+                            {"name": "minutes", "displayValue": "90"},
+                            {"name": field_name, "displayValue": "3"},
+                        ],
+                    }],
+                }],
+                "details": [],
+            }
+            parsed = enrich.parse_summary(payload, "2026-08-15")
+            self.assertEqual(parsed[0][1]["goals"], 3, f"fallback su '{field_name}' non ha funzionato")
 
 
 class TeamCardEventsTests(unittest.TestCase):

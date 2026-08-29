@@ -18,6 +18,36 @@
 
 .checkbox-field input { margin-top: .2rem; flex: 0 0 auto; }
 
+.settings-fieldset {
+  margin: 1rem 0 0;
+  padding: .9rem 1rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.settings-fieldset legend {
+  padding: 0 .4rem;
+  color: var(--text-soft);
+  font-size: .76rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+
+/* Dentro il fieldset le caselle stanno già in un contenitore con bordo: il primo elemento non
+   deve staccarsi dalla legenda con lo stesso margine che usa fuori. */
+.settings-fieldset .checkbox-field:first-of-type { margin-top: .3rem; }
+
+#schedina-warnings {
+  margin: .9rem 0 0;
+  padding: .7rem .9rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--surface-subtle);
+  font-size: .78rem;
+  line-height: 1.5;
+}
+
 .schedina-leg__source {
   margin-left: .4rem;
   padding: .1rem .4rem;
@@ -75,4 +105,39 @@
     row-gap: .15rem;
   }
   .schedina-leg__match { grid-column: 1 / -1; }
+}
+
+/* Riepilogo della schedina. La quota totale e' il numero per cui si apre questa pagina: sta in
+   cima, in grande, prima dell'elenco delle selezioni. */
+.schedina-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .75rem 1.75rem;
+  align-items: flex-end;
+  margin: 0 0 1rem;
+  padding: .9rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-subtle);
+}
+
+.schedina-summary__item { display: flex; flex-direction: column; gap: .15rem; }
+
+.schedina-summary__label {
+  color: var(--text-soft);
+  font-size: .68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+}
+
+.schedina-summary__value { font-size: 1.05rem; font-weight: 700; line-height: 1.2; }
+.schedina-summary__value--total { font-size: 1.75rem; letter-spacing: -.01em; }
+
+.schedina-summary__note {
+  flex: 1 1 100%;
+  margin: 0;
+  color: var(--text-soft);
+  font-size: .76rem;
+  line-height: 1.45;
 }

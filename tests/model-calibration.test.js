@@ -66,7 +66,7 @@ assert.ok(Math.abs(meanAwayLambda - balancedPrediction.league.awayGoals) < 0.25)
 assert.ok(meanHomeLambda > meanAwayLambda);
 assert.equal(balancedPrediction.calibration.neutralGeneralBaseline, true);
 assert.equal(balancedPrediction.calibration.xgEloBlend, 0.45);
-assert.equal(balancedPrediction.modelVersion, "5.0-calibrated-recency-xg-elo");
+assert.equal(balancedPrediction.modelVersion, "6.0-shrunk-asymmetry");
 
 function xgEloDataset(dominantXg) {
   const matches = balancedLeague(22);

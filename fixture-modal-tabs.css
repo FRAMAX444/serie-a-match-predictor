@@ -77,6 +77,44 @@
   font-weight: 750;
 }
 
+.fixture-modal__panel .players-team h4 small {
+  margin-left: 6px;
+  color: rgba(229, 231, 235, .5);
+  font-size: .7rem;
+  font-weight: 500;
+}
+
+.fixture-modal__panel .lineup-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: .74rem;
+  line-height: 1.7;
+  color: #eef0f3;
+}
+
+.fixture-modal__panel .lineup-list b {
+  display: inline-block;
+  min-width: 30px;
+  color: rgba(229, 231, 235, .55);
+  font-size: .68rem;
+  font-weight: 700;
+}
+
+/* Marca visibilmente le stime costruite su pochi minuti osservati: senza, una probabilità
+   dedotta da 20 minuti campionati sembrerebbe attendibile quanto una dedotta da una stagione. */
+.fixture-modal__panel .player-row__weak {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .08);
+  color: rgba(229, 231, 235, .55);
+  font-size: .62rem;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: .02em;
+}
+
 .fixture-modal__panel .player-row {
   display: flex;
   flex-wrap: wrap;

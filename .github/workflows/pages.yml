@@ -5,9 +5,6 @@ on:
     branches: [main]
   workflow_dispatch:
 
-env:
-  TARGET_SEASON: "2627"
-
 permissions:
   contents: read
   pages: write
@@ -28,11 +25,17 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Build compact production dataset
-        run: python scripts/update_top5_data.py --target-season "$TARGET_SEASON" --history-seasons 4 --skip-understat
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      # Il deploy pubblica il dataset che sta nel repository, quello che update-data.yml
+      # costruisce (update_top5_data.py), arricchisce (enrich_competitions_players.py), valida e
+      # committa quattro volte al giorno — cioe' la stessa sequenza che si lancia in locale.
+      #
+      # PRIMA questo job ricostruiva data/matches.json da solo, con `--skip-understat` e senza
+      # l'arricchimento: il sito pubblicato serviva quindi un dataset diverso da quello validato,
+      # senza xG reali e senza player_context. Non e' una scelta di leggerezza, e' il difetto 18
+      # di MISTAKES.md. I controlli qui sotto sono la rete che impedisce di ricaderci.
       - name: Validate application and production payload
         run: |
           python -m py_compile scripts/update_europe_data.py scripts/update_uefa_data.py scripts/update_top5_data.py
@@ -53,11 +56,35 @@ jobs:
           missing = sorted(expected - available)
           if missing:
               raise SystemExit(f"Competizioni mancanti nel deploy: {', '.join(missing)}")
+          # La versione la scrive chi COSTRUISCE il dataset. Che l'arricchimento sia stato
+          # eseguito lo dice player_context qui sotto, non questa stringa.
           if payload.get("model_inputs_version") != "4.1-top5-uefa-core":
-              raise SystemExit("Versione dataset di produzione non valida")
+              raise SystemExit(
+                  "Versione dataset di produzione non valida: "
+                  f"{payload.get('model_inputs_version')!r}. Attesa quella scritta da "
+                  "update_top5_data.py."
+              )
+          coverage = payload.get("coverage") or {}
+          # I due campi che il vecchio deploy azzerava in silenzio. Entrambi producono numeri
+          # plausibili quando mancano — il modello ripiega sul proxy dei tiri e i mercati sui
+          # giocatori spariscono dall'interfaccia — quindi vanno verificati, non guardati.
+          if not payload.get("player_context"):
+              raise SystemExit(
+                  "player_context assente: il sito perderebbe mercati sui giocatori e "
+                  "formazioni probabili senza alcun errore visibile."
+              )
+          if not coverage.get("xg_actual_matches"):
+              raise SystemExit(
+                  "Nessuna gara con xG reale nel dataset: xgValue() ripiegherebbe sul proxy "
+                  "dei tiri per ogni partita, cioe' su un modello diverso da quello misurato."
+              )
           size = path.stat().st_size
-          limit = 6 * 1024 * 1024
-          print(f"Payload produzione: {size / 1024:.1f} KiB; competizioni: {len(available)}")
+          limit = 12 * 1024 * 1024
+          print(
+              f"Payload produzione: {size / 1024:.1f} KiB; competizioni: {len(available)}; "
+              f"xG reali: {coverage.get('xg_actual_matches')}/{coverage.get('training_matches')}; "
+              f"squadre con rosa: {coverage.get('player_context_teams')}"
+          )
           if size > limit:
               raise SystemExit(f"Payload troppo pesante: {size} byte, limite {limit}")
           PY

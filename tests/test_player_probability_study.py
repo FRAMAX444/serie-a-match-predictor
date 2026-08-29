@@ -2,12 +2,24 @@ import sys
 import unittest
 from pathlib import Path
 
-import numpy as np
-
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import validate_player_probabilities as study
+# numpy/scipy/matplotlib servono solo allo studio Monte Carlo, non alla pipeline dati né
+# all'app: requirements.txt lo dice esplicitamente e nessun workflow le installa. Importarle a
+# livello di modulo faceva fallire l'INTERA suite Python con un ImportError su una dipendenza
+# dichiarata facoltativa — compreso su .github/workflows/validate-pr.yml, che esegue
+# `python -m unittest discover` senza alcun pip install. Un test che non può girare va saltato,
+# non deve nascondere il risultato di tutti gli altri.
+try:
+    import numpy as np
+
+    import validate_player_probabilities as study
+except ImportError as error:  # pragma: no cover - dipende dall'ambiente, non dal codice
+    raise unittest.SkipTest(
+        f"Studio Monte Carlo non verificabile senza le dipendenze facoltative ({error}). "
+        "Installa numpy/scipy/matplotlib con: pip install -r requirements.txt"
+    ) from error
 
 
 # Questi test validano il codice di STUDIO (le funzioni statistiche in

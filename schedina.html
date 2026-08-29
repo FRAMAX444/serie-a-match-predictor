@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="description" content="Genera una combinazione di partite verso una quota target, scelta per massimizzare la probabilità stimata dal modello." />
+  <meta name="description" content="Genera una schedina indicando quante partite giocare e quanta sicurezza vuoi: il modello cerca la combinazione che paga di più rispettando quella sicurezza." />
   <title>Schedina · Match Predictor</title>
   <link rel="stylesheet" href="styles.css" />
   <link rel="stylesheet" href="global.css" />
@@ -20,26 +20,14 @@
         <a class="back-link" href="settings.html">Impostazioni →</a>
       </div>
       <h1>Genera schedina</h1>
-      <p>Cerca, tra le partite del prossimo turno di una lega, la combinazione con la probabilità stimata più alta che raggiunge la quota indicata. Le quote sono richieste in tempo reale solo quando premi "Genera" — nessuna chiamata automatica in background.</p>
+      <p>Dì quante partite vuoi giocare e quanta sicurezza vuoi: il modello cerca, tra tutte le combinazioni possibili del prossimo turno, quella che <strong>paga di più rispettando la sicurezza richiesta</strong>. Funziona anche senza chiave API, sulle quote eque stimate dal modello; con una chiave usa le quote reali di mercato e cerca dove il banco paga più del dovuto.</p>
     </header>
 
     <form class="settings-stack" id="schedina-form">
       <section class="settings-card">
         <div class="settings-card__heading">
-          <h2>Chiave API quote</h2>
-          <p>Serve una chiave personale di <a href="https://the-odds-api.com/" target="_blank" rel="noopener">the-odds-api.com</a> (piano gratuito: 500 richieste/mese, nessuna carta richiesta). Resta salvata solo in questo browser, non viene mai inviata altrove se non alla loro API.</p>
-        </div>
-        <div class="settings-grid">
-          <label>
-            <span>Chiave API</span>
-            <input id="schedina-api-key" type="password" autocomplete="off" placeholder="Incolla qui la tua chiave" />
-          </label>
-        </div>
-      </section>
-
-      <section class="settings-card">
-        <div class="settings-card__heading">
           <h2>Parametri schedina</h2>
+          <p>La sicurezza è la probabilità che la schedina <em>intera</em> vinca, non quella della singola partita. Più sicurezza significa quota più bassa: è un compromesso, non una scelta gratuita.</p>
         </div>
         <div class="settings-grid settings-grid--three">
           <label>
@@ -47,24 +35,57 @@
             <select id="schedina-competition"><option value="">Caricamento leghe…</option></select>
           </label>
           <label>
-            <span>Quota target</span>
-            <input id="schedina-target" type="number" min="1.1" step="0.1" value="5" />
+            <span>Numero di partite</span>
+            <input id="schedina-legs" type="number" min="1" max="12" step="1" value="4" />
           </label>
           <label>
-            <span>Probabilità minima per gamba</span>
-            <select id="schedina-min-probability">
-              <option value="0.5">Molto prudente (≥ 50%)</option>
-              <option value="0.35" selected>Prudente (≥ 35%)</option>
-              <option value="0.25">Bilanciata (≥ 25%)</option>
+            <span>Sicurezza della previsione</span>
+            <select id="schedina-confidence">
+              <option value="massima">Massima (~50% che vinca)</option>
+              <option value="alta">Alta (~35%)</option>
+              <option value="media" selected>Media (~20%)</option>
+              <option value="bassa">Bassa (~10%, quota più alta)</option>
             </select>
           </label>
         </div>
-        <label class="checkbox-field">
-          <input id="schedina-player-markets" type="checkbox" />
-          <span>Includi anche marcatori tra le selezioni possibili (sperimentale: una chiamata API in più per partita, quote reali solo se il tuo piano the-odds-api.com le copre — altrimenti quota equa stimata dal modello, etichettata come tale)</span>
-        </label>
+        <fieldset class="settings-fieldset">
+          <legend>Mercati utilizzabili</legend>
+          <label class="checkbox-field">
+            <input class="schedina-market" type="checkbox" value="1X2" checked />
+            <span>Esito finale (1, X, 2)</span>
+          </label>
+          <label class="checkbox-field">
+            <input class="schedina-market" type="checkbox" value="doppia" checked />
+            <span>Doppia chance (1X, 12, X2)</span>
+          </label>
+          <label class="checkbox-field">
+            <input class="schedina-market" type="checkbox" value="gol" checked />
+            <span>Over/Under e Gol/No gol</span>
+          </label>
+          <label class="checkbox-field">
+            <input class="schedina-market" type="checkbox" value="squadra" />
+            <span>Squadra segna</span>
+          </label>
+          <label class="checkbox-field">
+            <input class="schedina-market" type="checkbox" value="giocatori" />
+            <span>Mercati sui giocatori (marcatore, tiri, gol o assist) — stime ancorate al pronostico della partita, meno affidabili di quelle sulla squadra</span>
+          </label>
+        </fieldset>
         <div class="settings-actions">
           <button id="schedina-generate" class="primary-button" type="submit"><span>Genera schedina</span></button>
+        </div>
+      </section>
+
+      <section class="settings-card">
+        <div class="settings-card__heading">
+          <h2>Quote reali (facoltativo)</h2>
+          <p>Senza chiave la schedina usa le quote eque del modello (1 ÷ probabilità), utili per capire quanto <em>dovrebbe</em> pagare ma non quanto pagherà davvero. Con una chiave personale di <a href="https://the-odds-api.com/" target="_blank" rel="noopener">the-odds-api.com</a> (piano gratuito: 500 richieste/mese, nessuna carta richiesta) vengono usate le quote di mercato reali, e la ricerca privilegia le selezioni pagate più del loro valore. La chiave resta salvata solo in questo browser.</p>
+        </div>
+        <div class="settings-grid">
+          <label>
+            <span>Chiave API</span>
+            <input id="schedina-api-key" type="password" autocomplete="off" placeholder="Facoltativa — incolla qui la tua chiave" />
+          </label>
         </div>
       </section>
 
@@ -72,11 +93,14 @@
 
       <section id="schedina-result" class="settings-card" hidden>
         <div class="settings-card__heading">
-          <h2>Combinazione trovata</h2>
-          <p id="schedina-summary"></p>
+          <h2>Schedina generata</h2>
         </div>
-        <div id="schedina-legs" class="schedina-legs"></div>
-        <p class="schedina-note">Ogni selezione aggiuntiva moltiplica il margine del bookmaker oltre che le quote: una combinazione a N selezioni ha margine complessivo più alto della somma dei margini singoli, anche quando ogni singola quota è equa. È la struttura di scommessa matematicamente meno favorevole al giocatore tra quelle disponibili, non un modo per aggirare il margine. La probabilità mostrata è la stima del modello, non una garanzia.</p>
+        <!-- Fuori da .settings-card__heading di proposito: ui-cleanup.css nasconde i <p> di
+             quelle intestazioni perche' sono copia esplicativa, e questo e' il RISULTATO. -->
+        <div id="schedina-summary" class="schedina-summary"></div>
+        <div id="schedina-selections" class="schedina-legs"></div>
+        <p id="schedina-warnings" class="settings-status" data-tone="warn" hidden></p>
+        <p class="schedina-note">Ogni selezione aggiuntiva moltiplica il margine del bookmaker oltre che le quote: una combinazione a N selezioni ha margine complessivo più alto della somma dei margini singoli, anche quando ogni singola quota è equa. È la struttura di scommessa matematicamente meno favorevole al giocatore tra quelle disponibili, non un modo per aggirare il margine. La probabilità mostrata è la stima del modello: "sicurezza alta" significa che secondo il modello la schedina vince circa una volta su tre, non che vincerà.</p>
       </section>
 
       <section id="schedina-manual" class="settings-card" hidden>

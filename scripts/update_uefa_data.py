@@ -115,14 +115,37 @@ def round_label(match: dict[str, object]) -> str | None:
     return phase.title() if phase else None
 
 
+# Nomi che l'API UEFA usa in modo INCOMPATIBILE con il resto della pipeline, e che non possono
+# essere risolti in TEAM_ALIASES perche' fuori da questo contesto significano un'altra squadra.
+#
+# "Paris": l'API UEFA chiama cosi' il Paris Saint-Germain. In Ligue 1 "Paris" e' il Paris FC,
+# promosso nel 2025-26, che nel dataset esiste come club a se' (fixture 2627: Paris-Nice,
+# PSG-Monaco). Senza questa mappa il dataset conteneva un "Paris" che era la somma delle 46 gare
+# europee del PSG e delle 35 di Ligue 1 del Paris FC, mentre il vero PSG restava con 103 gare
+# domestiche e ZERO europee. Nelle previsioni di coppa il PSG era quindi una chimera di due club.
+#
+# La mappa e' sicura finche' il Paris FC non gioca in Europa: verificato che nel dataset nessuna
+# riga UEFA porta "PSG" (0 gare), quindi la rinomina non puo' fondere due club distinti.
+# tests/test_dataset_identity_contract.py lo controlla a ogni esecuzione.
+UEFA_TEAM_OVERRIDES = {
+    "Paris": "PSG",
+}
+
+
+def uefa_team_name(team: dict[str, object]) -> str:
+    """Nome canonico di una squadra dall'API UEFA, con gli override di fonte applicati prima."""
+    raw = translated_name(team)
+    return base.normalize_team(UEFA_TEAM_OVERRIDES.get(raw.strip(), raw))
+
+
 def normalize_uefa_match(match: dict[str, object], descriptor: dict[str, object], season: str, source_index: int) -> dict[str, object] | None:
     home = match.get("homeTeam")
     away = match.get("awayTeam")
     kickoff = match.get("kickOffTime")
     if not isinstance(home, dict) or not isinstance(away, dict) or not isinstance(kickoff, dict):
         return None
-    home_team = base.normalize_team(translated_name(home))
-    away_team = base.normalize_team(translated_name(away))
+    home_team = uefa_team_name(home)
+    away_team = uefa_team_name(away)
     raw_datetime = str(kickoff.get("dateTime") or "").strip()
     match_date = str(kickoff.get("date") or raw_datetime[:10]).strip()[:10]
     if not home_team or not away_team or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", match_date):
