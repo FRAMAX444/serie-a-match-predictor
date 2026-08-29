@@ -2048,3 +2048,73 @@ delle partite, delle fixture, di `teams` e delle chiavi di `team_context`/`playe
 
 È il difetto 7 di `MISTAKES.md` nella sua forma generale: **la correzione deve stare su ogni
 percorso che scrive**, non solo su quello che si aveva in mente.
+
+---
+
+## 27. Asimmetria contro livello — il divario dal mercato non si concentra su una delle due
+
+Misura del 28/08/2026. `scripts/diag_market_dimensions.mjs`, 3551 gare Big Five dal 2024-08-01,
+confronto **appaiato** (stessa partita, due previsori) contro la linea di **chiusura** de-vigata.
+
+La domanda: la matrice dei punteggi produce due cose separabili — l'asimmetria (chi vince, che
+l'1X2 misura) e il livello (quanti gol in totale, che l'Over/Under 2.5 misura) — e la
+calibrazione 6.0 le tratta gia' come distinte (`levelShrink` 0.45 contro `asymmetryShrink` 0.71).
+Se il divario dal mercato stesse tutto sull'asimmetria, il livello sarebbe una dimensione poco
+sfruttata su cui insistere.
+
+| dimensione | n | modello | mercato | divario ± e.s. | σ | % del mercato |
+|---|---|---|---|---|---|---|
+| 1X2 (asimmetria) | 3551 | 0.9919 | 0.9688 | **+0.0231 ± 0.0030** | 7.7 | 2.39% |
+| O/U 2.5 (livello) | 3551 | 0.6828 | 0.6689 | **+0.0138 ± 0.0021** | 6.7 | 2.07% |
+
+**Risposta: no.** In termini relativi le due dimensioni sono quasi identiche (2.39% contro
+2.07%), ed entrambe sono dietro il mercato di piu' di 6σ. Il livello non e' una dimensione
+inesplorata: e' indietro quanto l'asimmetria.
+
+### 27.1 Per lega
+
+| lega | 1X2 divario ± e.s. (σ) | O/U divario ± e.s. (σ) |
+|---|---|---|
+| eng.1 | +0.0127 ± 0.0069 (1.8) | +0.0163 ± 0.0043 (3.8) |
+| esp.1 | +0.0244 ± 0.0059 (4.1) | +0.0128 ± 0.0051 (2.5) |
+| fra.1 | +0.0285 ± 0.0076 (3.8) | +0.0192 ± 0.0047 (4.0) |
+| ger.1 | +0.0299 ± 0.0072 (4.1) | +0.0189 ± 0.0047 (4.0) |
+| ita.1 | +0.0224 ± 0.0063 (3.6) | **+0.0041 ± 0.0042 (1.0)** |
+
+L'Over/Under di Serie A e' a livello di mercato entro il rumore. **Non e' un risultato**: sono
+dieci confronti, e con dieci confronti una casella a 1σ e' esattamente cio' che ci si aspetta dal
+caso. Va trattata come un'ipotesi da pre-registrare (R15) e verificare su una finestra successiva,
+non come una scoperta.
+
+### 27.2 Movimento apertura → chiusura
+
+La sola metrica che si traduce in denaro: se il disaccordo del modello con la linea di
+**apertura** predice la direzione in cui la linea si muove fino alla **chiusura**, il modello sa
+qualcosa in anticipo; se non lo predice, quel disaccordo e' imprecisione.
+
+| mercato | n | quote mosse nella nostra direzione | movimento catturato ± e.s. | σ |
+|---|---|---|---|---|
+| 1X2 casa | 3550 | **52.6%** | +0.00157 ± 0.00046 | 3.4 |
+| Over 2.5 | 3513 | 49.8% | +0.00054 ± 0.00046 | 1.2 |
+
+Sull'1X2 il 52.6% e' sopra il caso in modo statisticamente rilevabile (3.1σ dal 50%). **Ed e'
+economicamente irrilevante**: il movimento catturato vale 0.16 punti percentuali di probabilita',
+contro un margine del banco che su queste gare misura il 6.4% (overround medio 1.0636). Serve
+quaranta volte tanto per pagare il margine.
+
+C'e' anche una ragione metodologica per non prendere quel 3.4σ per buono: il modello prevede con
+`cutoffDate` alla data della partita, quindi vede tutti i risultati fino alla vigilia, mentre la
+linea di apertura e' stata fissata giorni prima. Parte del "movimento anticipato" e' informazione
+che il mercato non aveva ancora e noi si'. Misurato correttamente — prevedendo alla data di
+apertura — il numero puo' solo scendere.
+
+Sull'Over/Under il disaccordo non predice nulla (49.8%, 1.2σ): sul livello il modello non
+anticipa il mercato nemmeno in modo rilevabile.
+
+### 27.3 Cosa ne segue
+
+Le due misure insieme chiudono la domanda aperta in §4 del prompt sessione 3: non esiste una
+dimensione in cui il modello sia vicino al mercato. Con un modello dietro la linea su entrambe,
+il disaccordo con il mercato **e' l'errore del modello**, non un'opportunita': un filtro del tipo
+"punta dove vedo il 5% di valore" seleziona per costruzione le partite in cui il modello sbaglia
+di piu'. E' la definizione di essere dietro, non un problema di taratura.

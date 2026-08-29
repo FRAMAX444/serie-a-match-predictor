@@ -14,12 +14,12 @@ Riferimenti puntuali in `docs/misure-riferimento.md`.
 
 ## Il quadro d'insieme
 
-Ventiquattro difetti, e si distribuiscono in modo molto disuguale:
+Venticinque difetti, e si distribuiscono in modo molto disuguale:
 
 | categoria | quanti | impatto misurato sulle previsioni |
 |---|---|---|
 | Identità dei dati (nomi, alias, join) | 7 | il più grande mai misurato: **+0.0145** in Champions |
-| Produzione ≠ misura | 5 | nullo o non misurabile, ma invalidava *ogni* misura |
+| Produzione ≠ misura | 6 | nullo o non misurabile, ma invalidava *ogni* misura |
 | Campi calcolati male | 4 | da nullo a "azzerava un'intera funzione" |
 | Interfaccia e flusso | 8 | funzione principale inutilizzabile, o generata e invisibile |
 
@@ -476,6 +476,35 @@ Verificato rimettendo l'elemento dov'era: il test fallisce.
 
 ---
 
+## 25. Il "divario dal mercato di chiusura" era misurato contro l'apertura
+
+**Cosa.** `parse_csv()` leggeva `AvgH/B365H/PSH`, che nel formato Football-Data.co.uk sono le
+quote di **apertura**. Le colonne di chiusura hanno una C prima dell'esito (`AvgCH`, `PSCH`),
+stanno nello stesso CSV gia' scaricato, e venivano scartate. README, `backtest_vs_market.mjs` e
+ogni misura del divario le chiamavano pero' "quote di chiusura".
+
+**Costo.** Il numero piu' citato del progetto — il divario dal mercato, +0.0214 ± 0.0028 — era il
+divario dalla linea di **apertura**, che e' piu' debole e quindi piu' facile da avvicinare.
+Rimisurato contro la chiusura sulle stesse 3551 gare: **+0.0231 ± 0.0030 (7.7σ)**. La conclusione
+non cambia di segno — il mercato era davanti e resta davanti — ma ogni frase del tipo "il divario
+si e' dimezzato" era calcolata contro il benchmark sbagliato, e in direzione lusinghiera.
+
+**Perche' nessun test l'ha visto.** Le colonne esistono entrambe e contengono entrambe numeri
+plausibili: `6.31` e `7.03` sono tutte e due quote credibili per la stessa partita. Nessun test
+guardava i nomi delle colonne, e il commento sopra la riga *diceva* "chiusura" — cioe' la stessa
+forma dei difetti 2 e 6, dove un commento plausibile e falso motivava una scorciatoia che nessuno
+aveva verificato.
+
+**Cosa lo intercetta ora.** `parse_csv()` estrae apertura **e** chiusura in campi distinti
+(`home_odds` contro `home_odds_close`), piu' miglior prezzo di chiusura, Over/Under 2.5 e handicap
+asiatico. `backtest_vs_market.mjs` usa la chiusura e **dichiara nel risultato** contro quale linea
+ha misurato (`marketLine`), perche' un numero che non dice quale benchmark usa non e'
+interpretabile. `tests/test_closing_odds_columns.py` verifica che i due campi leggano colonne
+diverse, che un CSV senza colonne di chiusura lasci i campi a `None` invece di ricadere
+sull'apertura, e che i campi sopravvivano a `compact_match()`.
+
+---
+
 ## 10-16. Difetti chiusi nelle sessioni precedenti
 
 Riassunti perché il pattern si veda per intero.
@@ -496,10 +525,10 @@ Riassunti perché il pattern si veda per intero.
 
 ## Cosa ne segue
 
-**Il confine è il posto pericoloso.** Ventidue difetti su ventiquattro stanno fra due componenti, non
+**Il confine è il posto pericoloso.** Ventitre difetti su venticinque stanno fra due componenti, non
 dentro uno. Fra due fonti (9, 10, 3), fra produzione e misura (1, 2), fra coppe e campionato (3),
 fra due funzioni che formattano lo stesso dizionario (6), fra pipeline e strumento manuale (7),
-fra un parametro e i suoi chiamanti (16), fra un id HTML e i due modi di leggerlo (8), fra una regola di stile e il contenuto che colpisce (24), fra la versione della pagina servita e quella dello script (17), fra il workflow che costruisce il dataset e quello che lo pubblica (18), fra i nostri nomi di squadra e quelli del servizio di quote (19, 20), fra la scala di prezzo del modello e quella del mercato (21), fra i mercati documentati e l'endpoint che li accetta (22), fra i nostri nomi di giocatore e quelli del bookmaker (23), fra due funzioni che abbinano le stesse partite (9). I test unitari coprono i componenti; i contratti
+fra un parametro e i suoi chiamanti (16), fra un id HTML e i due modi di leggerlo (8), fra una regola di stile e il contenuto che colpisce (24), fra il nome di una colonna e ciò che quella colonna contiene (25), fra la versione della pagina servita e quella dello script (17), fra il workflow che costruisce il dataset e quello che lo pubblica (18), fra i nostri nomi di squadra e quelli del servizio di quote (19, 20), fra la scala di prezzo del modello e quella del mercato (21), fra i mercati documentati e l'endpoint che li accetta (22), fra i nostri nomi di giocatore e quelli del bookmaker (23), fra due funzioni che abbinano le stesse partite (9). I test unitari coprono i componenti; i contratti
 coprono i confini, e sono quelli che hanno trovato qualcosa.
 
 **Un valore neutro nasconde il difetto a monte.** Il difetto 2 era invisibile perché i suoi

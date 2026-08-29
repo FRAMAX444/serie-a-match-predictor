@@ -141,3 +141,59 @@
   font-size: .76rem;
   line-height: 1.45;
 }
+
+/* Una schedina della serie: dieci blocchi uguali devono restare distinguibili a colpo d'occhio,
+   quindi il numero e la quota stanno sulla stessa riga dell'intestazione. */
+.schedina-card {
+  margin: 0 0 .85rem;
+  padding: .75rem .9rem .5rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.schedina-card__head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .35rem .9rem;
+  align-items: baseline;
+  margin-bottom: .5rem;
+}
+
+.schedina-card__rank {
+  font-size: .7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--text-soft);
+}
+
+.schedina-card__odds { font-size: .95rem; }
+.schedina-card__prob { margin-left: auto; font-size: .8rem; color: var(--text-soft); }
+
+/* Lo stato di una schedina verificata si legge dal bordo, senza doverla aprire. */
+.schedina-card[data-status="vinta"] { border-color: rgba(22, 163, 74, .55); }
+.schedina-card[data-status="persa"] { border-color: rgba(220, 38, 38, .45); }
+.schedina-card[data-status="non verificabile"] { border-style: dashed; }
+
+.schedina-leg[data-outcome="vinta"] .schedina-leg__prob { color: #15803d; font-weight: 700; }
+.schedina-leg[data-outcome="persa"] .schedina-leg__prob { color: #b91c1c; font-weight: 700; }
+.schedina-leg[data-outcome="in attesa"] .schedina-leg__prob,
+.schedina-leg[data-outcome="non verificabile"] .schedina-leg__prob { color: var(--text-soft); }
+
+.storico-series {
+  margin: 0 0 .9rem;
+  padding: .6rem .8rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-subtle);
+}
+
+.storico-series summary { cursor: pointer; font-size: .82rem; line-height: 1.5; }
+.storico-series[open] summary { margin-bottom: .75rem; }
+
+/* Una tabella non deve poter allargare la pagina: scorre da sola. */
+.storico-table-wrap { flex: 1 1 100%; overflow-x: auto; }
+.storico-table { width: 100%; border-collapse: collapse; font-size: .8rem; }
+.storico-table th, .storico-table td { padding: .35rem .6rem; text-align: left; border-bottom: 1px solid var(--line); }
+.storico-table th { color: var(--text-soft); font-size: .7rem; text-transform: uppercase; letter-spacing: .04em; }

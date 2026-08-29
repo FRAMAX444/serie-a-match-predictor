@@ -319,6 +319,7 @@ body.has-custom-background .settings-card {
 .settings-card__heading p { font-size: .78rem; }
 .settings-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .8rem; align-items: end; }
 .settings-grid--three { grid-template-columns: 1.2fr .8fr .8fr; }
+.settings-grid--four { grid-template-columns: 1.1fr .7fr .7fr .9fr; }
 .settings-grid--background { grid-template-columns: 1fr auto; }
 .settings-grid label > span,
 .background-control > span { display: block; margin-bottom: .42rem; color: var(--text-soft); font-size: .75rem; font-weight: 700; }
@@ -370,6 +371,7 @@ body.has-custom-background .settings-card {
   .settings-shell { width: min(100% - 1rem, 820px); padding-top: 1rem; }
   .settings-grid,
   .settings-grid--three,
+  .settings-grid--four,
   .settings-grid--background { grid-template-columns: 1fr; }
   .settings-actions { flex-direction: column; }
   .fixture-main { gap: .4rem; }

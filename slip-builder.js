@@ -107,11 +107,19 @@ function spreadSample(sorted, limit) {
   return [...picked].sort((left, right) => left - right).map((index) => sorted[index]);
 }
 
-function groupByFixture(candidates, minLegProbability, maxPerFixture) {
+// Quota minima per singola selezione. Senza questa soglia il vincolo di sicurezza spinge verso
+// selezioni quasi certe — un 1X al 92% paga 1.08 — che gonfiano la probabilita' combinata e non
+// pagano nulla: quattro gambe cosi' moltiplicano il margine del banco quattro volte per un
+// ritorno che non copre nemmeno una gamba persa. L'obiettivo da solo non basta a escluderle,
+// perche' e' il VINCOLO a metterle dentro.
+export const DEFAULT_MIN_LEG_ODDS = 1.2;
+
+function groupByFixture(candidates, minLegProbability, maxPerFixture, minLegOdds = 1) {
   const groups = new Map();
   for (const candidate of candidates) {
     if (!(candidate.probability >= minLegProbability)) continue;
     if (!(candidate.odds > 1)) continue;
+    if (!(candidate.odds >= minLegOdds)) continue;
     if (!groups.has(candidate.fixtureIndex)) groups.set(candidate.fixtureIndex, []);
     groups.get(candidate.fixtureIndex).push(candidate);
   }
@@ -159,7 +167,14 @@ const costUnits = (probability) => Math.ceil(-safeLog(probability) / COST_UNIT);
  * pseudo-polinomiale: O(partite × selezioni × unità di costo × candidati per partita), qualche
  * centinaio di migliaia di operazioni, millisecondi. Resta esatto a meno di COST_UNIT.
  */
-function optimiseSlip(fixtures, legs, capacityUnits) {
+// `constraints[i]` fissa o vieta la decisione sulla partita i:
+//   { pin: n }        -> si DEVE prendere l'opzione n
+//   { pin: "skip" }   -> la partita si DEVE saltare
+//   { ban: n }        -> l'opzione n e' vietata (le altre, e il salto, restano)
+//   { ban: "skip" }   -> saltare e' vietato (una selezione va presa, quale che sia)
+// Serve alla procedura di Lawler per enumerare le K schedine migliori riusando questo stesso
+// ottimizzatore invece di scriverne un secondo, che divergerebbe da questo alla prima modifica.
+function optimiseSlip(fixtures, legs, capacityUnits, constraints = []) {
   const width = capacityUnits + 1;
   // score[k][u] = punteggio massimo con k selezioni e costo accumulato esattamente u.
   let score = Array.from({ length: legs + 1 }, () => new Float64Array(width).fill(-Infinity));
@@ -169,8 +184,18 @@ function optimiseSlip(fixtures, legs, capacityUnits) {
   const choices = [];
 
   for (let index = 0; index < fixtures.length; index += 1) {
-    const next = score.map((row) => Float64Array.from(row));
+    const constraint = constraints[index] || {};
+    const skipAllowed = constraint.pin === undefined ? constraint.ban !== "skip" : constraint.pin === "skip";
+    // Il salto e' la riga portata avanti invariata: se e' vietato, si riparte da "irraggiungibile"
+    // e ogni stato dovra' essere raggiunto prendendo una selezione su questa partita.
+    const next = skipAllowed
+      ? score.map((row) => Float64Array.from(row))
+      : Array.from({ length: legs + 1 }, () => new Float64Array(width).fill(-Infinity));
     const choice = Array.from({ length: legs + 1 }, () => new Int32Array(width).fill(-1));
+    const allowed = (option) => {
+      if (constraint.pin !== undefined) return constraint.pin === option;
+      return constraint.ban !== option;
+    };
     for (let used = 0; used < legs; used += 1) {
       const row = score[used];
       const target = next[used + 1];
@@ -179,6 +204,7 @@ function optimiseSlip(fixtures, legs, capacityUnits) {
         const current = row[cost];
         if (current === -Infinity) continue;
         for (let option = 0; option < fixtures[index].length; option += 1) {
+          if (!allowed(option)) continue;
           const candidate = fixtures[index][option];
           const total = cost + candidate.costUnits;
           if (total >= width) continue;
@@ -207,6 +233,9 @@ function optimiseSlip(fixtures, legs, capacityUnits) {
   // Ricostruzione a ritroso: da (legs, bestCost) si risale scegliendo, a ogni partita, il
   // candidato registrato oppure il salto.
   const legsChosen = [];
+  // La decisione presa su OGNI partita, salto compreso (-1): e' cio' che permette di partizionare
+  // lo spazio delle soluzioni per trovare la seconda schedina migliore, la terza, e cosi' via.
+  const decisions = new Int32Array(fixtures.length).fill(-1);
   let used = legs;
   let cost = bestCost;
   for (let index = fixtures.length - 1; index >= 0; index -= 1) {
@@ -214,11 +243,13 @@ function optimiseSlip(fixtures, legs, capacityUnits) {
     const option = choices[index][used][cost];
     if (option < 0) continue;
     const candidate = fixtures[index][option];
+    decisions[index] = option;
     legsChosen.push(candidate);
     used -= 1;
     cost -= candidate.costUnits;
   }
-  return used === 0 ? legsChosen.reverse() : null;
+  if (used !== 0) return null;
+  return { legs: legsChosen.reverse(), decisions, score: bestScore };
 }
 
 // Massima probabilità combinata ottenibile con `legs` selezioni: la migliore di ogni partita,
@@ -241,41 +272,70 @@ function maximumAchievableCost(fixtures, legs) {
  *
  * @returns null se non esistono abbastanza partite con almeno una selezione ammissibile.
  */
-export function buildSlip(candidates, options = {}) {
+function prepareSearch(candidates, options) {
   const {
     legs = 3,
     confidence = "media",
     maxCandidatesPerFixture = 40,
     minLegProbability = null,
+    minLegOdds = DEFAULT_MIN_LEG_ODDS,
   } = options;
   const requested = Math.max(1, Math.round(legs));
   const requirements = resolveRequirements(confidence, requested);
   const floor = minLegProbability === null ? requirements.minLeg : minLegProbability;
+  const requestedOdds = Math.max(1, minLegOdds);
 
-  // Rilassamenti in ordine: prima si abbassa la soglia per singola selezione, poi il target
-  // combinato. Ogni passo viene registrato e riportato all'utente: una schedina che non
-  // rispetta la sicurezza richiesta va detta, non consegnata come se la rispettasse.
+  // Rilassamenti in ordine, ognuno registrato e riportato: una schedina che non rispetta cio'
+  // che le e' stato chiesto va detta, non consegnata come se lo rispettasse.
+  //
+  // L'ordine non e' arbitrario, e la gerarchia nemmeno: la SICUREZZA e' cio' che l'utente
+  // chiede, la quota minima e' una preferenza su come ottenerla. Le due possono essere
+  // incompatibili — "sicurezza massima" vuole selezioni al 72%, che pagano 1.39 al massimo —
+  // e in quel caso cede la quota minima, dicendolo.
   const relaxations = [];
-  let fixtures = groupByFixture(candidates, floor, maxCandidatesPerFixture);
   let appliedFloor = floor;
+  let appliedOdds = requestedOdds;
+  const regroup = () => groupByFixture(candidates, appliedFloor, maxCandidatesPerFixture, appliedOdds);
+  const prepare = (groups) => groups.map((group) => group.map((candidate) => ({
+    // Costo e punteggio si calcolano una volta sola per candidato: la programmazione dinamica
+    // li rilegge migliaia di volte.
+    ...candidate,
+    costUnits: costUnits(candidate.probability),
+    score: legScore(candidate),
+  })));
+
+  let fixtures = regroup();
   while (fixtures.length < requested && appliedFloor > 0.2) {
     appliedFloor = Math.max(0.2, appliedFloor - 0.05);
-    fixtures = groupByFixture(candidates, appliedFloor, maxCandidatesPerFixture);
+    fixtures = regroup();
+  }
+  while (fixtures.length < requested && appliedOdds > 1.01) {
+    appliedOdds = Math.max(1.01, appliedOdds - 0.05);
+    fixtures = regroup();
   }
   if (appliedFloor < floor) {
     relaxations.push(`soglia per selezione abbassata da ${Math.round(floor * 100)}% a ${Math.round(appliedFloor * 100)}%`);
   }
   if (fixtures.length < requested) return null;
 
-  // Costo e punteggio si calcolano una volta sola per candidato: la programmazione dinamica li
-  // rilegge migliaia di volte.
-  const prepared = fixtures.map((group) => group.map((candidate) => ({
-    ...candidate,
-    costUnits: costUnits(candidate.probability),
-    score: legScore(candidate),
-  })));
-
   let capacity = Math.floor(-safeLog(requirements.target) / COST_UNIT);
+  let prepared = prepare(fixtures);
+  // La quota minima puo' rendere irraggiungibile la sicurezza richiesta, perche' toglie proprio
+  // le selezioni quasi certe. Cede lei, un passo alla volta, finche' il target torna possibile.
+  while (maximumAchievableCost(prepared, requested) > capacity && appliedOdds > 1.01) {
+    appliedOdds = Math.max(1.01, appliedOdds - 0.05);
+    fixtures = regroup();
+    if (fixtures.length < requested) break;
+    prepared = prepare(fixtures);
+  }
+  if (fixtures.length < requested) return null;
+  if (appliedOdds < requestedOdds) {
+    relaxations.push(
+      `quota minima per selezione abbassata da ${requestedOdds.toFixed(2)} a ${appliedOdds.toFixed(2)}: `
+      + "la sicurezza richiesta non era raggiungibile con selezioni pagate almeno quanto chiesto",
+    );
+  }
+
   const bestPossibleCost = maximumAchievableCost(prepared, requested);
   if (bestPossibleCost > capacity) {
     relaxations.push(
@@ -285,10 +345,11 @@ export function buildSlip(candidates, options = {}) {
     );
     capacity = bestPossibleCost;
   }
+  return { prepared, requested, requirements, capacity, relaxations, appliedFloor, appliedOdds };
+}
 
-  const chosenLegs = optimiseSlip(prepared, requested, capacity);
-  if (!chosenLegs) return null;
-
+function assembleSlip(chosenLegs, context) {
+  const { requested, requirements, relaxations, appliedFloor, appliedOdds } = context;
   const combinedProbability = chosenLegs.reduce((total, leg) => total * leg.probability, 1);
   const combinedOdds = chosenLegs.reduce((total, leg) => total * leg.odds, 1);
   return {
@@ -300,10 +361,158 @@ export function buildSlip(candidates, options = {}) {
     // e va letto come "nessun vantaggio dimostrabile", non come "scommessa equa vantaggiosa".
     expectedReturn: combinedOdds * combinedProbability,
     requestedLegs: requested,
-    confidence: { ...requirements, appliedMinLeg: appliedFloor },
+    confidence: { ...requirements, appliedMinLeg: appliedFloor, appliedMinOdds: appliedOdds },
     targetProbability: requirements.target,
     targetMet: combinedProbability >= requirements.target - 1e-9,
     relaxations,
     usesMarketOdds: chosenLegs.some((leg) => leg.source === "market"),
   };
+}
+
+/** Cerca la schedina migliore con ESATTAMENTE `legs` selezioni, al più una per partita. */
+export function buildSlip(candidates, options = {}) {
+  const context = prepareSearch(candidates, options);
+  if (!context) return null;
+  const solution = optimiseSlip(context.prepared, context.requested, context.capacity);
+  return solution ? assembleSlip(solution.legs, context) : null;
+}
+
+/**
+ * Le `count` schedine MIGLIORI e tutte diverse fra loro, in ordine di punteggio.
+ *
+ * Non sono dieci schedine a caso ne' dieci varianti della prima: e' l'enumerazione esatta delle
+ * prime `count` soluzioni, ottenuta con la procedura di Lawler. Trovata la migliore, lo spazio
+ * delle soluzioni rimanenti si partiziona in blocchi disgiunti — per ogni partita: "decisa come
+ * nella migliore fino a qui, e diversa QUI" — e ognuno si risolve con lo stesso ottimizzatore
+ * gia' usato per la prima. Ogni schedina esce una volta sola, e la k-esima e' davvero la
+ * k-esima migliore.
+ *
+ * Costa `count × partite` esecuzioni della programmazione dinamica, cioe' millisecondi.
+ *
+ * ATTENZIONE, e l'interfaccia lo dice: dieci schedine dello stesso turno condividono le
+ * partite, quindi condividono anche gli esiti. Giocarle tutte non e' diversificare — e' la
+ * stessa scommessa moltiplicata, con la stessa correlazione dentro.
+ */
+export function buildSlipSeries(candidates, options = {}) {
+  const { count = 10, maxExtractions = 600 } = options;
+  const wanted = Math.max(1, Math.round(count));
+  const context = prepareSearch(candidates, options);
+  if (!context) return [];
+  const { prepared, requested, capacity, relaxations } = context;
+
+  const first = optimiseSlip(prepared, requested, capacity);
+  if (!first) return [];
+
+  // DIVERSITA': ogni schedina deve avere almeno META' delle partite diverse da ciascuna delle
+  // altre gia' scelte. Il vincolo e' sulle PARTITE e non sulle selezioni, perche' due schedine
+  // sulle stesse quattro gare con mercati diversi non sono due alternative: se quel turno va
+  // male vanno male entrambe, che e' esattamente cio' da cui la diversita' dovrebbe proteggere.
+  const minDifferentFixtures = Math.max(1, Math.ceil(requested / 2));
+  const fixturesOf = (solution) => new Set(solution.legs.map((leg) => leg.fixtureIndex));
+  const differentEnough = (fixtures, other) => {
+    let shared = 0;
+    for (const fixture of fixtures) if (other.has(fixture)) shared += 1;
+    return fixtures.size - shared >= minDifferentFixtures;
+  };
+
+  // Enumerazione di Lawler: trovata la migliore, lo spazio si partiziona in blocchi disgiunti
+  // ("come questa fino a qui, diversa qui") e ognuno si risolve con lo stesso ottimizzatore.
+  // L'estrazione e' pigra e si ferma appena si hanno abbastanza schedine diverse: enumerarne un
+  // bacino fisso costerebbe centinaia di esecuzioni della programmazione dinamica anche quando
+  // ne bastano dieci.
+  const queue = [{ solution: first, constraints: [] }];
+  const seen = new Set();
+  const signature = (decisions) => decisions.join(",");
+  const chosen = [];
+  const chosenFixtures = [];
+  let extractions = 0;
+
+  while (chosen.length < wanted && queue.length && extractions < maxExtractions) {
+    let bestIndex = 0;
+    for (let index = 1; index < queue.length; index += 1) {
+      if (queue[index].solution.score > queue[bestIndex].solution.score) bestIndex = index;
+    }
+    const [current] = queue.splice(bestIndex, 1);
+    const key = signature(current.solution.decisions);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    extractions += 1;
+
+    const fixtures = fixturesOf(current.solution);
+    if (chosenFixtures.every((other) => differentEnough(fixtures, other))) {
+      chosen.push(current.solution);
+      chosenFixtures.push(fixtures);
+    }
+
+    const decisions = current.solution.decisions;
+    for (let fixture = 0; fixture < prepared.length; fixture += 1) {
+      const inherited = current.constraints[fixture];
+      if (inherited && inherited.pin !== undefined) continue; // qui la decisione era gia' fissata
+      const constraints = current.constraints.slice();
+      let conflict = false;
+      for (let earlier = 0; earlier < fixture; earlier += 1) {
+        const pin = decisions[earlier] < 0 ? "skip" : decisions[earlier];
+        const existing = constraints[earlier];
+        // Un vincolo ereditato che vieta proprio cio' che qui andrebbe fissato rende il blocco
+        // vuoto: si salta invece di risolvere un problema senza soluzioni.
+        if (existing && existing.ban !== undefined && existing.ban === pin) { conflict = true; break; }
+        constraints[earlier] = { pin };
+      }
+      if (conflict) continue;
+      constraints[fixture] = { ban: decisions[fixture] < 0 ? "skip" : decisions[fixture] };
+      const solution = optimiseSlip(prepared, requested, capacity, constraints);
+      if (solution && !seen.has(signature(solution.decisions))) queue.push({ solution, constraints });
+    }
+  }
+
+  // SECONDA FASE. L'enumerazione per punteggio decrescente si intasa: le prime soluzioni usano
+  // tutte le partite migliori, e dopo poche schedine nessuna delle successive ha abbastanza gare
+  // diverse. Su otto partite di Bundesliga si fermava a tre. Qui si forza la ricerca altrove,
+  // vietando (saltando) le partite piu' usate finora e riottimizzando: ogni risultato passa
+  // comunque il controllo di diversita' prima di essere accettato, quindi la promessa resta
+  // esatta — cambia solo dove si cerca.
+  let ban = minDifferentFixtures;
+  let attempts = 0;
+  while (chosen.length < wanted && attempts < wanted * 8 && ban < prepared.length) {
+    attempts += 1;
+    const usage = new Map();
+    for (const fixtures of chosenFixtures) {
+      for (const fixture of fixtures) usage.set(fixture, (usage.get(fixture) || 0) + 1);
+    }
+    const mostUsed = [...usage.entries()]
+      .sort((left, right) => right[1] - left[1] || left[0] - right[0])
+      .slice(0, ban)
+      .map(([fixture]) => fixture);
+    if (mostUsed.length < ban) break;
+    if (prepared.length - mostUsed.length < requested) break; // non resterebbero partite a sufficienza
+
+    const constraints = [];
+    for (const fixture of mostUsed) constraints[fixture] = { pin: "skip" };
+    const solution = optimiseSlip(prepared, requested, capacity, constraints);
+    const key = solution ? signature(solution.decisions) : null;
+    if (!solution || seen.has(key)) { ban += 1; continue; }
+    seen.add(key);
+    const fixtures = fixturesOf(solution);
+    if (chosenFixtures.every((other) => differentEnough(fixtures, other))) {
+      chosen.push(solution);
+      chosenFixtures.push(fixtures);
+    } else {
+      ban += 1;
+    }
+  }
+
+  // Quante ne escono dipende da quante partite ha il turno: con sei gare giocabili e schedine da
+  // quattro non esistono dieci combinazioni che condividano al piu' due partite l'una con
+  // l'altra. Si consegnano quelle che ci sono — una schedina che VIOLA il vincolo non e' una
+  // schedina in piu', e' una copia mascherata — e il numero mancante viene dichiarato.
+  if (chosen.length < wanted) {
+    relaxations.push(
+      `richieste ${wanted} schedine, generate ${chosen.length}: ognuna deve avere almeno `
+      + `${minDifferentFixtures} partite diverse da ogni altra, e questo turno ha `
+      + `${prepared.length} partite giocabili con selezioni ammissibili. Con meno partite, o con `
+      + "una quota minima più bassa, se ne compongono di più.",
+    );
+  }
+
+  return chosen.map((solution) => assembleSlip(solution.legs, context));
 }

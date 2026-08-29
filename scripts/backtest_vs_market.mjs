@@ -65,9 +65,25 @@ function devigMarket(homeOdds, drawOdds, awayOdds) {
   return { probabilities: [rawHome / overround, rawDraw / overround, rawAway / overround], overround };
 }
 
+// Il benchmark sono le quote di CHIUSURA (AvgCH/B365CH/PSCH), non quelle di apertura: la linea
+// di chiusura incorpora tutta l'informazione arrivata fino al fischio d'inizio ed e' lo
+// stimatore contro cui ha senso misurarsi. Fino al 28/08/2026 questo confronto usava
+// `home_odds`, che sono le quote di APERTURA — piu' deboli, quindi piu' facili da avvicinare:
+// il divario misurato era una sottostima (MISTAKES.md 25). Il ripiego sull'apertura resta per i
+// dataset generati prima dell'estensione di parse_csv, ma viene dichiarato nel resoconto.
+const CLOSING_FIELDS = ["home_odds_close", "draw_odds_close", "away_odds_close"];
+const OPENING_FIELDS = ["home_odds", "draw_odds", "away_odds"];
+
+const validOdds = (value) => Number.isFinite(Number(value)) && Number(value) > 1;
+
+function oddsFieldsFor(match) {
+  if (CLOSING_FIELDS.every((field) => validOdds(match[field]))) return CLOSING_FIELDS;
+  if (OPENING_FIELDS.every((field) => validOdds(match[field]))) return OPENING_FIELDS;
+  return null;
+}
+
 function hasValidOdds(match) {
-  return [match.home_odds, match.draw_odds, match.away_odds]
-    .every((value) => Number.isFinite(Number(value)) && Number(value) > 1);
+  return oddsFieldsFor(match) !== null;
 }
 
 // La domanda utile non è "quanto siamo indietro al mercato" ma "DOVE siamo indietro". Il
@@ -209,6 +225,8 @@ function evaluate(matches, options) {
     );
   }
 
+  let closingCount = 0;
+  let openingCount = 0;
   let modelLogLoss = 0;
   let marketLogLoss = 0;
   let modelBrier = 0;
@@ -224,7 +242,9 @@ function evaluate(matches, options) {
 
   withOdds.forEach(({ match, result }) => {
     const modelProbabilities = [result.probabilities.homeWin, result.probabilities.draw, result.probabilities.awayWin];
-    const odds = [Number(match.home_odds), Number(match.draw_odds), Number(match.away_odds)];
+    const fields = oddsFieldsFor(match);
+    if (fields === CLOSING_FIELDS) closingCount += 1; else openingCount += 1;
+    const odds = fields.map((field) => Number(match[field]));
     const { probabilities: marketProbabilities, overround } = devigMarket(...odds);
     const actual = resultIndex(match);
     overroundSum += overround;
@@ -277,6 +297,15 @@ function evaluate(matches, options) {
     pairedGap: aggregate,
     matchesWithOdds: count,
     oddsCoverage: round(count / rows.length),
+    // Contro quale linea si sta misurando: apertura e chiusura non sono lo stesso benchmark, e
+    // un numero che non dichiara quale dei due usa non e' interpretabile.
+    marketLine: {
+      closing: closingCount,
+      opening: openingCount,
+      note: openingCount
+        ? "Alcune gare hanno solo le quote di apertura: rigenera data/matches.json per avere ovunque la chiusura, che e' il benchmark corretto."
+        : "Tutte le gare valutate contro la linea di chiusura.",
+    },
     averageOverround: round(overroundSum / count),
     logLoss: { model: round(modelLogLoss / count), market: round(marketLogLoss / count) },
     brier: { model: round(modelBrier / count), market: round(marketBrier / count) },

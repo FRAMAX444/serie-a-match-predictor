@@ -1,9 +1,14 @@
 import { predictMatchdayFromMatches, estimatePlayerMarkets, deriveMarkets } from "./model.js";
 import { modelInputs } from "./prediction-inputs.js";
 import { buildCompetitionCatalog, buildMatchdays } from "./matchdays.js";
-import { buildSlip, resolveConfidence, CONFIDENCE_LEVELS } from "./slip-builder.js";
+import {
+  buildSlip, buildSlipSeries, resolveConfidence, CONFIDENCE_LEVELS, DEFAULT_MIN_LEG_ODDS,
+} from "./slip-builder.js";
+import {
+  readCachedOdds, writeCachedOdds, leagueOddsKey, eventOddsKey, DEFAULT_TTL_MINUTES,
+} from "./odds-cache.js";
 
-export { buildSlip, resolveConfidence, CONFIDENCE_LEVELS };
+export { buildSlip, buildSlipSeries, resolveConfidence, CONFIDENCE_LEVELS, DEFAULT_MIN_LEG_ODDS };
 
 export const ODDS_API_KEY_STORAGE = "serie-a-predictor-odds-api-key";
 const ODDS_API_BASE = "https://api.the-odds-api.com/v4";
@@ -379,6 +384,12 @@ export function buildMarketCandidates(entries, options = {}) {
         fixtureIndex,
         fixtureLabel,
         fixtureDate: entry.fixture.date,
+        // L'identita' della partita viaggia con la selezione: lo storico deve poterne risolvere
+        // l'esito, e ricavarla riparsando "Casa - Trasferta" sarebbe un secondo modo di
+        // identificare la stessa gara.
+        homeTeam: entry.fixture.home_team,
+        awayTeam: entry.fixture.away_team,
+        competitionId: entry.fixture.competition_id,
         key: market.key,
         group: market.group,
         label: marketLabel(market, entry.fixture),
@@ -553,6 +564,27 @@ export function estimateOddsRequests(fixtureCount, leagueMarkets, eventMarkets, 
 // cosmetico: senza, l'unico modo di sapere di aver finito la quota e' vedere fallire una
 // generazione con HTTP 429.
 export const oddsQuota = { used: null, remaining: null };
+
+// Ogni chiamata passa da qui: una risposta gia' in cache e ancora valida non si ripaga. Il
+// bilancio (quante servite dalla cache, quante scaricate, quanto e' vecchia la piu' vecchia)
+// finisce nel resoconto: una quota vecchia mostrata come fresca sarebbe peggio di una mancante.
+async function fetchOddsCached(key, loader, ledger) {
+  const ttlMinutes = ledger.ttlMinutes ?? DEFAULT_TTL_MINUTES;
+  if (!ledger.force) {
+    const hit = readCachedOdds(key, { ttlMinutes });
+    if (hit) {
+      ledger.fromCache += 1;
+      ledger.oldestMinutes = Math.max(ledger.oldestMinutes, hit.ageMinutes);
+      return hit.value;
+    }
+  }
+  const value = await loader();
+  if (value !== null && value !== undefined) {
+    writeCachedOdds(key, value);
+    ledger.fetched += 1;
+  }
+  return value;
+}
 
 function readQuotaHeaders(response) {
   const used = Number(response.headers?.get?.("x-requests-used"));
@@ -732,6 +764,9 @@ export function buildPlayerCandidates(entries, playerContextByTeam, options = {}
             fixtureIndex,
             fixtureLabel: `${entry.fixture.home_team} - ${entry.fixture.away_team}`,
             fixtureDate: entry.fixture.date,
+            homeTeam: entry.fixture.home_team,
+            awayTeam: entry.fixture.away_team,
+            competitionId: entry.fixture.competition_id,
             key: `${market.key}:${player.id ?? player.name}`,
             group: "giocatori",
             label: market.label(player.name),
@@ -777,6 +812,13 @@ export async function generateSlip({
   // Passa da qui invece di avere un percorso suo: una seconda funzione che rifacesse lo stesso
   // lavoro tornerebbe a divergere da questa alla prima modifica (difetto 9).
   sportKey = null,
+  // Riscarica le quote ignorando la cache locale. Serve quando il turno si avvicina e i prezzi
+  // si sono mossi: la cache fa risparmiare richieste, non deve poter mostrare prezzi vecchi
+  // senza dirlo.
+  forceRefresh = false,
+  // Quante schedine produrre in un colpo solo, e la quota minima ammessa per selezione.
+  seriesCount = 10,
+  minLegOdds = DEFAULT_MIN_LEG_ODDS,
 }) {
   const catalog = buildCompetitionCatalog(payload);
   const competition = catalog.find((entry) => entry.id === competitionId);
@@ -817,6 +859,7 @@ export async function generateSlip({
   let sportTitle = null;
   let oddsError = null;
   let requestEstimate = 0;
+  const cacheLedger = { force: forceRefresh, fromCache: 0, fetched: 0, oldestMinutes: 0 };
   if (apiKey) {
     try {
       const discovery = sportKey
@@ -829,12 +872,17 @@ export async function generateSlip({
       }
       sportTitle = discovery.title;
       const leagueMarkets = oddsMarketsFor(marketGroups);
-      entries = matchOddsToFixtures(predictions, await fetchLeagueOdds(apiKey, discovery.key, leagueMarkets));
+      const leagueOdds = await fetchOddsCached(
+        leagueOddsKey(discovery.key, matchday.round, leagueMarkets),
+        () => fetchLeagueOdds(apiKey, discovery.key, leagueMarkets),
+        cacheLedger,
+      );
+      entries = matchOddsToFixtures(predictions, leagueOdds);
       // I mercati non-featured richiedono una chiamata per partita: si fanno solo se uno dei
       // gruppi selezionati li consuma davvero, e il preventivo finisce nel resoconto.
       const eventMarkets = eventMarketsFor(marketGroups, playerMarkets);
       if (eventMarkets.length) {
-        const coverage = await collectEventOdds(apiKey, discovery.key, entries, eventMarkets);
+        const coverage = await collectEventOdds(apiKey, discovery.key, entries, eventMarkets, cacheLedger);
         entries.playerIndexByFixture = coverage.playerIndexByFixture;
         entries.eventOddsCoverage = coverage.summary;
       }
@@ -858,16 +906,22 @@ export async function generateSlip({
     : [];
   const candidates = [...marketCandidates, ...playerCandidates];
 
-  const slip = buildSlip(candidates, { legs: requestedLegs, confidence });
+  const slipOptions = { legs: requestedLegs, confidence, minLegOdds };
+  const slips = buildSlipSeries(candidates, { ...slipOptions, count: seriesCount });
   return {
+    slips,
+    // La prima della serie e' la schedina ottima, la stessa che buildSlip restituirebbe da sola.
+    slip: slips[0] || null,
     matchday,
     entries,
     candidates,
-    slip,
     sportTitle,
     oddsError,
     eventOddsCoverage: entries.eventOddsCoverage || null,
     requestEstimate,
+    // Il preventivo dice quanto sarebbe costato scaricare tutto; il bilancio della cache dice
+    // quanto e' costato davvero.
+    oddsCache: { ...cacheLedger },
     quota: { ...oddsQuota },
     oddsCoverage: {
       matched: entries.filter((entry) => entry.matched).length,
@@ -883,7 +937,7 @@ export async function generateSlip({
 // entry.odds accanto a quelli della chiamata di lega, quelli sui giocatori restano indicizzati
 // per partita. Chiedere gli stessi mercati in due giri costerebbe il doppio, e ogni mercato per
 // ogni evento e' una richiesta del piano.
-async function collectEventOdds(apiKey, sportKey, entries, markets) {
+async function collectEventOdds(apiKey, sportKey, entries, markets, ledger) {
   const playerIndexByFixture = new Map();
   let resolvedEvents = 0;
   // Le due ragioni per cui una partita resta senza quote sono diverse e vanno distinte: "non
@@ -907,7 +961,11 @@ async function collectEventOdds(apiKey, sportKey, entries, markets) {
         continue;
       }
       try {
-        const eventOdds = await fetchEventOdds(apiKey, sportKey, event.id, markets);
+        const eventOdds = await fetchOddsCached(
+          eventOddsKey(sportKey, event.id, markets),
+          () => fetchEventOdds(apiKey, sportKey, event.id, markets),
+          ledger,
+        );
         if (!eventOdds) {
           marketUnavailable += 1;
           continue;

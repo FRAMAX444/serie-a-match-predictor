@@ -157,3 +157,124 @@ assert.ok(Math.abs(byConfidence[0].slip.expectedReturn - 1) < 1e-9, "con quote e
 assert.equal(byConfidence[0].slip.usesMarketOdds, false);
 
 console.log("OK: costruttore schedina — numero di selezioni vincolante, sicurezza monotona su probabilità e quota, coerenza dei totali, preferenza per le stime affidabili, ripiego dichiarato e ricerca di valore sulle quote di mercato");
+
+// --- Serie di schedine, e quota minima per selezione ------------------------------------------
+const { buildSlipSeries, DEFAULT_MIN_LEG_ODDS } = await import("../slip-builder.js");
+
+const series = buildSlipSeries(board, { legs: 4, confidence: "media", count: 10, minLegOdds: 1 });
+// Il numero consegnato dipende da quante partite ha il turno: il vincolo di diversita' e' una
+// promessa su cio' che si consegna, non un obiettivo da raggiungere consegnando copie.
+assert.ok(series.length >= 5 && series.length <= 10, `schedine generate: ${series.length}`);
+if (series.length < 10) {
+  assert.ok(
+    series[0].relaxations.some((note) => /partite diverse/i.test(note)),
+    "se se ne generano meno di quante richieste, va detto quante e perché",
+  );
+}
+
+// Tutte diverse: dieci volte la stessa combinazione non e' una serie.
+const signatures = series.map((slip) => slip.legs.map((leg) => `${leg.fixtureIndex}|${leg.key}`).sort().join(","));
+assert.equal(new Set(signatures).size, series.length, "le schedine devono essere combinazioni distinte");
+
+// E diverse sulle PARTITE, non sui mercati: ogni schedina deve avere almeno la meta' delle gare
+// diversa da OGNI altra, non solo dalla precedente. Due schedine sulle stesse quattro partite con
+// mercati diversi non sono due alternative — se quel turno va male vanno male entrambe.
+const fixturesOf = (slip) => new Set(slip.legs.map((leg) => leg.fixtureIndex));
+for (let left = 0; left < series.length; left += 1) {
+  for (let right = left + 1; right < series.length; right += 1) {
+    const a = fixturesOf(series[left]);
+    const b = fixturesOf(series[right]);
+    const shared = [...a].filter((fixture) => b.has(fixture)).length;
+    assert.ok(
+      a.size - shared >= 2,
+      `schedine ${left + 1} e ${right + 1}: condividono ${shared} partite su ${a.size}, `
+      + "ne servono almeno 2 diverse (metà di quattro)",
+    );
+  }
+}
+
+// Con schedine da sei selezioni la soglia sale a tre partite diverse: e' "almeno la metà", non
+// un numero fisso.
+const sixLegs = buildSlipSeries(board, { legs: 6, confidence: "bassa", count: 4, minLegOdds: 1 });
+for (let left = 0; left < sixLegs.length; left += 1) {
+  for (let right = left + 1; right < sixLegs.length; right += 1) {
+    const a = fixturesOf(sixLegs[left]);
+    const b = fixturesOf(sixLegs[right]);
+    const shared = [...a].filter((fixture) => b.has(fixture)).length;
+    assert.ok(a.size - shared >= 3, `sei selezioni: condivise ${shared}, servono 3 partite diverse`);
+  }
+}
+
+// Quando il turno non ha abbastanza partite il vincolo non e' soddisfacibile per tutte: si
+// completa con le migliori rimaste, ma va DETTO. Cinque partite non bastano a comporre dieci
+// schedine da quattro che condividano al più due gare l'una con l'altra.
+const smallBoard = board.filter((candidate) => candidate.fixtureIndex < 5);
+const cramped = buildSlipSeries(smallBoard, { legs: 4, confidence: "media", count: 10, minLegOdds: 1 });
+assert.ok(cramped.length < 10, "con cinque partite non si compongono dieci schedine così distinte");
+assert.ok(cramped.length >= 1, "almeno la migliore va sempre consegnata");
+assert.ok(
+  cramped[0].relaxations.some((note) => /partite diverse/i.test(note)),
+  "il numero mancante va dichiarato, non colmato con schedine che violano il vincolo",
+);
+// E cio' che viene consegnato rispetta il vincolo, sempre: e' il senso della promessa.
+for (let left = 0; left < cramped.length; left += 1) {
+  for (let right = left + 1; right < cramped.length; right += 1) {
+    const a = fixturesOf(cramped[left]);
+    const b = fixturesOf(cramped[right]);
+    assert.ok(a.size - [...a].filter((fixture) => b.has(fixture)).length >= 2);
+  }
+}
+
+// Ordinate per punteggio: la prima e' l'ottimo, ed e' la stessa che buildSlip restituisce da
+// solo. Se le due funzioni divergessero, la "prima della serie" non sarebbe piu' la schedina
+// migliore e nessuno se ne accorgerebbe.
+const single = buildSlip(board, { legs: 4, confidence: "media", minLegOdds: 1 });
+assert.deepEqual(
+  series[0].legs.map((leg) => `${leg.fixtureIndex}|${leg.key}`).sort(),
+  single.legs.map((leg) => `${leg.fixtureIndex}|${leg.key}`).sort(),
+  "la prima della serie deve coincidere con l'ottimo di buildSlip",
+);
+const objective = (slip) => slip.legs.reduce(
+  (sum, leg) => sum + Math.log(leg.odds) + 0.25 * Math.log(leg.reliability), 0,
+);
+for (let index = 1; index < series.length; index += 1) {
+  assert.ok(
+    objective(series[index]) <= objective(series[index - 1]) + 1e-9,
+    `la serie deve essere in ordine di punteggio: la ${index + 1} batte la ${index}`,
+  );
+}
+// Ognuna rispetta il vincolo di sicurezza come la prima: sono alternative, non ripieghi.
+for (const slip of series) {
+  assert.equal(slip.legs.length, 4);
+  assert.equal(new Set(slip.legs.map((leg) => leg.fixtureIndex)).size, 4);
+  assert.ok(slip.combinedProbability >= slip.targetProbability - 1e-9 || !slip.targetMet);
+}
+
+// --- La quota minima tiene fuori le selezioni che non pagano ----------------------------------
+// Con quote eque una selezione al 92% paga 1.087: sotto la soglia di default, e va esclusa.
+const withFloor = buildSlipSeries(board, { legs: 4, confidence: "media", count: 5, minLegOdds: DEFAULT_MIN_LEG_ODDS });
+for (const slip of withFloor) {
+  for (const leg of slip.legs) {
+    assert.ok(leg.odds >= DEFAULT_MIN_LEG_ODDS - 1e-9, `selezione a quota ${leg.odds.toFixed(3)}, sotto la soglia`);
+  }
+}
+// Dove la soglia morde davvero e' alle sicurezze alte: li' il VINCOLO obbliga a selezioni quasi
+// certe, che pagano 1.09, e l'obiettivo non puo' rifiutarle. A sicurezza media non servono
+// nemmeno, perche' le meglio pagate bastano a stare dentro il target.
+const senzaSoglia = buildSlipSeries(board, { legs: 4, confidence: "massima", count: 1, minLegOdds: 1 })[0];
+assert.ok(
+  Math.min(...senzaSoglia.legs.map((leg) => leg.odds)) < DEFAULT_MIN_LEG_ODDS,
+  "a sicurezza massima senza soglia entrano selezioni sotto 1.20: e' il comportamento che la soglia corregge",
+);
+
+// La sicurezza resta la richiesta principale: se la quota minima la rende irraggiungibile, cede
+// la quota minima — e lo dichiara, invece di consegnare in silenzio una schedina meno sicura.
+const sicurezzaMassima = buildSlip(board, { legs: 4, confidence: "massima", minLegOdds: 1.6 });
+assert.ok(sicurezzaMassima, "una quota minima incompatibile non deve impedire la generazione");
+assert.ok(
+  sicurezzaMassima.relaxations.some((note) => /quota minima/i.test(note)),
+  "il rilassamento della quota minima va riportato, non applicato in silenzio",
+);
+assert.ok(sicurezzaMassima.confidence.appliedMinOdds < 1.6);
+
+console.log("OK: serie di schedine con almeno metà partite diverse, ordinate per punteggio, con quota minima per selezione");

@@ -37,15 +37,15 @@ L'interfaccia è responsive e conserva nel browser competizione preferita, squad
 
 - calendari e risultati delle coppe dall'API pubblica UEFA, con ESPN come fallback;
 - calendari e risultati dei Big Five da ESPN;
-- statistiche di tiro, corner, cartellini, possesso e quote di chiusura (media di mercato, poi Bet365, poi Pinnacle) da Football-Data.co.uk;
+- statistiche di tiro, corner, cartellini, possesso e **quote di apertura e di chiusura** da Football-Data.co.uk (media di mercato, poi Bet365, poi Pinnacle): 1X2 aperture (`AvgH`) e chiusure (`AvgCH`), miglior prezzo di chiusura (`MaxCH`), Over/Under 2.5 aperture e chiusure, handicap asiatico di chiusura. Fino al 28/08/2026 veniva conservata la sola apertura, documentata per errore come chiusura: vedi `MISTAKES.md` §25;
 - arbitro della partita, da Football-Data.co.uk;
 - xG Understat quando la pagina lega espone ancora il blob `datesData`; fallback via l'endpoint JSON `getTeamData` (per-squadra, stesso schema dati, nessuna dipendenza extra) quando non lo espone più; fallback finale prudente basato su tiri e tiri in porta.
 
 ### Errori arrivati in produzione
 
-`MISTAKES.md` cataloga i ventiquattro difetti che hanno raggiunto il sito o il dataset pubblicato — non le ipotesi respinte, che sono il funzionamento normale del progetto. Per ciascuno: cosa è successo, quanto è costato, **perché nessun test l'ha visto**, e cosa lo intercetta adesso.
+`MISTAKES.md` cataloga i venticinque difetti che hanno raggiunto il sito o il dataset pubblicato — non le ipotesi respinte, che sono il funzionamento normale del progetto. Per ciascuno: cosa è successo, quanto è costato, **perché nessun test l'ha visto**, e cosa lo intercetta adesso.
 
-Il pattern che ne esce: ventidue difetti su ventiquattro stanno **fra** due componenti e non dentro uno, nessuno solleva un'eccezione (producono tutti un numero plausibile), e un valore neutro a valle nasconde il difetto a monte — motivo per cui i contratti girano con i meccanismi spenti *accesi*.
+Il pattern che ne esce: ventitre difetti su venticinque stanno **fra** due componenti e non dentro uno, nessuno solleva un'eccezione (producono tutti un numero plausibile), e un valore neutro a valle nasconde il difetto a monte — motivo per cui i contratti girano con i meccanismi spenti *accesi*.
 
 ### Identità delle squadre: una squadra, un nome (correzione del 25/08/2026)
 
@@ -498,7 +498,9 @@ Il backtest usa soltanto informazioni disponibili prima di ogni gara e riporta l
 npm run backtest -- --competition ita.1 --since 2025-08-01 --max 500
 ```
 
-`npm run backtest:market` confronta le stesse previsioni con le quote di chiusura de-vigate: è l'unico modo per sapere se il modello ha un vantaggio reale sul mercato, non solo un log loss basso preso da solo. Richiede che il dataset sia stato rigenerato dopo che `update_top5_data.py` conserva le quote (vedi sopra).
+`npm run backtest:market` confronta le stesse previsioni con le quote di chiusura de-vigate: è l'unico modo per sapere se il modello ha un vantaggio reale sul mercato, non solo un log loss basso preso da solo. Dichiara nel risultato (`marketLine`) contro quale linea ha misurato, e ripiega sull'apertura solo per i dataset generati prima dell'estensione di `parse_csv`.
+
+`npm run diagnose:market` separa le due dimensioni che la matrice dei punteggi produce — **asimmetria** (chi vince, misurata dall'1X2) e **livello** (quanti gol, misurato dall'Over/Under 2.5) — e misura il divario dal mercato su ciascuna, più il movimento apertura → chiusura. Quest'ultimo è la sola metrica che si traduce in denaro: se il disaccordo del modello con l'apertura non predice dove va la linea, quel disaccordo è imprecisione, non valore. Risultati in `docs/misure-riferimento.md` §27.
 
 `npm run tune` cerca, per coordinate descent, una combinazione di iperparametri che migliori il backtest rispetto ai default. **Rischio di overfitting reale** con 16 dimensioni cercate su una sola finestra: valida sempre il risultato su un periodo successivo e non usato per il tuning prima di portarlo in produzione.
 
@@ -524,6 +526,65 @@ Sovrascrive `data/matches.json` nella cartella corrente — nessun parametro `--
 automatica), una schedina a partire da **quante partite** si vogliono giocare e **quanta
 sicurezza** si vuole. Non serve una chiave API: senza, la schedina si costruisce sulle quote
 eque del modello.
+
+### Dieci schedine, non una
+
+Il pulsante genera **le dieci schedine migliori** dello stesso turno, non dieci varianti della
+prima né dieci combinazioni prese a caso. L'enumerazione è esatta (procedura di Lawler: trovata
+la migliore, lo spazio delle soluzioni si partiziona in blocchi disgiunti e ognuno si risolve con
+lo stesso ottimizzatore), quindi la k-esima è davvero la k-esima migliore.
+
+Con un vincolo aggiuntivo che serve a renderle dieci *alternative*: ognuna deve avere **almeno
+la metà delle partite diversa da ogni altra** — due su quattro selezioni, tre su sei. Il vincolo
+è sulle partite e non sui mercati di proposito: due schedine sulle stesse quattro gare con esiti
+diversi non sono due alternative, perché se quel turno va male vanno male entrambe.
+
+Senza quel vincolo le prime dieci soluzioni in ordine di punteggio sono quasi sempre la stessa
+schedina con una gamba cambiata — formalmente corrette, praticamente dieci copie.
+
+Quante ne escano dipende da quante partite ha il turno: con cinque gare giocabili non esistono
+dieci combinazioni da quattro che condividano al più due partite l'una con l'altra. In quel caso
+se ne consegnano meno e **lo si dichiara**, invece di completare la serie con schedine che violano
+il vincolo: una schedina che lo viola non è una schedina in più, è una copia mascherata.
+
+Un effetto che si nota subito: le dieci hanno quote quasi identiche (su un turno di Serie A,
+4.98–4.99 a fronte del 20% richiesto). Non è un difetto, è la forma del problema: l'ottimo è
+piatto, e molte combinazioni diverse pagano lo stesso restando dentro la stessa sicurezza.
+
+**Le dieci condividono le partite, quindi condividono gli esiti.** Giocarle tutte non è
+diversificare: è la stessa scommessa moltiplicata, con la stessa correlazione dentro. L'interfaccia
+lo dice sopra l'elenco.
+
+### Quota minima per selezione
+
+Il vincolo di sicurezza spinge verso selezioni quasi certe — un 1X al 92% paga 1.08 — che gonfiano
+la probabilità combinata e non pagano nulla. L'obiettivo da solo non le esclude, perché è il
+*vincolo* a metterle dentro. Il campo «Quota minima per selezione» (default **1.20**) le tiene
+fuori.
+
+La gerarchia fra le due richieste è esplicita: la sicurezza è ciò che si chiede, la quota minima è
+una preferenza su come ottenerla. Se sono incompatibili — «sicurezza massima» vuole selezioni al
+72%, che pagano al più 1.39 — **cede la quota minima**, e il rilassamento viene riportato con il
+valore a cui è sceso.
+
+### Storico e verifica a posteriori
+
+`storico.html` conserva le serie generate e ne calcola l'esito dai risultati veri appena le
+partite sono state giocate: ogni selezione viene risolta dal punteggio finale (`settleMarket`),
+una multipla è persa appena una gamba lo è, e resta «in corso» finché una partita non è finita.
+I mercati sui giocatori restano **«non verificabili»**: il dataset non conserva gli eventi della
+singola partita, e contarli come persi falserebbe ogni statistica verso il basso.
+
+Da lì esce la sola cosa che quei dati possano dire: la **calibrazione**. Se il modello dichiara il
+20% e su cinquanta schedine ne vincono nove, la probabilità mostrata accanto alla quota è onesta;
+se ne vincono due, è decorativa.
+
+**Non serve ad addestrare il modello, e non lo fa.** Una schedina è una funzione dei risultati
+delle partite, e quei risultati sono già — tutti — i dati su cui il modello è costruito: sapere
+che una combinazione di quattro esiti è andata male non aggiunge nulla ai quattro risultati, che
+il modello ha già. A dieci schedine a settimana servirebbero comunque anni prima che le
+percentuali osservate distinguano qualcosa dal rumore (§27.2 e il conto in `docs/`). È la stessa
+distinzione che il progetto applica a `confidence`: si dichiara e si verifica, non si retroagisce.
 
 ### Cosa ottimizza, e perché
 
@@ -648,6 +709,20 @@ Sul piano gratuito da 500 al mese sono ~4 generazioni complete, contro 500 con l
 doppie chance. Il preventivo compare nel resoconto della schedina insieme alle richieste rimaste,
 lette dagli header `x-requests-used` e `x-requests-remaining` di ogni risposta: senza, l'unico
 modo di sapere di aver finito la quota è vedere fallire una generazione con HTTP 429.
+
+### Cache locale delle quote
+
+Le risposte dell'API vengono conservate nel browser (`localStorage`) e riusate per **tre ore**,
+con chiave `campionato + turno + mercati richiesti`: rigenerare la schedina dello stesso turno —
+cosa che si fa continuamente, cambiando numero di partite o sicurezza — non ricompra le stesse
+quote. Su un turno con i mercati per evento attivi la differenza è fra ~120 richieste e zero.
+
+La scadenza non è un dettaglio implementativo: **una quota vecchia non è una quota mancante, è un
+prezzo sbagliato** che la schedina userebbe come vero. Per questo ogni voce porta il momento in
+cui è stata scaricata, scade da sola, e il resoconto dichiara sempre quante risposte vengono dalla
+cache e quanto è vecchia la più vecchia. La casella «Riscarica le quote ignorando la cache» forza
+il download quando il turno si avvicina. Cambiare i mercati selezionati è una richiesta diversa e
+non riusa la precedente; l'elenco eventi non viene messo in cache perché è un endpoint gratuito.
 
 Le quote sui giocatori richiedono `regions=us` (la copertura player-prop per le Big Five è lì,
 non su `eu`) e una chiamata per evento. Quando non disponibili si usa la quota equa del

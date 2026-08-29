@@ -533,9 +533,39 @@ def parse_csv(content: str, season: str, league: dict[str, object]) -> list[dict
                 "home_xg": optional_float(row, "HxG", "HomeXG"), "away_xg": optional_float(row, "AxG", "AwayXG"),
                 "home_possession": optional_float(row, "HPoss", "HomePossession"),
                 "away_possession": optional_float(row, "APoss", "AwayPossession"),
+                # Quote di APERTURA (senza la C): sono quelle che il dataset conteneva finora, ed
+                # erano documentate per errore come "di chiusura". Restano perche' servono a una
+                # cosa precisa: il movimento apertura -> chiusura, che e' l'unica metrica di
+                # mercato che si traduce in profitto.
                 "home_odds": optional_float(row, "AvgH", "B365H", "PSH"),
                 "draw_odds": optional_float(row, "AvgD", "B365D", "PSD"),
                 "away_odds": optional_float(row, "AvgA", "B365A", "PSA"),
+                # Quote di CHIUSURA (la C prima dell'esito): il benchmark corretto. La linea di
+                # chiusura incorpora tutta l'informazione arrivata fino al fischio d'inizio, ed e'
+                # contro quella che un modello va misurato — non contro l'apertura, che e' piu'
+                # debole e quindi lusinga chi la sfida.
+                "home_odds_close": optional_float(row, "AvgCH", "B365CH", "PSCH"),
+                "draw_odds_close": optional_float(row, "AvgCD", "B365CD", "PSCD"),
+                "away_odds_close": optional_float(row, "AvgCA", "B365CA", "PSCA"),
+                # Miglior prezzo di mercato alla chiusura: la media dice quanto paga il mercato,
+                # il massimo quanto si poteva davvero incassare.
+                "home_odds_max_close": optional_float(row, "MaxCH"),
+                "draw_odds_max_close": optional_float(row, "MaxCD"),
+                "away_odds_max_close": optional_float(row, "MaxCA"),
+                # Over/Under 2.5, apertura e chiusura. E' la dimensione del LIVELLO (quanti gol in
+                # totale), separata da quella dell'asimmetria che misura l'1X2: la calibrazione del
+                # modello le tiene gia' distinte, e questi campi permettono di misurarle distinte.
+                "over25_odds": optional_float(row, "Avg>2.5", "B365>2.5", "P>2.5"),
+                "under25_odds": optional_float(row, "Avg<2.5", "B365<2.5", "P<2.5"),
+                "over25_odds_close": optional_float(row, "AvgC>2.5", "B365C>2.5", "PC>2.5"),
+                "under25_odds_close": optional_float(row, "AvgC<2.5", "B365C<2.5", "PC<2.5"),
+                "over25_odds_max_close": optional_float(row, "MaxC>2.5"),
+                "under25_odds_max_close": optional_float(row, "MaxC<2.5"),
+                # Handicap asiatico di chiusura: la stima piu' pulita che il mercato produca della
+                # sola asimmetria, con la linea (AHCh) e i due prezzi.
+                "ah_line_close": optional_float(row, "AHCh", "AHh"),
+                "ah_home_odds_close": optional_float(row, "AvgCAHH", "B365CAHH", "PCAHH"),
+                "ah_away_odds_close": optional_float(row, "AvgCAHA", "B365CAHA", "PCAHA"),
                 "referee": (row.get("Referee") or "").strip() or None,
                 "completed": True, "source": "Football-Data.co.uk",
             })
