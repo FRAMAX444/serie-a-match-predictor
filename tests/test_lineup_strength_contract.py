@@ -29,7 +29,11 @@ ROOT = Path(__file__).resolve().parents[1]
 DATASET = ROOT / "data" / "matches.json"
 
 sys.path.insert(0, str(ROOT / "scripts"))
-from enrich_competitions_players import compute_lineup_strength, rounded_player  # noqa: E402
+from enrich_competitions_players import (  # noqa: E402
+    center_lineup_strength_factors,
+    compute_lineup_strength,
+    rounded_player,
+  )
 
 
 def values_from(section: dict) -> list[float]:
@@ -162,6 +166,23 @@ class LineupStrengthUnitTests(unittest.TestCase):
             f"dizionari: {combinations}. Se differiscono, i due lati del rapporto stanno "
             "misurando grandezze diverse.",
         )
+
+    def test_centering_removes_coverage_bias_without_flattening(self) -> None:
+        context = {
+            "A": {"lineup_strength": 0.94},
+            "B": {"lineup_strength": 0.98},
+            "C": {"lineup_strength": 1.01},
+            "D": {"lineup_strength": 1.04},
+        }
+        before = [float(item["lineup_strength"]) for item in context.values()]
+        center_lineup_strength_factors(context)
+        after = [float(item["lineup_strength"]) for item in context.values()]
+
+        self.assertAlmostEqual(sum(after) / len(after), 1.0, delta=0.0002)
+        self.assertGreater(max(after) - min(after), 0.05, "il centraggio non deve appiattire il segnale")
+        self.assertGreaterEqual(min(after), 0.92)
+        self.assertLessEqual(max(after), 1.07)
+        self.assertAlmostEqual(max(after) - min(after), max(before) - min(before), delta=0.002)
 
     def test_a_weaker_probable_lineup_lowers_the_factor(self) -> None:
         # Guardia di direzione: senza questa, la funzione potrebbe restituire una costante e

@@ -567,9 +567,15 @@ esegue. Un controllo scritto su un percorso non dice niente sull'altro, e la lez
 7 — «la correzione deve stare su OGNI percorso che scrive» — era gia' scritta a commento del
 codice che la violava.
 
-**Cosa lo intercetta adesso.** `update_top5_data.py` fonde le grafie **prima** di
-`merge_matches()`, cosi' che la ricomposizione avvenga sui nomi gia' uniti;
-`enrich_competitions_players.py` richiama `merge_matches()` **dopo** la rinomina.
+**Cosa lo intercetta adesso.** Entrambi i percorsi di scrittura fondono e poi **ricompongono**.
+`update_top5_data.py` fonde le grafie prima di `merge_matches()`, cosi' che la deduplica avvenga
+sui nomi gia' uniti. `enrich_competitions_players.py` fonde prima di `compute_elo()` e
+`build_team_context()` — non solo prima di scrivere: fonderle dopo unirebbe i nomi lasciando
+l'Elo calcolato sulle identita' spezzate, cioe' correggerebbe l'etichetta e non il dato — e
+riallinea alla stessa grafia le chiavi di `team_context` e `player_context`, gli aggregati
+derivati (`referee_stats`) e i conteggi di `coverage`, che dopo una deduplica non possono
+restare quelli di prima.
+
 `tests/test_team_name_normalization.py::CollapseOnEveryWritingPathTests` verifica l'ordine in
 entrambi i sorgenti e, per mutazione, che sia la rinomina da sola a non bastare: due righe della
 stessa partita con grafie diverse restano due anche dopo essere state rinominate, e tornano una

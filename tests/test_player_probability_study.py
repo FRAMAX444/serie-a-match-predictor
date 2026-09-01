@@ -128,18 +128,76 @@ class ScenarioConstructionTests(unittest.TestCase):
             expected = archetype.shots_per90 * scenario["minutes_factor"] * scenario["team_scaling"]
             self.assertAlmostEqual(scenario["expected_shots_raw"], expected, places=9)
 
-    def test_bridge_predictions_match_theory_when_not_clamped(self) -> None:
-        # Test di integrazione: interroga il VERO estimatePlayerMarkets (via Node) su un
-        # sottoinsieme di scenari e verifica che coincida con la formula Poisson teorica,
-        # esattamente come fa lo studio completo ma qui come asserzione automatica.
+    @staticmethod
+    def _appearance_scenarios(player: dict) -> list[tuple[float, float]]:
+        # Ricostruzione indipendente di appearanceScenarios() in model.js. Il test non usa
+        # minuti attesi: pesa separatamente titolare e subentrato, come il modello corrente.
+        appearances = max(0.0, float(player.get("appearances") or 0))
+        squad_appearances = max(float(player.get("squad_appearances") or 0), appearances)
+        starts = min(appearances, max(0.0, float(player.get("starts") or 0)))
+        minutes = max(0.0, float(player.get("minutes") or 0))
+        sample_size = max(squad_appearances, appearances, 1.0)
+        start_probability = min(
+            1.0,
+            max(0.0, float(player.get("start_probability") or ((starts + 0.5) / (sample_size + 1.5)))),
+        )
+        play_probability = min(
+            1.0,
+            max(
+                start_probability,
+                float(player.get("play_probability") or ((appearances + 0.5) / (sample_size + 1.0))),
+            ),
+        )
+        minutes_per_start = float(player.get("minutes_per_start") or 0)
+        if minutes_per_start <= 0:
+            minutes_per_start = minutes / starts if starts > 0 else 80.0
+        minutes_per_start = min(90.0, max(1.0, minutes_per_start))
+        substitute_appearances = max(0.0, appearances - starts)
+        substitute_minutes = (
+            (minutes - starts * minutes_per_start) / substitute_appearances
+            if substitute_appearances > 0
+            else 20.0
+        )
+        substitute_minutes = min(90.0, max(1.0, substitute_minutes))
+        return [
+            (start_probability, minutes_per_start),
+            (max(0.0, play_probability - start_probability), substitute_minutes),
+        ]
+
+    @staticmethod
+    def _negative_binomial_at_least_one(mean: float, dispersion: float) -> float:
+        if mean <= 0:
+            return 0.0
+        no_event = (dispersion / (dispersion + mean)) ** dispersion
+        return 1.0 - no_event
+
+    def test_bridge_predictions_match_current_model_when_not_clamped(self) -> None:
+        # Il modello non usa più Poisson puro né teamScaling pieno sui tiri: usa una miscela
+        # degli scenari di impiego, Binomiale Negativa e sqrt(teamScaling) per il volume tiri.
+        # Il test resta indipendente dal JS, ma verifica la formula che è davvero in produzione.
         scenarios = study.build_scenarios()[:12]
         study.attach_model_predictions(scenarios)
         for scenario in scenarios:
+            player = scenario["player"]
+            appearances = self._appearance_scenarios(player)
             if not scenario["shot_clamped"]:
-                theory = study.poisson_p_at_least(scenario["expected_shots_raw"], 1)
+                shot_scaling = scenario["team_scaling"] ** 0.5
+                theory = sum(
+                    weight * self._negative_binomial_at_least_one(
+                        float(player["shots_per90"]) * (minutes / 90.0) * shot_scaling,
+                        5.0,
+                    )
+                    for weight, minutes in appearances
+                )
                 self.assertAlmostEqual(scenario["model"]["shotProbability"], theory, places=9)
             if not scenario["assist_clamped"]:
-                theory = study.poisson_p_at_least(scenario["expected_assists_raw"], 1)
+                theory = sum(
+                    weight * self._negative_binomial_at_least_one(
+                        float(player["assists_per90"]) * (minutes / 90.0) * scenario["team_scaling"],
+                        8.0,
+                    )
+                    for weight, minutes in appearances
+                )
                 self.assertAlmostEqual(scenario["model"]["assistProbability"], theory, places=9)
 
 

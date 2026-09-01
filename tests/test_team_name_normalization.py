@@ -204,17 +204,26 @@ class CollapseOnEveryWritingPathTests(unittest.TestCase):
             "partite distinte e rinominarle lascia due righe identiche",
         )
 
-    def test_the_enrichment_deduplicates_again_after_renaming(self) -> None:
+    def test_the_enrichment_collapses_before_elo_and_deduplicates(self) -> None:
+        """L'arricchimento e' il secondo scrittore, e ricalcola Elo e team_context: qui la
+        fusione non basta che preceda la scrittura, deve precedere i CALCOLI. Fonderla dopo
+        `compute_elo` unirebbe i nomi lasciando l'Elo sulle identita' spezzate, cioe'
+        correggerebbe l'etichetta e non il dato."""
         source = (ROOT / "scripts" / "enrich_competitions_players.py").read_text(encoding="utf8")
-        rename = source.find('base.apply_spelling_collisions(payload.get("matches") or [], spelling)')
-        remerge = source.find('base.merge_matches(payload["matches"])')
-        self.assertNotEqual(rename, -1, "punto di riferimento non trovato: il test va aggiornato")
-        self.assertNotEqual(
-            remerge, -1,
-            "l'arricchimento e' l'ultimo a scrivere: dopo aver fuso i nomi deve rifare "
-            "merge_matches(), altrimenti la partita resta duplicata sotto un nome solo",
+        collapse = source.find("spelling = base.resolve_spelling_collisions(every_name)")
+        remerge = source.find("matches = base.merge_matches(matches)")
+        elo = source.find("elo, elo_as_of, counts = base.compute_elo(matches)")
+        self.assertNotEqual(collapse, -1, "l'arricchimento deve fondere le grafie: e' il secondo scrittore del dataset")
+        self.assertNotEqual(remerge, -1, "dopo la rinomina le righe vanno ricomposte, non lasciate doppie")
+        self.assertNotEqual(elo, -1, "punto di riferimento non trovato: il test va aggiornato")
+        self.assertLess(
+            collapse, remerge,
+            "la ricomposizione va DOPO la fusione: prima, i due nomi sono ancora due chiavi diverse",
         )
-        self.assertLess(rename, remerge, "la ricomposizione va DOPO la rinomina, non prima")
+        self.assertLess(
+            remerge, elo,
+            "Elo, team_context e player_context vanno calcolati sulle righe gia' ricomposte",
+        )
 
     def test_renaming_without_remerging_leaves_the_match_twice(self) -> None:
         """Il comportamento che i due controlli sul sorgente proteggono, verificato per
