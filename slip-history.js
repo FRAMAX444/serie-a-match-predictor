@@ -215,3 +215,171 @@ export function historyCalibration(settled) {
     bands,
   };
 }
+
+// --- Archivio su disco -------------------------------------------------------------------
+//
+// `localStorage` non e' un archivio: e' una cache legata all'origine. Cambia porta
+// (`npm start -- --port 8080`), pulisci i dati di Chrome, apri da un altro browser, e lo storico
+// risulta vuoto — senza errori, esattamente come se non avessi mai generato niente. La pagina
+// pero' promette che "le schedine generate restano qui", e una promessa che lo storage non
+// mantiene e' un difetto, non una limitazione.
+//
+// Da qui l'archivio vero: `data/slip-history.json`, scritto dal server di sviluppo. La lettura e'
+// un file statico e funziona ovunque (anche su GitHub Pages); la scrittura passa da un endpoint
+// che solo `scripts/serve.mjs` espone, quindi in locale i dati sopravvivono al browser, e in
+// produzione il salvataggio semplicemente fallisce e resta `localStorage`. Nessuno dei due lati
+// puo' rompere l'altro: l'unione e' per id, mai una sostituzione.
+export const SLIP_WINS_STORAGE = "serie-a-predictor-slip-wins";
+export const ARCHIVE_FILE = "data/slip-history.json";
+export const ARCHIVE_ENDPOINT = "/api/slip-history";
+
+/** Unione di piu' elenchi di serie, per id, dalla piu' recente. Il primo che vince tiene. */
+export function mergeSeries(...lists) {
+  const byId = new Map();
+  for (const list of lists) {
+    for (const record of list || []) {
+      if (record?.id && !byId.has(record.id)) byId.set(record.id, record);
+    }
+  }
+  return [...byId.values()].sort((a, b) => String(b.generatedAt).localeCompare(String(a.generatedAt)));
+}
+
+export const winId = (seriesId, slipIndex) => `${seriesId}#${slipIndex}`;
+
+/**
+ * Le schedine vinte, estratte da serie gia' risolte con `settleSeries`.
+ *
+ * Sono copie complete, non riferimenti: una vincita deve restare leggibile anche quando la serie
+ * che la conteneva e' uscita dalla rotazione delle ultime `MAX_STORED_SERIES`, altrimenti
+ * "permanente" vale finche' non generi altre quaranta serie.
+ */
+export function collectWins(settled, options = {}) {
+  const { now = Date.now() } = options;
+  const wins = [];
+  for (const record of settled || []) {
+    (record.slips || []).forEach((slip, index) => {
+      if (slip.status !== "vinta") return;
+      wins.push({
+        id: winId(record.id, index),
+        seriesId: record.id,
+        slipIndex: index,
+        generatedAt: record.generatedAt,
+        settledAt: new Date(now).toISOString(),
+        competitionId: record.competitionId,
+        competitionName: record.competitionName || record.competitionId,
+        round: record.round ?? null,
+        confidence: record.confidence ?? null,
+        combinedOdds: slip.combinedOdds,
+        combinedProbability: slip.combinedProbability,
+        legs: slip.legs,
+      });
+    });
+  }
+  return wins;
+}
+
+/** Unione delle vincite, per id. La copia gia' archiviata vince: `settledAt` non deve ballare. */
+export function mergeWins(...lists) {
+  const byId = new Map();
+  for (const list of lists) {
+    for (const win of list || []) {
+      if (win?.id && !byId.has(win.id)) byId.set(win.id, win);
+    }
+  }
+  return [...byId.values()].sort((a, b) => String(b.generatedAt).localeCompare(String(a.generatedAt)));
+}
+
+export function readSlipWins(storage = safeStorage()) {
+  try {
+    const raw = storage?.getItem(SLIP_WINS_STORAGE);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function persistWins(storage, wins) {
+  try {
+    storage?.setItem(SLIP_WINS_STORAGE, JSON.stringify(wins));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Legge l'archivio su disco. `null` = non raggiungibile (assente, o servito da GitHub Pages). */
+export async function fetchRemoteArchive(fetchImpl = globalThis.fetch) {
+  if (typeof fetchImpl !== "function") return null;
+  try {
+    const response = await fetchImpl(ARCHIVE_FILE, { cache: "no-store" });
+    if (!response?.ok) return null;
+    const data = await response.json();
+    return {
+      series: Array.isArray(data?.series) ? data.series : [],
+      wins: Array.isArray(data?.wins) ? data.wins : [],
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Scrive l'archivio su disco. `false` senza server di sviluppo: non e' un errore, e' l'assenza. */
+export async function pushRemoteArchive(archive, fetchImpl = globalThis.fetch) {
+  if (typeof fetchImpl !== "function") return false;
+  try {
+    const response = await fetchImpl(ARCHIVE_ENDPOINT, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        version: 1,
+        updatedAt: new Date().toISOString(),
+        series: archive.series || [],
+        wins: archive.wins || [],
+      }),
+    });
+    return Boolean(response?.ok);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Unione di quanto c'e' nel browser e di quanto c'e' su disco.
+ *
+ * `remote: false` significa "archivio su disco non raggiungibile", ed e' l'unico caso in cui i
+ * dati vivono ancora nel solo `localStorage`. La pagina deve dirlo, perche' e' la condizione in
+ * cui una pulizia della cache cancella davvero tutto.
+ */
+export async function loadArchive(options = {}) {
+  const { storage = safeStorage(), fetchImpl = globalThis.fetch } = options;
+  const remote = await fetchRemoteArchive(fetchImpl);
+  return {
+    series: mergeSeries(readSlipHistory(storage), remote?.series || []),
+    wins: mergeWins(readSlipWins(storage), remote?.wins || []),
+    remote: Boolean(remote),
+  };
+}
+
+/**
+ * Salva l'archivio da entrambe le parti.
+ *
+ * Il file su disco tiene tutto; `localStorage` tiene solo le ultime `MAX_STORED_SERIES` serie —
+ * e' una cache, e riempirla fino alla quota farebbe fallire il salvataggio della serie
+ * successiva. Le vincite non si potano mai: sono il punto della sezione permanente.
+ */
+export async function saveArchive(archive, options = {}) {
+  const { storage = safeStorage(), fetchImpl = globalThis.fetch } = options;
+  const series = archive.series || [];
+  const wins = archive.wins || [];
+  const local = storage ? persist(storage, series.slice(0, MAX_STORED_SERIES)) && persistWins(storage, wins) : false;
+  const saved = await pushRemoteArchive({ series, wins }, fetchImpl);
+  return { local, saved };
+}
+
+/** Legge, unisce, riscrive. Usata dopo una generazione: la serie appena salvata finisce su disco. */
+export async function syncArchive(options = {}) {
+  const archive = await loadArchive(options);
+  const { saved } = await saveArchive(archive, options);
+  return { ...archive, saved };
+}

@@ -14,14 +14,15 @@ Riferimenti puntuali in `docs/misure-riferimento.md`.
 
 ## Il quadro d'insieme
 
-Venticinque difetti, e si distribuiscono in modo molto disuguale:
+Ventotto difetti, e si distribuiscono in modo molto disuguale:
 
 | categoria | quanti | impatto misurato sulle previsioni |
 |---|---|---|
-| Identità dei dati (nomi, alias, join) | 7 | il più grande mai misurato: **+0.0145** in Champions |
+| Identità dei dati (nomi, alias, join) | 8 | il più grande mai misurato: **+0.0145** in Champions |
 | Produzione ≠ misura | 6 | nullo o non misurabile, ma invalidava *ogni* misura |
 | Campi calcolati male | 4 | da nullo a "azzerava un'intera funzione" |
-| Interfaccia e flusso | 8 | funzione principale inutilizzabile, o generata e invisibile |
+| Test e integrazione continua | 1 | nessuno sulle previsioni: bloccava il deploy |
+| Interfaccia e flusso | 9 | funzione principale inutilizzabile, generata e invisibile, o salvata dove non resta |
 
 Tre osservazioni che il catalogo rende difficili da ignorare:
 
@@ -505,6 +506,110 @@ sull'apertura, e che i campi sopravvivano a `compact_match()`.
 
 ---
 
+## 26. Lo storico "permanente" viveva in una cache del browser
+
+**Cosa.** `storico.html` dichiarava che «le schedine generate restano qui», ma l'unico posto in
+cui restavano era `localStorage`. Che non e' un archivio: e' legato all'**origine** e ai dati del
+sito. Aprire l'app su una porta diversa (`npm start -- --port 8080`), pulire i dati di Chrome,
+passare a un altro browser o a un'altra macchina, e lo storico risultava vuoto — con lo stesso
+identico aspetto di «non hai mai generato niente». Nessun errore, nessuna riga in console: la
+pagina mostrava serenamente «Nessuna schedina salvata».
+
+**Costo.** Nessun effetto sulle previsioni, ma cancellava l'unica misura che il progetto abbia
+sui propri numeri dichiarati: la calibrazione delle schedine si costruisce per accumulo, e
+servono centinaia di serie prima che dica qualcosa. Un archivio che si azzera a ogni pulizia
+della cache non arriva mai a quel numero — cioe' la funzione era, di fatto, inesistente.
+
+**Perche' nessun test l'ha visto.** Tutti i test dello storico usavano un `fakeStorage()` che
+sopravviveva per definizione all'intero test: verificavano che «salva e rileggi» funzionasse,
+che e' esattamente cio' che funzionava. Nessuno poteva verificare la sola cosa che contava — che
+i dati sopravvivessero al **ciclo di vita dello storage**, che in un test in memoria non esiste.
+E' la variante di storage del difetto 16: un meccanismo testato in isolamento passa i test anche
+quando il contesto reale lo azzera.
+
+**Cosa lo intercetta adesso.** L'archivio e' `data/slip-history.json`, scritto da
+`PUT /api/slip-history` (l'unico endpoint di scrittura del progetto, esposto solo da
+`scripts/serve.mjs`) e riletto come file statico, quindi anche dove non si puo' scrivere.
+`localStorage` resta, ma degradato a cache dichiarata: le due copie si **uniscono per id**, mai
+si sostituiscono, cosi' che una copia vuota non possa cancellare l'altra.
+`tests/slip-archive-endpoint.test.js` avvia il server vero, scrive, rilegge dal percorso statico
+che usa il client e verifica che una forma sbagliata venga **rifiutata invece che scritta**;
+`tests/slip-history.test.js` copre l'unione, la potatura della sola cache e la permanenza delle
+vincite. E la pagina adesso dice in quale dei due casi si trova, invece di promettere una
+permanenza che non poteva mantenere.
+
+---
+
+## 27. La fusione delle grafie non era sul percorso che gira davvero
+
+**Cosa.** La correzione del difetto 7 aveva messo `resolve_spelling_collisions()` in
+`update_europe_data.main()`. Ma `update-data.yml` non esegue quel `main()`: l'entry point della
+rigenerazione automatica e' `update_top5_data.py`, che la fusione non l'ha mai chiamata.
+`enrich_competitions_players.py` — l'ultimo a scrivere — la applicava in uscita, pero' solo
+**rinominando**: la deduplica di `merge_matches()` era gia' avvenuta quando i due nomi erano
+ancora diversi, quindi le due righe restavano due righe, ora con lo stesso nome. La correzione
+c'era su due percorsi e nessuno dei due la completava.
+
+**Costo.** Il Malaga, neopromosso in Liga 2026-27, e' scritto `Malaga` da Football-Data.co.uk e
+`Málaga` da ESPN. Nel dataset rigenerato, Atletico-Malaga del 19/08/2026 e Malaga-Deportivo del
+24/08 comparivano due volte ciascuna, e `esp.1 2627` contava 21 identita' per un campionato da
+20. Sul sito nulla: `pages.yml` pubblica il dataset **committato**, e l'ultimo committato era
+stato prodotto dalla pipeline precedente. Il costo misurato e' che la rigenerazione automatica e'
+ferma dal 29/08/2026 — sette esecuzioni consecutive fallite, il dataset pubblicato invecchia di
+un giorno ogni giorno.
+
+**Perche' nessun test l'ha visto.** Al contrario: e' un test che l'ha visto, appena e' esistito.
+`test_dataset_identity_contract.py` e' arrivato su `main` con il merge del 29/08/2026 e ha
+intercettato il difetto alla prima rigenerazione. Cio' che nessun test copriva e' l'**ordine
+delle chiamate nei due percorsi di scrittura**: `test_main_applies_the_collapse_before_computing_elo`
+verificava il sorgente di `update_europe_data.py`, cioe' proprio il percorso che la CI non
+esegue. Un controllo scritto su un percorso non dice niente sull'altro, e la lezione del difetto
+7 — «la correzione deve stare su OGNI percorso che scrive» — era gia' scritta a commento del
+codice che la violava.
+
+**Cosa lo intercetta adesso.** `update_top5_data.py` fonde le grafie **prima** di
+`merge_matches()`, cosi' che la ricomposizione avvenga sui nomi gia' uniti;
+`enrich_competitions_players.py` richiama `merge_matches()` **dopo** la rinomina.
+`tests/test_team_name_normalization.py::CollapseOnEveryWritingPathTests` verifica l'ordine in
+entrambi i sorgenti e, per mutazione, che sia la rinomina da sola a non bastare: due righe della
+stessa partita con grafie diverse restano due anche dopo essere state rinominate, e tornano una
+sola — con le statistiche delle due fonti unite — solo se si rideduplica.
+
+---
+
+## 28. Un test di integrazione che scadeva con il calendario
+
+**Cosa.** `tests/odds-cache.test.js` verifica che la seconda schedina dello stesso turno non
+ricompri le quote, e per farlo chiama `generateSlip()` sul dataset vero. `generateSlip()` sceglie
+il primo turno con gare non concluse e poi scarta da quel turno le gare gia' passate (difetto
+24): se il dataset e' piu' vecchio del calendario, il turno "aperto" e' fatto solo di gare
+passate, non resta niente su cui costruire e la funzione solleva — correttamente, perche' nessuna
+API di quote espone eventi conclusi. Il test pero' non distingueva quel caso da un difetto della
+cache: lo lasciava propagare e diventava rosso.
+
+**Costo.** Nessun effetto sulle previsioni, ma un guasto a cascata sulla CI. `update-data.yml`
+era fermo dal 29/08/2026 per il difetto 27, quindi il dataset committato ha smesso di essere
+aggiornato; il 01/09/2026 le ultime due gare aperte del turno 2 di Serie A sono finite nel
+passato e `npm test` e' diventato rosso **anche in `pages.yml`**, che fino a quel momento era
+l'unico workflow verde. Un difetto nella pipeline dati bloccava cosi' anche la pubblicazione del
+sito, per una via che non ha niente a che vedere con la pipeline dati.
+
+**Perche' nessun test l'ha visto.** Perche' e' il test stesso. Era gia' scritto per saltare
+senza fallire quando `data/matches.json` non c'e' — la condizione «dati assenti» era prevista —
+ma non quando i dati ci sono e sono **stantii**. E' la stessa distinzione del difetto 24: il caso
+«turno parzialmente giocato» non si presenta mai finche' si lavora il giorno stesso in cui il
+dataset viene rigenerato, e la CI lo rigenerava quattro volte al giorno. La condizione e'
+comparsa il primo giorno in cui quella rigenerazione si e' fermata.
+
+**Cosa lo intercetta adesso.** Il test replica la selezione del turno con le **stesse** funzioni
+di `generateSlip()` (`buildMatchdays` e `upcomingFixtures`, entrambe esportate) e, se il turno
+scelto non ha almeno due gare da giocare, salta dichiarando che il dataset locale e' piu' vecchio
+del calendario — invece di far fallire il deploy. Su un dataset fresco il contratto sulla cache
+resta verificato: entrambi i casi sono verificati per mutazione, il salto sul dataset del
+28/08/2026 e l'esecuzione piena sullo stesso dataset con le gare passate marcate concluse.
+
+---
+
 ## 10-16. Difetti chiusi nelle sessioni precedenti
 
 Riassunti perché il pattern si veda per intero.
@@ -525,10 +630,10 @@ Riassunti perché il pattern si veda per intero.
 
 ## Cosa ne segue
 
-**Il confine è il posto pericoloso.** Ventitre difetti su venticinque stanno fra due componenti, non
+**Il confine è il posto pericoloso.** Ventiquattro difetti su ventisei stanno fra due componenti, non
 dentro uno. Fra due fonti (9, 10, 3), fra produzione e misura (1, 2), fra coppe e campionato (3),
 fra due funzioni che formattano lo stesso dizionario (6), fra pipeline e strumento manuale (7),
-fra un parametro e i suoi chiamanti (16), fra un id HTML e i due modi di leggerlo (8), fra una regola di stile e il contenuto che colpisce (24), fra il nome di una colonna e ciò che quella colonna contiene (25), fra la versione della pagina servita e quella dello script (17), fra il workflow che costruisce il dataset e quello che lo pubblica (18), fra i nostri nomi di squadra e quelli del servizio di quote (19, 20), fra la scala di prezzo del modello e quella del mercato (21), fra i mercati documentati e l'endpoint che li accetta (22), fra i nostri nomi di giocatore e quelli del bookmaker (23), fra due funzioni che abbinano le stesse partite (9). I test unitari coprono i componenti; i contratti
+fra un parametro e i suoi chiamanti (16), fra un id HTML e i due modi di leggerlo (8), fra una regola di stile e il contenuto che colpisce (24), fra il nome di una colonna e ciò che quella colonna contiene (25), fra la versione della pagina servita e quella dello script (17), fra ciò che una pagina promette di conservare e ciò che lo storage conserva davvero (26), fra il workflow che costruisce il dataset e quello che lo pubblica (18), fra i nostri nomi di squadra e quelli del servizio di quote (19, 20), fra la scala di prezzo del modello e quella del mercato (21), fra i mercati documentati e l'endpoint che li accetta (22), fra i nostri nomi di giocatore e quelli del bookmaker (23), fra due funzioni che abbinano le stesse partite (9). I test unitari coprono i componenti; i contratti
 coprono i confini, e sono quelli che hanno trovato qualcosa.
 
 **Un valore neutro nasconde il difetto a monte.** Il difetto 2 era invisibile perché i suoi

@@ -575,6 +575,20 @@ una multipla è persa appena una gamba lo è, e resta «in corso» finché una p
 I mercati sui giocatori restano **«non verificabili»**: il dataset non conserva gli eventi della
 singola partita, e contarli come persi falserebbe ogni statistica verso il basso.
 
+**Dove restano.** In `data/slip-history.json`, non nel browser. `localStorage` è legato
+all'origine e ai dati del sito: bastava cambiare porta (`npm start -- --port 8080`) o pulire la
+cache di Chrome perché lo storico risultasse vuoto, senza alcun errore. La lettura è un file
+statico e funziona ovunque; la scrittura passa da `PUT /api/slip-history`, che espone solo
+`scripts/serve.mjs` — quindi in locale l'archivio sopravvive al browser, e su GitHub Pages il
+salvataggio semplicemente non avviene e resta la copia nel browser. Le due copie si **uniscono
+per id**, non si sostituiscono: aprire la pagina da un browser vuoto non cancella l'archivio.
+La pagina dice sempre quale dei due casi è attivo.
+
+**Schedine vinte.** Una schedina le cui selezioni sono state tutte giocate e sono tutte risultate
+corrette viene copiata — per intero, selezioni comprese — in una sezione permanente di
+`storico.html`. È una copia e non un riferimento perché la serie che l'ha generata esce dalla
+rotazione delle ultime 40, e «permanente» significa che non esce nemmeno con «Svuota lo storico».
+
 Da lì esce la sola cosa che quei dati possano dire: la **calibrazione**. Se il modello dichiara il
 20% e su cinquanta schedine ne vincono nove, la probabilità mostrata accanto alla quota è onesta;
 se ne vincono due, è decorativa.
@@ -585,6 +599,59 @@ che una combinazione di quattro esiti è andata male non aggiunge nulla ai quatt
 il modello ha già. A dieci schedine a settimana servirebbero comunque anni prima che le
 percentuali osservate distinguano qualcosa dal rumore (§27.2 e il conto in `docs/`). È la stessa
 distinzione che il progetto applica a `confidence`: si dichiara e si verifica, non si retroagisce.
+
+### Foglio per l'asta del fantacalcio
+
+```bash
+npm run asta -- --storico Statistiche_Fantacalcio_Stagione_2025_26.xlsx
+npm run asta -- --storico stats.xlsx --squadre 8 --budget 300 --senza-modificatore
+```
+
+`scripts/fantacalcio_asta.mjs` produce un `.xlsx` con quattro listoni separati per ruolo, le
+coppie di portieri, le coppie che si contendono lo stesso posto, la classifica delle squadre e le
+scommesse di fine asta. Tiene separate tre fonti invece di fonderle in un numero che non si può
+più interrogare:
+
+1. **cosa ha fatto il giocatore** — dallo storico Fantagazzetta (`--storico`, `.xlsx` o `.csv`
+   letti direttamente da `scripts/xlsx.mjs`): presenze, media voto, gol, assist, rigori. Fatti;
+2. **dove giocherà e quanto** — rose e formazioni ESPN dal dataset;
+3. **quanto renderà quella squadra** — dal modello, che prevede **tutti i 380 accoppiamenti del
+   girone doppio** (ogni squadra contro ogni altra, andata e ritorno: è esattamente la stagione, e
+   non richiede il calendario, che il dataset conosce solo per le prossime giornate).
+
+Il prezzo è il valore sopra il sostituto, dove il sostituto è **l'ultimo titolare del ruolo**, non
+l'ultimo giocatore comprato: misurato con i posti in rosa, il primo portiere usciva a un terzo del
+budget perché il suo termine di paragone era una riserva che gioca una giornata su quattro. Un
+secondo livello, più leggero, dà un prezzo distinto anche alla panchina — con il solo livello dei
+titolari cinquanta difensori su ottanta uscivano tutti a 1 credito esatto. Dentro ogni ruolo i
+crediti sono proporzionali a quel valore, fra i ruoli comandano le quote di budget dichiarate, e
+la somma chiude esattamente sui crediti della lega.
+
+Il **modificatore di difesa** è attivo per default (`--senza-modificatore` lo spegne). Non è un
+bonus del singolo: è una proprietà della difesa intera, quindi ogni difensore e portiere riceve il
+contributo *marginale* del proprio voto medio rispetto al difensore che schiereresti al suo posto,
+diviso i quattro giocatori che compongono la media. Con il modificatore acceso le quote di budget
+si spostano su porta e difesa, ed è dichiarato in «Parametri».
+
+Tre confini delicati, tutti coperti da `tests/fantacalcio-asta.test.js`:
+
+- **il ruolo lo decide Fantagazzetta, non ESPN**: Dimarco per ESPN è un centrocampista, all'asta è
+  un difensore, e comprarlo dalla lista sbagliata significa non poterlo schierare;
+- **l'abbinamento dei nomi è a due fasi** — prima dentro la stessa squadra, poi in tutto il
+  campionato ma solo sulle righe rimaste libere. Senza il vincolo, l'«A. Rrahmani» in rosa al
+  Venezia si prendeva le statistiche del difensore del Napoli, che nel frattempo era regolarmente
+  abbinato al Napoli: due giocatori, una sola identità, nessun errore sollevato. Il matcher regge
+  `E. Ndicka` = `N'Dicka`, `R. Højlund` = `Hojlund`, `V. Milinkovic-Savic` = `Milinkovic-Savic V.`,
+  e rifiuta invece di indovinare quando i candidati restano più d'uno;
+- **i vincoli fisici del campo**: in una squadra c'è una sola porta, quindi le presenze dei
+  portieri di un club si normalizzano a 38, e due difensori di una difesa a tre non sono una
+  coppia che si alterna — giocano insieme tutte le domeniche. Le coppie si formano fra chi è
+  dentro la formazione tipo e chi sta appena fuori.
+
+Il limite che resta: i giocatori che l'anno scorso non erano in Serie A (neopromosse, arrivi
+dall'estero) non hanno storico e prendono la mediana del loro ruolo, con un forte sconto sulle
+presenze attese. Non è una stima del loro valore, è un segnaposto, ed è dichiarato riga per riga
+nella colonna «Attendibilità» e nel foglio «Non abbinati».
 
 ### Cosa ottimizza, e perché
 

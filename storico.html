@@ -20,7 +20,7 @@
         <a class="back-link" href="index.html">Pronostici →</a>
       </div>
       <h1>Storico e verifica</h1>
-      <p>Le schedine generate restano qui, e il loro esito viene calcolato dai risultati veri quando le partite sono state giocate. Serve a una cosa sola: controllare se la probabilità che il modello dichiara è quella che poi si osserva.</p>
+      <p>Le schedine generate restano qui — nel file <code>data/slip-history.json</code> quando la pagina è servita da <code>npm start</code>, quindi anche dopo una pulizia della cache di Chrome — e il loro esito viene calcolato dai risultati veri quando le partite sono state giocate. Serve a una cosa sola: controllare se la probabilità che il modello dichiara è quella che poi si osserva.</p>
     </header>
 
     <div class="settings-stack">
@@ -34,12 +34,20 @@
 
       <section class="settings-card">
         <div class="settings-card__heading">
+          <h2>Schedine vinte</h2>
+        </div>
+        <div id="storico-wins"></div>
+        <p class="schedina-note">Sezione permanente: una schedina entra qui quando tutte le sue selezioni sono state giocate e sono risultate corrette, e non ne esce più. Non viene toccata dal pulsante «Svuota lo storico», e non sparisce quando la serie che la conteneva esce dalla rotazione delle ultime 40.</p>
+      </section>
+
+      <section class="settings-card">
+        <div class="settings-card__heading">
           <h2>Serie salvate</h2>
         </div>
         <p id="storico-status" class="settings-status" aria-live="polite">Caricamento…</p>
         <div id="storico-list"></div>
         <div class="settings-actions">
-          <button id="storico-clear" class="secondary-button" type="button">Svuota lo storico</button>
+          <button id="storico-clear" class="secondary-button" type="button">Svuota lo storico (le vinte restano)</button>
         </div>
       </section>
     </div>

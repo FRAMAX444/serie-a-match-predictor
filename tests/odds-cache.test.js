@@ -94,8 +94,28 @@ const datasetPath = new URL("../data/matches.json", import.meta.url);
 if (!fs.existsSync(datasetPath)) {
   console.log("SALTATO (integrazione): data/matches.json non presente");
 } else {
-  const { generateSlip } = await import("../schedina.js");
+  const { generateSlip, upcomingFixtures } = await import("../schedina.js");
+  const { buildMatchdays } = await import("../matchdays.js");
   const payload = JSON.parse(fs.readFileSync(datasetPath, "utf8"));
+
+  // Il turno che generateSlip sceglierebbe deve avere ancora gare da giocare, altrimenti
+  // solleva — ed e' giusto che sollevi, perche' non esistono quote per eventi conclusi.
+  // Quello che NON deve fare e' far fallire questo test, che verifica la cache delle quote e
+  // non la freschezza del dataset. La condizione arriva da sola: il dataset lo rigenera la CI
+  // quattro volte al giorno, quindi basta che quella si fermi (o che si lavori in locale il
+  // giorno dopo l'ultimo aggiornamento) perche' l'ultimo turno aperto finisca nel passato.
+  // La stessa selezione di generateSlip, replicata con le sue stesse funzioni per non
+  // indovinare quale turno guardera'.
+  const calendar = buildMatchdays(payload, "ita.1");
+  const matchday = calendar.firstUpcoming || calendar.matchdays?.[0];
+  const playable = matchday ? upcomingFixtures(matchday.fixtures).length : 0;
+  if (playable < 2) {
+    console.log(
+      `SALTATO (integrazione): il turno ${matchday?.round ?? "?"} ha ${playable} gare ancora da `
+      + "giocare, il dataset locale e' piu' vecchio del calendario",
+    );
+    process.exit(0);
+  }
 
   const store = fakeStorage();
   globalThis.localStorage = store;

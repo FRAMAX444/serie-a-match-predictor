@@ -1,4 +1,7 @@
-import { readSlipHistory, clearSlipHistory, settleSeries, indexMatches, historyCalibration } from "./slip-history.js";
+import {
+  clearSlipHistory, settleSeries, indexMatches, historyCalibration,
+  loadArchive, saveArchive, collectWins, mergeWins,
+} from "./slip-history.js";
 
 const $ = (id) => {
   const node = document.getElementById(id);
@@ -87,6 +90,35 @@ function seriesMarkup(record) {
   </details>`;
 }
 
+// Una vincita e' una copia autonoma, non un puntatore alla serie: e' l'unico modo perche' resti
+// leggibile quando la serie che la conteneva esce dalla rotazione delle ultime 40.
+function winMarkup(win) {
+  return `<article class="schedina-card" data-status="vinta">
+    <header class="schedina-card__head">
+      <span class="schedina-card__rank">${escapeHtml(win.competitionName || win.competitionId)} · turno ${escapeHtml(String(win.round ?? "?"))}</span>
+      <span class="schedina-card__odds">quota <strong>${number(win.combinedOdds)}</strong></span>
+      <span class="schedina-card__prob">${percent(win.combinedProbability)} · ${escapeHtml(new Date(win.generatedAt).toLocaleDateString("it-IT"))}</span>
+    </header>
+    <div class="schedina-legs">${win.legs.map(legMarkup).join("")}</div>
+  </article>`;
+}
+
+function winsMarkup(wins) {
+  if (!wins.length) {
+    return '<p class="schedina-summary__note">Nessuna schedina vinta finora. Una schedina entra qui quando tutte le sue selezioni sono state giocate e sono risultate corrette, e da quel momento non esce più: né quando la serie che la conteneva esce dalla rotazione, né quando svuoti lo storico.</p>';
+  }
+  const totale = wins.reduce((sum, win) => sum + Number(win.combinedOdds || 0), 0);
+  const migliore = wins.reduce((best, win) => (Number(win.combinedOdds) > Number(best.combinedOdds) ? win : best), wins[0]);
+  return [
+    '<div class="schedina-summary">',
+    summaryItem("Schedine vinte", `${wins.length}`),
+    summaryItem("Quota più alta vinta", number(migliore.combinedOdds)),
+    summaryItem("Vincita totale su 1€ per schedina", `${number(totale)}€`),
+    "</div>",
+    wins.map(winMarkup).join(""),
+  ].join("");
+}
+
 async function loadMatches() {
   try {
     const response = await fetch("data/matches.json", { cache: "no-store" });
@@ -101,31 +133,49 @@ async function loadMatches() {
   }
 }
 
-function render(history, matches) {
+// Dove vivono davvero i dati. E' la riga che mancava: finora la pagina prometteva che "le
+// schedine restano qui" senza distinguere fra un archivio su disco e una cache del browser, che
+// una pulizia di Chrome cancella per intero.
+function storageNote(archive) {
+  return archive.remote || archive.saved
+    ? "Archivio su disco attivo (data/slip-history.json): le schedine sopravvivono alla pulizia della cache e al cambio di browser."
+    : "Archivio su disco non raggiungibile: le schedine vivono solo in questo browser e una pulizia dei dati di Chrome le cancella. "
+      + "Apri la pagina da `npm start` perché vengano scritte su disco.";
+}
+
+function render(settled, wins, archive, matches) {
   const status = $("storico-status");
-  if (!history.length) {
-    status.textContent = "Nessuna schedina salvata. Generane una serie dalla pagina Schedina.";
+  $("storico-wins").innerHTML = winsMarkup(wins);
+  if (!settled.length) {
+    status.textContent = `Nessuna serie salvata. Generane una dalla pagina Schedina. ${storageNote(archive)}`;
     $("storico-list").innerHTML = "";
     $("storico-calibration").innerHTML = calibrationMarkup({ decided: 0, bands: [] });
     return;
   }
-  if (!matches) {
-    status.textContent = "Storico caricato, ma il dataset dei risultati non è raggiungibile: gli esiti non sono calcolabili adesso.";
-  } else {
-    status.textContent = `${history.length} serie salvate.`;
-  }
-  const index = indexMatches(matches || []);
-  const settled = history.map((record) => settleSeries(record, index));
+  status.textContent = matches
+    ? `${settled.length} serie salvate. ${storageNote(archive)}`
+    : `${settled.length} serie salvate, ma il dataset dei risultati non è raggiungibile: gli esiti non sono calcolabili adesso. ${storageNote(archive)}`;
   $("storico-calibration").innerHTML = calibrationMarkup(historyCalibration(settled));
   $("storico-list").innerHTML = settled.map(seriesMarkup).join("");
 }
 
 async function init() {
   const matches = await loadMatches();
-  render(readSlipHistory(), matches);
-  $("storico-clear").addEventListener("click", () => {
+  // L'unione fra disco e browser va fatta prima di qualunque cosa: le due copie divergono appena
+  // si genera una schedina da un browser e la si guarda da un altro.
+  const archive = await loadArchive();
+  const index = indexMatches(matches || []);
+  const settled = archive.series.map((record) => settleSeries(record, index));
+  const wins = mergeWins(archive.wins, collectWins(settled));
+  const { saved } = await saveArchive({ series: archive.series, wins });
+  render(settled, wins, { ...archive, saved }, matches);
+
+  $("storico-clear").addEventListener("click", async () => {
+    // Svuota le serie, non le vincite: sono due archivi con vite diverse, e la sezione permanente
+    // non sarebbe permanente se un pulsante potesse azzerarla.
     clearSlipHistory();
-    render([], matches);
+    const { saved: archived } = await saveArchive({ series: [], wins });
+    render([], wins, { remote: archive.remote, saved: archived }, matches);
   });
 }
 

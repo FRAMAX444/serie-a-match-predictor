@@ -6,7 +6,7 @@ import {
   DEFAULT_MIN_LEG_ODDS,
 } from "./schedina.js";
 import { buildCompetitionCatalog } from "./matchdays.js";
-import { saveSlipSeries } from "./slip-history.js";
+import { saveSlipSeries, syncArchive } from "./slip-history.js";
 
 // Se un id non esiste, il messaggio deve dire QUALE. Senza questo controllo la pagina mostrava
 // "Errore: Cannot set properties of null (setting 'innerHTML')", che non nomina l'elemento
@@ -103,7 +103,7 @@ function slipBlock(slip, index) {
   </article>`;
 }
 
-function renderSeries(slips, notes, context) {
+async function renderSeries(slips, notes, context) {
   const section = $("schedina-result");
   const warnings = $("schedina-warnings");
   if (!slips.length) {
@@ -150,12 +150,26 @@ function renderSeries(slips, notes, context) {
   // quella vera. Si salva subito, perche' una schedina non registrata al momento della
   // generazione non e' piu' verificabile dopo — la si ricostruirebbe sapendo gia' com'e' andata.
   const saved = saveSlipSeries({ ...context, slips });
-  setStatus(
-    saved
-      ? `Fatto: ${slips.length} schedine generate e salvate nello storico.`
-      : `Fatto: ${slips.length} schedine generate. Non è stato possibile salvarle nello storico (spazio del browser).`,
-    "ok",
-  );
+  // Salvare nel browser non basta: `localStorage` se ne va con la cache di Chrome, e con essa
+  // tutto lo storico. `syncArchive` porta la serie anche in `data/slip-history.json`, che
+  // sopravvive al browser — ma solo quando la pagina e' servita da `npm start`, l'unico contesto
+  // in cui esiste un endpoint di scrittura. Le due cose vanno dette separate, perche' hanno
+  // rimedi diversi: quota esaurita contro archivio non raggiungibile.
+  const { saved: archived } = await syncArchive();
+  const dove = [saved ? "nel browser" : null, archived ? "nell'archivio su disco" : null].filter(Boolean);
+  if (dove.length === 2) {
+    setStatus(`Fatto: ${slips.length} schedine generate e salvate ${dove.join(" e ")} (data/slip-history.json).`, "ok");
+  } else if (archived) {
+    setStatus(`Fatto: ${slips.length} schedine generate e salvate nell'archivio su disco. Non nel browser: spazio esaurito.`, "ok");
+  } else if (saved) {
+    setStatus(
+      `Fatto: ${slips.length} schedine generate e salvate nel browser. L'archivio su disco non è `
+      + "raggiungibile: aprendo la pagina da `npm start` le schedine sopravvivono anche alla pulizia della cache.",
+      "warn",
+    );
+  } else {
+    setStatus(`Fatto: ${slips.length} schedine generate, ma non salvate da nessuna parte: né nel browser né su disco.`, "warn");
+  }
 }
 
 function coverageNotes(result) {
@@ -241,7 +255,7 @@ async function runGeneration(sportKeyOverride) {
         ? ["goalscorer", "goal_assist", "shot", "shots_2", "shot_on_target"]
         : [],
     });
-    renderSeries(result.slips, coverageNotes(result), {
+    await renderSeries(result.slips, coverageNotes(result), {
       competitionId,
       competitionName: $("schedina-competition").selectedOptions?.[0]?.text || competitionId,
       round: result.matchday?.round ?? null,

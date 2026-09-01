@@ -176,6 +176,24 @@ def main() -> None:
         matches.extend(european_history)
         print(f"{descriptor['name']}: {len(current)} fixture target, {len(european_history)} gare storiche")
 
+    # Fusione delle grafie PRIMA di merge_matches: la chiave di deduplica contiene i nomi delle
+    # squadre, quindi "Malaga" (Football-Data.co.uk) e "Málaga" (ESPN) sono due partite distinte e
+    # un club spezzato in due identità, ciascuna con metà della storia. update_europe_data.main()
+    # la applica già, ma l'entry point della pipeline automatica è QUESTO: è il difetto 7 di
+    # MISTAKES.md rientrato dal percorso che non era stato coperto.
+    spelling = base.resolve_spelling_collisions([
+        str(row[side])
+        for source in (matches, *[competition.get("fixtures") or [] for competition in competitions])
+        for row in source
+        for side in ("home_team", "away_team")
+        if row.get(side)
+    ])
+    if spelling:
+        renamed = base.apply_spelling_collisions(matches, spelling)
+        for competition in competitions:
+            renamed += base.apply_spelling_collisions(competition.get("fixtures") or [], spelling)
+        print(f"grafie fuse: {len(spelling)} nomi, {renamed} riscritture ({', '.join(f'{k}->{v}' for k, v in sorted(spelling.items())[:6])})")
+
     matches = [compact_match(item) for item in base.merge_matches(matches)]
     if len(matches) < 400:
         raise SystemExit("Dati insufficienti per Big Five e coppe UEFA: il dataset esistente non viene sovrascritto.")

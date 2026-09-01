@@ -1172,6 +1172,11 @@ def main() -> None:
         renamed = base.apply_spelling_collisions(payload.get("matches") or [], spelling)
         for item in payload.get("competitions") or []:
             renamed += base.apply_spelling_collisions(item.get("fixtures") or [], spelling)
+        # Riscrivere i nomi non basta: le due righe della stessa partita restano due righe,
+        # perche' la deduplica era gia' avvenuta quando i nomi erano ancora diversi. Va rifatta
+        # DOPO la fusione, come fa update_europe_data.main().
+        matches = base.merge_matches(payload["matches"])
+        payload["matches"] = matches
         for key in ("team_context", "player_context"):
             section = payload.get(key)
             if isinstance(section, dict):
