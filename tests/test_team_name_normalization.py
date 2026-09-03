@@ -169,3 +169,90 @@ class SpellingCollisionsInPipelineTests(unittest.TestCase):
         # Nomi che non collidono nel fold non vanno toccati: sono club diversi.
         self.assertEqual(pipeline.resolve_spelling_collisions(["Inter", "Inter Turku"]), {})
         self.assertEqual(pipeline.resolve_spelling_collisions(["Oviedo", "Real Oviedo"]), {})
+
+
+class CollapseOnEveryWritingPathTests(unittest.TestCase):
+    """La fusione deve stare su OGNI percorso che scrive, e deve RICOMPORRE le partite.
+
+    Difetto del 31/08/2026, arrivato nel dataset rigenerato dalla CI. Due lacune indipendenti
+    nella correzione del difetto 7, entrambe sul percorso che gira davvero quattro volte al
+    giorno:
+
+      1. la fusione era in `update_europe_data.main()`, che `update-data.yml` non esegue mai:
+         l'entry point automatico e' `update_top5_data.py`, e li' non c'era;
+      2. `enrich_competitions_players.py` la applicava in uscita, ma solo rinominando. La
+         deduplica era gia' avvenuta quando i nomi erano ancora diversi, quindi le due righe
+         della stessa partita restavano due righe con lo stesso nome.
+
+    Effetto misurato: il Malaga, neopromosso in Liga, scritto "Malaga" da Football-Data.co.uk
+    e "Málaga" da ESPN. Atletico-Malaga del 19/08 e Malaga-Deportivo del 24/08 contate due
+    volte nel training di LaLiga.
+    """
+
+    def test_the_top_five_entry_point_collapses_before_deduplicating(self) -> None:
+        # Sul sorgente e non sul comportamento: main() richiede la rete. Conta l'ORDINE —
+        # fondere dopo merge_matches() rinominerebbe righe gia' separate, che e' il difetto 2
+        # qui sopra.
+        source = (ROOT / "scripts" / "update_top5_data.py").read_text(encoding="utf8")
+        collapse = source.find("spelling = base.resolve_spelling_collisions(")
+        merge = source.find("matches = [compact_match(item) for item in base.merge_matches(matches)]")
+        self.assertNotEqual(collapse, -1, "update_top5_data.py deve fondere le grafie: e' l'entry point di update-data.yml")
+        self.assertNotEqual(merge, -1, "punto di riferimento non trovato: il test va aggiornato")
+        self.assertLess(
+            collapse, merge,
+            "la fusione deve precedere merge_matches(): dopo, le due grafie sono gia' due "
+            "partite distinte e rinominarle lascia due righe identiche",
+        )
+
+    def test_the_enrichment_collapses_before_elo_and_deduplicates(self) -> None:
+        """L'arricchimento e' il secondo scrittore, e ricalcola Elo e team_context: qui la
+        fusione non basta che preceda la scrittura, deve precedere i CALCOLI. Fonderla dopo
+        `compute_elo` unirebbe i nomi lasciando l'Elo sulle identita' spezzate, cioe'
+        correggerebbe l'etichetta e non il dato."""
+        source = (ROOT / "scripts" / "enrich_competitions_players.py").read_text(encoding="utf8")
+        collapse = source.find("spelling = base.resolve_spelling_collisions(every_name)")
+        remerge = source.find("matches = base.merge_matches(matches)")
+        elo = source.find("elo, elo_as_of, counts = base.compute_elo(matches)")
+        self.assertNotEqual(collapse, -1, "l'arricchimento deve fondere le grafie: e' il secondo scrittore del dataset")
+        self.assertNotEqual(remerge, -1, "dopo la rinomina le righe vanno ricomposte, non lasciate doppie")
+        self.assertNotEqual(elo, -1, "punto di riferimento non trovato: il test va aggiornato")
+        self.assertLess(
+            collapse, remerge,
+            "la ricomposizione va DOPO la fusione: prima, i due nomi sono ancora due chiavi diverse",
+        )
+        self.assertLess(
+            remerge, elo,
+            "Elo, team_context e player_context vanno calcolati sulle righe gia' ricomposte",
+        )
+
+    def test_renaming_without_remerging_leaves_the_match_twice(self) -> None:
+        """Il comportamento che i due controlli sul sorgente proteggono, verificato per
+        mutazione: e' la rinomina DA SOLA a non bastare, non la fusione a essere sbagliata."""
+        def rows() -> list[dict]:
+            return [
+                {"competition_id": "esp.1", "date": "2026-08-19", "home_team": "Atletico Madrid",
+                 "away_team": "Malaga", "home_goals": 2, "away_goals": 0, "home_shots": 14},
+                {"competition_id": "esp.1", "date": "2026-08-19", "home_team": "Atletico Madrid",
+                 "away_team": "Málaga", "home_goals": 2, "away_goals": 0, "home_xg": 1.9},
+            ]
+
+        # Senza fusione: due partite dove ce n'e' una, ciascuna con meta' delle statistiche.
+        self.assertEqual(len(pipeline.merge_matches(rows())), 2)
+
+        # Con la sola rinomina, come faceva l'arricchimento: un nome solo, ma sempre due righe.
+        renamed = pipeline.merge_matches(rows())
+        spelling = pipeline.resolve_spelling_collisions(
+            [row[side] for row in renamed for side in ("home_team", "away_team")]
+        )
+        pipeline.apply_spelling_collisions(renamed, spelling)
+        self.assertEqual(len(renamed), 2, "premessa del difetto: rinominare non ricompone")
+
+        # Fusione e poi ricomposizione: una riga sola, e le statistiche delle due fonti unite.
+        merged = pipeline.merge_matches(renamed)
+        self.assertEqual(len(merged), 1)
+        # QUALE delle due grafie vinca lo decide resolve_spelling_collisions() ed e' gia'
+        # verificato sopra; qui conta che ne resti una sola e che le statistiche delle due
+        # fonti finiscano sulla stessa riga invece di restare meta' per parte.
+        self.assertIn(merged[0]["away_team"], {"Malaga", "Málaga"})
+        self.assertEqual(merged[0]["home_shots"], 14)
+        self.assertEqual(merged[0]["home_xg"], 1.9)

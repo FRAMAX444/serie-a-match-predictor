@@ -66,7 +66,76 @@ function resolveRequestPath(requestUrl) {
   return candidate;
 }
 
+// L'unico endpoint di scrittura del progetto: l'archivio delle schedine.
+//
+// Esiste perche' `localStorage` e' legato all'origine e alla pulizia dei dati del browser: lo
+// storico spariva cambiando porta o svuotando la cache di Chrome, senza errori. Il file su disco
+// e' l'archivio vero; il browser ne tiene solo una copia. La scrittura e' deliberatamente
+// limitata a questo unico percorso — un server di sviluppo raggiungibile dalla rete locale non
+// deve poter scrivere altrove.
+const ARCHIVE_PATH = path.join(ROOT, "data", "slip-history.json");
+const MAX_ARCHIVE_BYTES = 8 * 1024 * 1024;
+
+function writeArchive(request, response) {
+  const chunks = [];
+  let size = 0;
+  request.on("data", (chunk) => {
+    size += chunk.length;
+    if (size > MAX_ARCHIVE_BYTES) {
+      response.writeHead(413, { "Content-Type": "text/plain; charset=utf-8" });
+      response.end("413 archivio troppo grande");
+      request.destroy();
+      return;
+    }
+    chunks.push(chunk);
+  });
+  request.on("end", () => {
+    if (response.writableEnded) return;
+    let archive;
+    try {
+      archive = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    } catch (error) {
+      response.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
+      response.end(`400 JSON non valido: ${error.message}`);
+      return;
+    }
+    // Un archivio con `series` o `wins` non-array sovrascriverebbe il file con qualcosa che il
+    // client rileggerebbe come vuoto: e' esattamente la perdita di dati che questo endpoint
+    // esiste per evitare, quindi si rifiuta invece di scrivere.
+    if (!Array.isArray(archive?.series) || !Array.isArray(archive?.wins)) {
+      response.writeHead(422, { "Content-Type": "text/plain; charset=utf-8" });
+      response.end("422 attesi i campi series[] e wins[]");
+      return;
+    }
+    try {
+      // Scrittura su temporaneo e rename: un'interruzione a meta' lascerebbe altrimenti un file
+      // JSON troncato, cioe' un archivio illeggibile al posto di uno vecchio ma valido.
+      const temporary = `${ARCHIVE_PATH}.tmp`;
+      fs.mkdirSync(path.dirname(ARCHIVE_PATH), { recursive: true });
+      fs.writeFileSync(temporary, JSON.stringify(archive, null, 2), "utf8");
+      fs.renameSync(temporary, ARCHIVE_PATH);
+    } catch (error) {
+      response.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
+      response.end(`500 archivio non scritto: ${error.message}`);
+      return;
+    }
+    response.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+    response.end(JSON.stringify({ ok: true, series: archive.series.length, wins: archive.wins.length }));
+    console.log(`200 ${request.method} ${request.url} (${archive.series.length} serie, ${archive.wins.length} vincite)`);
+  });
+}
+
 const server = http.createServer((request, response) => {
+  const route = (request.url || "/").split("?")[0];
+  if (route === "/api/slip-history") {
+    if (request.method === "PUT" || request.method === "POST") {
+      writeArchive(request, response);
+      return;
+    }
+    response.writeHead(405, { "Content-Type": "text/plain; charset=utf-8", Allow: "PUT, POST" });
+    response.end("405 usa PUT su /api/slip-history");
+    return;
+  }
   const filePath = resolveRequestPath(request.url || "/");
   if (!filePath) {
     response.writeHead(403, { "Content-Type": "text/plain; charset=utf-8" });

@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import {
   saveSlipSeries, readSlipHistory, clearSlipHistory, settleMarket, settleSeries,
-  indexMatches, historyCalibration, SLIP_HISTORY_STORAGE,
+  indexMatches, historyCalibration, SLIP_HISTORY_STORAGE, SLIP_WINS_STORAGE,
+  mergeSeries, mergeWins, collectWins, readSlipWins, loadArchive, saveArchive, syncArchive,
+  MAX_STORED_SERIES, ARCHIVE_FILE, ARCHIVE_ENDPOINT,
 } from "../slip-history.js";
 
 function fakeStorage() {
@@ -134,4 +136,115 @@ assert.deepEqual(readSlipHistory(corrupted), []);
 clearSlipHistory(storage);
 assert.deepEqual(readSlipHistory(storage), []);
 
-console.log("OK: storico schedine — esiti dal punteggio, stato delle multiple, calibrazione e archivio");
+
+// --- Archivio su disco: unione, permanenza delle vincite, degradazione ------------------------
+//
+// Il difetto che questa sezione difende: `localStorage` non e' un archivio. Cambiare porta o
+// pulire i dati di Chrome azzerava lo storico senza sollevare nulla, mentre la pagina continuava
+// a promettere che le schedine "restano qui". Il file su disco e la copia nel browser devono
+// unirsi per id — mai sostituirsi — altrimenti il primo caricamento da un browser vuoto
+// cancellerebbe l'archivio invece di leggerlo.
+
+const serieA = { id: "a", generatedAt: "2026-08-01T10:00:00.000Z", competitionId: "ita.1", slips: [] };
+const serieB = { id: "b", generatedAt: "2026-08-20T10:00:00.000Z", competitionId: "ita.1", slips: [] };
+const serieC = { id: "c", generatedAt: "2026-08-10T10:00:00.000Z", competitionId: "ita.1", slips: [] };
+
+const merged = mergeSeries([serieB], [serieA, serieB, serieC]);
+assert.deepEqual(merged.map((entry) => entry.id), ["b", "c", "a"], "unione per id, dalla piu' recente");
+assert.equal(merged.length, 3, "una serie presente in entrambe le copie non deve comparire due volte");
+assert.deepEqual(mergeSeries(null, undefined, [{ generatedAt: "x" }]), [], "una serie senza id non e' indicizzabile");
+
+// Le vincite si estraggono dalle serie gia' risolte, e solo da quelle vinte.
+const settledMix = {
+  id: "s1", generatedAt: "2026-08-01T10:00:00.000Z", competitionId: "ita.1", competitionName: "Serie A", round: 1,
+  slips: [
+    { status: "vinta", combinedOdds: 4.5, combinedProbability: 0.25, legs: [{ label: "1", odds: 2.1 }] },
+    { status: "persa", combinedOdds: 9.0, combinedProbability: 0.1, legs: [{ label: "2", odds: 3.0 }] },
+    { status: "in corso", combinedOdds: 3.0, combinedProbability: 0.4, legs: [{ label: "X", odds: 3.0 }] },
+  ],
+};
+const wins = collectWins([settledMix], { now: 1000 });
+assert.equal(wins.length, 1, "solo le schedine vinte entrano nella sezione permanente");
+assert.equal(wins[0].id, "s1#0", "l'id della vincita e' serie + posizione: rileggerla non deve duplicarla");
+assert.equal(wins[0].combinedOdds, 4.5);
+assert.equal(wins[0].legs.length, 1, "la vincita porta con se' le selezioni: e' una copia, non un riferimento");
+assert.deepEqual(collectWins([settledMix], { now: 1000 }).map((win) => win.id), ["s1#0"], "estrazione idempotente");
+
+const vecchia = { ...wins[0], settledAt: "2026-01-01T00:00:00.000Z" };
+assert.equal(mergeWins([vecchia], wins)[0].settledAt, "2026-01-01T00:00:00.000Z",
+  "la copia gia' archiviata vince: la data di risoluzione non deve cambiare a ogni visita");
+
+// Il punto della permanenza: la vincita sopravvive alla serie che l'ha generata.
+{
+  const storage = fakeStorage();
+  const troppe = Array.from({ length: MAX_STORED_SERIES + 5 }, (_, index) => ({
+    id: `serie-${index}`,
+    generatedAt: new Date(Date.UTC(2026, 0, index + 1)).toISOString(),
+    competitionId: "ita.1",
+    slips: [],
+  }));
+  await saveArchive({ series: troppe, wins }, { storage, fetchImpl: null });
+  assert.equal(readSlipHistory(storage).length, MAX_STORED_SERIES, "il browser tiene solo una cache potata");
+  assert.equal(readSlipWins(storage).length, 1, "le vincite non si potano mai: e' la sezione permanente");
+  assert.equal(readSlipWins(storage)[0].id, "s1#0");
+}
+
+// Unione con l'archivio su disco. Il browser conosce solo `b`, il disco solo `a`: dopo il
+// caricamento devono esserci entrambe, e la riscrittura deve rimandare su disco l'unione intera.
+{
+  const storage = fakeStorage();
+  storage.setItem(SLIP_HISTORY_STORAGE, JSON.stringify([serieB]));
+  storage.setItem(SLIP_WINS_STORAGE, JSON.stringify([wins[0]]));
+  const richieste = [];
+  const fetchImpl = async (url, options = {}) => {
+    richieste.push({ url, options });
+    if (options.method) return { ok: true, json: async () => ({ ok: true }) };
+    return { ok: true, json: async () => ({ series: [serieA], wins: [] }) };
+  };
+  const archive = await loadArchive({ storage, fetchImpl });
+  assert.equal(archive.remote, true, "archivio su disco raggiungibile");
+  assert.deepEqual(archive.series.map((entry) => entry.id), ["b", "a"]);
+  assert.equal(archive.wins.length, 1, "le vincite del browser non si perdono se il disco non le ha ancora");
+  assert.equal(richieste[0].url, ARCHIVE_FILE, "la lettura e' un file statico: funziona anche senza server");
+
+  const { saved } = await saveArchive(archive, { storage, fetchImpl });
+  assert.equal(saved, true);
+  const scrittura = richieste.at(-1);
+  assert.equal(scrittura.url, ARCHIVE_ENDPOINT);
+  assert.equal(scrittura.options.method, "PUT");
+  const corpo = JSON.parse(scrittura.options.body);
+  assert.deepEqual(corpo.series.map((entry) => entry.id), ["b", "a"], "su disco va l'unione, non la sola copia locale");
+  assert.equal(corpo.wins.length, 1, "series[] e wins[] sono i due campi che il server pretende");
+}
+
+// Senza server di sviluppo (GitHub Pages, o pagina aperta da file://) la scrittura fallisce: e'
+// l'assenza dell'archivio, non un errore, e i dati devono restare nel browser.
+{
+  const storage = fakeStorage();
+  storage.setItem(SLIP_HISTORY_STORAGE, JSON.stringify([serieB]));
+  const fetchImpl = async (url, options = {}) => (options.method ? { ok: false, status: 405 } : { ok: false, status: 404 });
+  const archive = await syncArchive({ storage, fetchImpl });
+  assert.equal(archive.remote, false, "404 sul file = nessun archivio su disco");
+  assert.equal(archive.saved, false, "405 sull'endpoint = nessun server di sviluppo");
+  assert.deepEqual(archive.series.map((entry) => entry.id), ["b"], "la copia nel browser non va persa");
+  assert.deepEqual(readSlipHistory(storage).map((entry) => entry.id), ["b"]);
+}
+
+// Un archivio su disco illeggibile o di forma sbagliata non deve cancellare quello del browser.
+{
+  const storage = fakeStorage();
+  storage.setItem(SLIP_HISTORY_STORAGE, JSON.stringify([serieB]));
+  const rotto = async (url, options = {}) => (options.method
+    ? { ok: true, json: async () => ({}) }
+    : { ok: true, json: async () => { throw new Error("JSON troncato"); } });
+  const archive = await loadArchive({ storage, fetchImpl: rotto });
+  assert.equal(archive.remote, false);
+  assert.deepEqual(archive.series.map((entry) => entry.id), ["b"]);
+  const senzaCampi = async () => ({ ok: true, json: async () => ({ version: 1 }) });
+  assert.deepEqual((await loadArchive({ storage, fetchImpl: senzaCampi })).series.map((entry) => entry.id), ["b"]);
+}
+
+// Nessun fetch disponibile (Node senza rete, o browser antico): tutto resta nel browser.
+assert.equal(await saveArchive({ series: [serieA], wins: [] }, { storage: fakeStorage(), fetchImpl: null }).then((result) => result.saved), false);
+
+console.log("OK: storico schedine — esiti, calibrazione, archivio su disco e sezione permanente delle vinte");

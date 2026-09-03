@@ -50,8 +50,15 @@ jobs:
           node-version: "22"
       - name: Install Python dependencies
         run: pip install -r requirements.txt
+      # update_top5_data.py riscrive data/matches.json da zero, e il payload che produce non
+      # contiene player_context: la copia serve a non ripartire ogni volta da una cache vuota.
+      # L'arricchimento copre al massimo ~80 riassunti partita per esecuzione, quindi la
+      # copertura si ACCUMULA fra una run e l'altra: senza questa copia scende da 102 squadre
+      # a 95 e non risale piu'.
       - name: Preserve previous player context
         run: cp data/matches.json "$RUNNER_TEMP/matches.previous.json"
+      # Un 500 di ESPN o un HTTP 300 di Football-Data non sono difetti del dataset: sono la
+      # rete. Un secondo tentativo costa quindici secondi ed evita di trattarli come tali.
       - name: Build Big Five and UEFA dataset
         shell: bash
         run: |

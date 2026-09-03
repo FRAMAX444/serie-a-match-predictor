@@ -821,7 +821,11 @@ def canonicalize_context_keys(
     context: dict[str, dict[str, object]],
     mapping: dict[str, str],
 ) -> dict[str, dict[str, object]]:
-    """Allinea le chiavi dei contesti alla stessa grafia usata da partite e fixture."""
+    """Allinea le chiavi dei contesti alla stessa grafia usata da partite e fixture.
+
+    Se esistono sia la forma canonica sia un alias, conserva esplicitamente la forma canonica:
+    una cache vecchia non deve poter sovrascrivere una voce già coerente con il dataset.
+    """
     canonical: dict[str, dict[str, object]] = {}
     for raw_team, item in context.items():
         team = str(raw_team)
@@ -832,7 +836,13 @@ def canonicalize_context_keys(
 
 
 def center_lineup_strength_factors(context: dict[str, dict[str, object]]) -> None:
-    """Rimuove il bias globale di copertura senza cancellare le differenze tra squadre."""
+    """Rimuove il bias globale di copertura senza cancellare le differenze tra squadre.
+
+    lineup_strength è un rapporto tra l'XI probabile e l'XI tipo della STESSA squadra: la
+    copertura della pipeline non deve quindi spostare sistematicamente tutte le squadre
+    coperte sopra o sotto 1. Manteniamo lo spread relativo e trasliamo solo il livello medio.
+    L'iterazione serve quando qualche valore tocca il clamp [0.92, 1.07].
+    """
     entries = [
         item for item in context.values()
         if isinstance(item, dict) and item.get("lineup_strength") is not None
@@ -1111,6 +1121,10 @@ def main() -> None:
     existing_matches = payload.get("matches") if isinstance(payload.get("matches"), list) else []
     matches = base.merge_matches([*existing_matches, *espn_history])
 
+    # La fusione delle grafie deve avvenire PRIMA di Elo, team_context e player_context.
+    # Se "Malaga" diventa "Málaga" solo in uscita, due righe prima distinte diventano la
+    # stessa partita DOPO che merge_matches() ha già deduplicato: è esattamente il caso che
+    # bloccava l'aggiornamento automatico del 31/08/2026.
     every_name = [
         str(row[side])
         for source in [matches] + [
@@ -1181,6 +1195,8 @@ def main() -> None:
         fresh_context = build_player_context(aggregates, team_samples, team_formations)
         player_context.update(canonicalize_context_keys(fresh_context, spelling))
 
+    # La pipeline può coprire un sottoinsieme non casuale di squadre. Centrare il rapporto
+    # impedisce che "essere coperti" diventi di per sé un bonus/malus nel modello.
     center_lineup_strength_factors(player_context)
     apply_player_context(team_context, player_context)
 
@@ -1203,6 +1219,8 @@ def main() -> None:
         "matches": matches,
         "team_context": team_context,
         "player_context": player_context,
+        # Dopo la deduplica post-normalizzazione anche gli aggregati derivati devono essere
+        # coerenti con le righe realmente pubblicate.
         "referee_stats": base.compute_referee_stats(matches),
     })
     coverage = payload.setdefault("coverage", {})

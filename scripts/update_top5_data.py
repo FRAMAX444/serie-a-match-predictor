@@ -269,6 +269,11 @@ def main() -> None:
 
     # La deduplica usa i nomi delle squadre: risolvi prima le differenze di sola grafia
     # (per esempio Malaga/Málaga), altrimenti una partita rimane presente due volte.
+    # Fusione delle grafie PRIMA di merge_matches: la chiave di deduplica contiene i nomi delle
+    # squadre, quindi "Malaga" (Football-Data.co.uk) e "Málaga" (ESPN) sono due partite distinte e
+    # un club spezzato in due identità, ciascuna con metà della storia. update_europe_data.main()
+    # la applica già, ma l'entry point della pipeline automatica è QUESTO: è il difetto 7 di
+    # MISTAKES.md rientrato dal percorso che non era stato coperto.
     spelling = base.resolve_spelling_collisions([
         str(row[side])
         for source in (matches, *[competition.get("fixtures") or [] for competition in competitions])

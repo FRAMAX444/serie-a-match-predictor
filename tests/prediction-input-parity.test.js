@@ -113,6 +113,9 @@ const SITES = [
   ["schedina.js", "schedina.js"],
   ["scripts/backtest_model.mjs", "backtest_model.mjs"],
   ["scripts/backtest_vs_market.mjs", "backtest_vs_market.mjs"],
+  // Il foglio per l'asta del fantacalcio prevede i 380 accoppiamenti del girone doppio: non e'
+  // una misura, ma passa da predictFromMatches come tutti gli altri e vale la stessa regola.
+  ["scripts/fantacalcio_asta.mjs", "fantacalcio_asta.mjs"],
 ];
 
 // Le opzioni di un chiamante stanno o in `predictionOptions()`, o direttamente nella chiamata.
