@@ -817,6 +817,40 @@ def build_player_context(
     return result
 
 
+def canonicalize_context_keys(
+    context: dict[str, dict[str, object]],
+    mapping: dict[str, str],
+) -> dict[str, dict[str, object]]:
+    """Allinea le chiavi dei contesti alla stessa grafia usata da partite e fixture."""
+    canonical: dict[str, dict[str, object]] = {}
+    for raw_team, item in context.items():
+        team = str(raw_team)
+        target = mapping.get(team, team)
+        if target not in canonical or team == target:
+            canonical[target] = item
+    return canonical
+
+
+def center_lineup_strength_factors(context: dict[str, dict[str, object]]) -> None:
+    """Rimuove il bias globale di copertura senza cancellare le differenze tra squadre."""
+    entries = [
+        item for item in context.values()
+        if isinstance(item, dict) and item.get("lineup_strength") is not None
+    ]
+    if len(entries) < 2:
+        return
+    for _ in range(8):
+        values = [float(item["lineup_strength"]) for item in entries]
+        correction = 1.0 - sum(values) / len(values)
+        if abs(correction) < 0.00005:
+            break
+        for item in entries:
+            item["lineup_strength"] = round(
+                base.clamp(float(item["lineup_strength"]) + correction, 0.92, 1.07),
+                4,
+            )
+
+
 # Versione dello schema di una voce di player_context. Il contesto giocatori è accumulato tra
 # esecuzioni successive (una run copre solo una parte delle squadre), quindi una voce prodotta
 # da una versione precedente dello script può sopravvivere per giorni dentro data/matches.json.
@@ -1076,6 +1110,28 @@ def main() -> None:
 
     existing_matches = payload.get("matches") if isinstance(payload.get("matches"), list) else []
     matches = base.merge_matches([*existing_matches, *espn_history])
+
+    every_name = [
+        str(row[side])
+        for source in [matches] + [
+            item.get("fixtures") or [] for item in competitions_by_id.values()
+        ]
+        for row in source
+        for side in ("home_team", "away_team")
+        if isinstance(row, dict) and row.get(side)
+    ]
+    spelling = base.resolve_spelling_collisions(every_name)
+    if spelling:
+        before = len(matches)
+        renamed = base.apply_spelling_collisions(matches, spelling)
+        for competition in competitions_by_id.values():
+            renamed += base.apply_spelling_collisions(competition.get("fixtures") or [], spelling)
+        matches = base.merge_matches(matches)
+        print(
+            f"grafie fuse prima dei calcoli: {len(spelling)} nomi, {renamed} riscritture, "
+            f"{before - len(matches)} duplicati rimossi"
+        )
+
     teams = sorted({
         str(team)
         for competition in competitions_by_id.values()
@@ -1088,9 +1144,11 @@ def main() -> None:
     team_context = base.build_team_context(teams, elo, counts, elo_as_of, base.load_overrides())
 
     current_context = payload.get("player_context") if isinstance(payload.get("player_context"), dict) else {}
+    previous_context = canonicalize_context_keys(read_previous_context(args.previous_data), spelling)
+    current_context = canonicalize_context_keys(current_context, spelling)
     player_context = (
         {} if args.rebuild_player_context
-        else {**read_previous_context(args.previous_data), **current_context}
+        else {**previous_context, **current_context}
     )
     stale = [team for team, item in player_context.items() if not usable_player_entry(item)]
     player_context = {
@@ -1113,11 +1171,17 @@ def main() -> None:
             priority_teams=priority_teams,
         )
         if not args.skip_squad_positions:
-            locations = team_espn_locations(payload, descriptors)
+            locations = team_espn_locations(
+                {"competitions": list(competitions_by_id.values())},
+                descriptors,
+            )
             filled = fill_missing_positions(aggregates, locations)
             if filled:
                 print(f"Ruoli completati dal roster di squadra per {filled} giocatori", file=sys.stderr)
-        player_context.update(build_player_context(aggregates, team_samples, team_formations))
+        fresh_context = build_player_context(aggregates, team_samples, team_formations)
+        player_context.update(canonicalize_context_keys(fresh_context, spelling))
+
+    center_lineup_strength_factors(player_context)
     apply_player_context(team_context, player_context)
 
     ordered_competitions = sorted(
@@ -1139,10 +1203,16 @@ def main() -> None:
         "matches": matches,
         "team_context": team_context,
         "player_context": player_context,
+        "referee_stats": base.compute_referee_stats(matches),
     })
     coverage = payload.setdefault("coverage", {})
     if isinstance(coverage, dict):
         coverage["supported_competitions"] = len(ordered_competitions)
+        coverage["training_matches"] = len(matches)
+        coverage["xg_actual_matches"] = sum(
+            item.get("home_xg") is not None and item.get("away_xg") is not None
+            for item in matches
+        )
         coverage["player_context_teams"] = len(player_context)
         coverage["probable_lineups"] = sum(
             bool(item.get("probable_lineup"))
@@ -1150,40 +1220,13 @@ def main() -> None:
             if isinstance(item, dict)
         )
         coverage["player_context_missing_teams"] = sorted(set(teams) - set(player_context))
+    source_health = payload.get("source_health")
+    if isinstance(source_health, dict):
+        source_health["completed_training_matches"] = len(matches)
     sources = payload.setdefault("sources", {})
     if isinstance(sources, dict):
         sources["competition_logos"] = "ESPN public league metadata; initials fallback in the UI"
         sources["players_lineups"] = "ESPN public match summaries; incremental recent-start inference, best effort"
-
-    # Seconda applicazione della fusione delle grafie, perché questo script è l'ULTIMO a
-    # scrivere data/matches.json. update_europe_data.main() la applica già, ma i due scrittori
-    # sono processi separati: una run di questo script su un payload prodotto da una versione
-    # precedente della pipeline riscriverebbe sul disco uno split che nessuno ha più tolto.
-    # È la lezione del difetto 7 di MISTAKES.md — la correzione deve stare su OGNI percorso che
-    # scrive, non solo su quello che si aveva in mente. Costa una passata sui nomi.
-    spelling = base.resolve_spelling_collisions([
-        str(row[side])
-        for source in [payload.get("matches") or []] + [item.get("fixtures") or [] for item in payload.get("competitions") or []]
-        for row in source
-        for side in ("home_team", "away_team")
-        if row.get(side)
-    ])
-    if spelling:
-        renamed = base.apply_spelling_collisions(payload.get("matches") or [], spelling)
-        for item in payload.get("competitions") or []:
-            renamed += base.apply_spelling_collisions(item.get("fixtures") or [], spelling)
-        for key in ("team_context", "player_context"):
-            section = payload.get(key)
-            if isinstance(section, dict):
-                for source_name, target in spelling.items():
-                    if source_name in section and target not in section:
-                        section[target] = section.pop(source_name)
-                    elif source_name in section:
-                        section.pop(source_name)
-        teams = payload.get("teams")
-        if isinstance(teams, list):
-            payload["teams"] = sorted({spelling.get(str(name), str(name)) for name in teams})
-        print(f"grafie fuse in uscita: {len(spelling)} nomi, {renamed} riscritture")
 
     OUTPUT.write_text(
         json.dumps(payload, ensure_ascii=False, separators=(",", ":")),

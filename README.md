@@ -516,7 +516,9 @@ node scripts/python.mjs scripts/enrich_competitions_players.py
 
 Sovrascrive `data/matches.json` nella cartella corrente — nessun parametro `--target-season` necessario: viene calcolato da solo dalla data odierna (vedi `resolve_target_season`). Passa `--target-season 2728` solo per forzare una stagione diversa da quella corrente.
 
-- `.github/workflows/update-data.yml` aggiorna il dataset quattro volte al giorno, poi arricchisce `team_context` con `enrich_competitions_players.py`; installa `requirements.txt` (solo `requests`, usata per lo scraping Understat con sessione/cookie persistenti — senza, l'endpoint AJAX di Understat risponde vuoto);
+- `.github/workflows/update-data.yml` aggiorna il dataset quattro volte al giorno, poi arricchisce `team_context` con `enrich_competitions_players.py`; installa `requirements.txt` (`requests` serve allo scraping Understat con sessione/cookie persistenti, mentre NumPy/SciPy/Matplotlib servono allo studio statistico e ai relativi test);
+- ESPN viene interrogata mese per mese: le query annuali o su un intervallo stagionale vengono troncate silenziosamente a 25 eventi. L'ordine stagionale dell'API core assegna le giornate ufficiali quando è coerente con un girone doppio; il raggruppamento per data resta il fallback;
+- un aggiornamento parziale non può ridurre un calendario già pubblicato: risultati e statistiche nuove vengono fusi nella fotografia precedente, e il workflow si blocca se il calendario corrente non contiene 380/306 partite e 38/34 giornate complete. Per la fase campionato UEFA verifica anche 144 partite in 8 giornate (Champions/Europa League) e 108 in 6 (Conference);
 - `.github/workflows/validate-pr.yml` valida JavaScript, test e costruzione del dataset (smoke build con `--skip-understat`);
 - `.github/workflows/pages.yml` pubblica su GitHub Pages **il dataset presente nel repository**, quello che il workflow precedente ha costruito, arricchito e validato. Non lo ricostruisce: farlo significava servire un dataset senza xG reali e senza `player_context` (vedi `MISTAKES.md` §18), e il controllo pre-deploy verifica ora esattamente quei campi.
 

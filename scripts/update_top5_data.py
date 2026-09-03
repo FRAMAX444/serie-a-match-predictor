@@ -6,7 +6,8 @@ import argparse
 import json
 import os
 import sys
-from datetime import datetime, timezone
+from collections import Counter
+from datetime import date, datetime, timezone
 
 import update_europe_data as base
 import update_uefa_data as uefa
@@ -18,6 +19,8 @@ TOP_FIVE_LEAGUES = tuple(
 )
 EUROPE_COMPETITIONS = tuple(base.EUROPE_COMPETITIONS)
 EUROPE_COMPETITION_IDS = {str(item["id"]) for item in EUROPE_COMPETITIONS}
+LEAGUE_TEAM_COUNTS = {"eng.1": 20, "esp.1": 20, "ita.1": 20, "ger.1": 18, "fra.1": 18}
+UEFA_LEAGUE_PHASE = {"ucl": (144, 8), "uel": (144, 8), "uecl": (108, 6)}
 
 MATCH_FIELDS = (
     "id", "season", "competition_id", "competition_name", "competition_type", "country",
@@ -109,6 +112,75 @@ def fetch_domestic_history(
     return current, history
 
 
+def calendar_contract_issues(
+    competitions: list[dict[str, object]],
+    target_start: int,
+    today: date | None = None,
+) -> list[str]:
+    """Reject green builds that would publish an incomplete current-season calendar."""
+    today = today or date.today()
+    if target_start != base.likely_start_year(today) or today < date(target_start, 8, 1):
+        return []
+
+    by_id = {str(item.get("id")): item for item in competitions}
+    issues: list[str] = []
+    for competition_id, team_count in LEAGUE_TEAM_COUNTS.items():
+        competition = by_id.get(competition_id, {})
+        fixtures = [item for item in competition.get("fixtures", []) if isinstance(item, dict)]
+        expected_fixtures = team_count * (team_count - 1)
+        if len(fixtures) != expected_fixtures:
+            issues.append(f"{competition_id}: {len(fixtures)}/{expected_fixtures} fixture")
+            continue
+        round_sizes = Counter(int(item.get("round") or 0) for item in fixtures)
+        expected_rounds = 2 * (team_count - 1)
+        if len(round_sizes) != expected_rounds or any(
+            round_number <= 0 or size != team_count // 2
+            for round_number, size in round_sizes.items()
+        ):
+            issues.append(
+                f"{competition_id}: giornate non valide "
+                f"({len(round_sizes)}/{expected_rounds}, distribuzione {sorted(round_sizes.values())})"
+            )
+
+    if today >= date(target_start, 9, 1):
+        for competition_id, (expected_fixtures, expected_rounds) in UEFA_LEAGUE_PHASE.items():
+            competition = by_id.get(competition_id, {})
+            fixtures = [
+                item for item in competition.get("fixtures", [])
+                if isinstance(item, dict) and item.get("phase") == "TOURNAMENT"
+            ]
+            round_sizes = Counter(str(item.get("round_label") or "") for item in fixtures)
+            if len(fixtures) != expected_fixtures:
+                issues.append(f"{competition_id} fase campionato: {len(fixtures)}/{expected_fixtures} fixture")
+            if len(round_sizes) != expected_rounds or any(size != 18 for size in round_sizes.values()):
+                issues.append(
+                    f"{competition_id} fase campionato: {len(round_sizes)}/{expected_rounds} giornate, "
+                    f"distribuzione {sorted(round_sizes.values())}"
+                )
+    return issues
+
+
+def fixture_statistics_health(competitions: list[dict[str, object]]) -> dict[str, dict[str, int]]:
+    fields = (
+        "home_shots", "away_shots", "home_sot", "away_sot", "home_corners", "away_corners",
+        "home_yellow", "away_yellow", "home_possession", "away_possession",
+    )
+    result: dict[str, dict[str, int]] = {}
+    for competition in competitions:
+        completed = [
+            item for item in competition.get("fixtures", [])
+            if isinstance(item, dict) and item.get("completed")
+        ]
+        result[str(competition.get("id"))] = {
+            "completed": len(completed),
+            "with_core_statistics": sum(
+                all(item.get(field) is not None for field in fields)
+                for item in completed
+            ),
+        }
+    return result
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--target-season", default=os.environ.get("TARGET_SEASON", "2627"))
@@ -123,14 +195,24 @@ def main() -> None:
     competitions: list[dict[str, object]] = []
     matches: list[dict[str, object]] = []
     fixture_count = 0
+    guarded_competitions: list[str] = []
 
     # Keep the domestic collection path unchanged: complete Big Five history and statistics.
     for descriptor in TOP_FIVE_LEAGUES:
         current, espn_history = fetch_domestic_history(descriptor, starts, target_start)
+        previous = base.existing_competition_fixtures(existing, str(descriptor["id"]), target_code)
         if not current:
-            current = base.existing_competition_fixtures(existing, str(descriptor["id"]), target_code)
+            current = previous
             source = "dataset precedente conservato" if current else "calendario non ancora disponibile"
         else:
+            current, guarded = base.protect_fixture_snapshot(previous, current)
+            if guarded:
+                guarded_competitions.append(str(descriptor["id"]))
+                print(
+                    f"ATTENZIONE {descriptor['name']}: risposta live regressiva; "
+                    f"conservato il calendario precedente ({len(previous)} fixture)",
+                    file=sys.stderr,
+                )
             source = "ESPN public scoreboard"
 
         competitions.append(competition_payload(descriptor, current, source, target_start, "domestic", target_code))
@@ -165,16 +247,50 @@ def main() -> None:
                 current = rows
             european_history.extend(item for item in rows if item.get("completed"))
 
+        previous = base.existing_competition_fixtures(existing, str(descriptor["id"]), target_code)
         if not current:
-            current = base.existing_competition_fixtures(existing, str(descriptor["id"]), target_code)
+            current = previous
             source = "dataset precedente conservato" if current else "calendario non ancora disponibile"
         else:
+            current, guarded = base.protect_fixture_snapshot(previous, current)
+            if guarded:
+                guarded_competitions.append(str(descriptor["id"]))
+                print(
+                    f"ATTENZIONE {descriptor['name']}: risposta live regressiva; "
+                    f"conservato il calendario precedente ({len(previous)} fixture)",
+                    file=sys.stderr,
+                )
             source = "UEFA public match API; ESPN fallback"
 
         competitions.append(competition_payload(descriptor, current, source, target_start, "europe", target_code))
         fixture_count += len(current)
         matches.extend(european_history)
         print(f"{descriptor['name']}: {len(current)} fixture target, {len(european_history)} gare storiche")
+
+    # La deduplica usa i nomi delle squadre: risolvi prima le differenze di sola grafia
+    # (per esempio Malaga/Málaga), altrimenti una partita rimane presente due volte.
+    spelling = base.resolve_spelling_collisions([
+        str(row[side])
+        for source in (matches, *[competition.get("fixtures") or [] for competition in competitions])
+        for row in source
+        for side in ("home_team", "away_team")
+        if row.get(side)
+    ])
+    if spelling:
+        renamed = base.apply_spelling_collisions(matches, spelling)
+        for competition in competitions:
+            renamed += base.apply_spelling_collisions(competition.get("fixtures") or [], spelling)
+        print(
+            f"grafie fuse: {len(spelling)} nomi, {renamed} riscritture "
+            f"({', '.join(f'{key}->{value}' for key, value in sorted(spelling.items())[:6])})"
+        )
+
+    calendar_issues = calendar_contract_issues(competitions, target_start)
+    if calendar_issues:
+        raise SystemExit(
+            "Calendario corrente incompleto o incoerente; il dataset esistente non viene "
+            "sovrascritto:\n- " + "\n- ".join(calendar_issues)
+        )
 
     matches = [compact_match(item) for item in base.merge_matches(matches)]
     if len(matches) < 400:
@@ -217,6 +333,8 @@ def main() -> None:
             "target_fixtures": fixture_count,
             "completed_training_matches": len(matches),
             "european_training_matches": sum(str(item.get("competition_id")) in EUROPE_COMPETITION_IDS for item in matches),
+            "fixture_snapshot_guards": sorted(set(guarded_competitions)),
+            "fixture_statistics": fixture_statistics_health(competitions),
         },
         "sources": {
             "fixtures_results": "UEFA public match API for European cups; ESPN public scoreboards for domestic leagues and fallback",

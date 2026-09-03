@@ -9,6 +9,14 @@ on:
         description: "Override stagione (es. 2728). Vuoto = calcolata automaticamente dalla data odierna."
         required: false
         default: ""
+  push:
+    branches:
+      - main
+    paths:
+      - "scripts/update_*.py"
+      - "scripts/enrich_competitions_players.py"
+      - "requirements.txt"
+      - ".github/workflows/update-data.yml"
 
 env:
   # Vuoto di default: scripts/update_europe_data.py::resolve_target_season() la calcola
@@ -24,13 +32,16 @@ permissions:
 
 concurrency:
   group: european-competition-data-update
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   update:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -39,10 +50,27 @@ jobs:
           node-version: "22"
       - name: Install Python dependencies
         run: pip install -r requirements.txt
+      - name: Preserve previous player context
+        run: cp data/matches.json "$RUNNER_TEMP/matches.previous.json"
       - name: Build Big Five and UEFA dataset
-        run: python scripts/update_top5_data.py --target-season "$TARGET_SEASON" --history-seasons 4
+        shell: bash
+        run: |
+          for attempt in 1 2; do
+            if python scripts/update_top5_data.py --target-season "$TARGET_SEASON" --history-seasons 4; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 2 ]; then
+              echo "Dataset build failed after retry" >&2
+              exit 1
+            fi
+            echo "Dataset build failed; retrying once after a transient-source error" >&2
+            sleep 15
+          done
       - name: Enrich team context (lineup, availability, promozioni)
-        run: python scripts/enrich_competitions_players.py --target-season "$TARGET_SEASON"
+        run: >-
+          python scripts/enrich_competitions_players.py
+          --target-season "$TARGET_SEASON"
+          --previous-data "$RUNNER_TEMP/matches.previous.json"
       - name: Validate generated inputs and model
         run: |
           python -m py_compile scripts/update_europe_data.py scripts/update_uefa_data.py scripts/update_top5_data.py scripts/understat_team_api.py scripts/enrich_competitions_players.py

@@ -26,6 +26,7 @@ import urllib.request
 from collections import defaultdict
 from datetime import date, datetime, timezone
 from pathlib import Path
+from time import sleep
 from typing import Iterable
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -481,24 +482,93 @@ def parse_espn_event(event: dict[str, object], descriptor: dict[str, object], se
     return item
 
 
+def espn_season_urls(slug: str, start_year: int) -> list[str]:
+    """Return one scoreboard request per month in the football season.
+
+    ESPN silently truncates broad year/range queries to 25 events even when ``limit=2000``
+    is supplied.  A Serie A season therefore used to contain 50 scattered fixtures.  The
+    explicit ``YYYYMM`` form is not affected and returns every event in that month.
+    """
+    months = [(start_year, month) for month in range(7, 13)] + [
+        (start_year + 1, month) for month in range(1, 7)
+    ]
+    return [
+        f"https://site.api.espn.com/apis/site/v2/sports/soccer/{slug}/scoreboard"
+        f"?dates={year}{month:02d}&limit=1000"
+        for year, month in months
+    ]
+
+
+def espn_event_order(slug: str, start_year: int) -> list[str]:
+    """Read ESPN's season order, which preserves official matchdays after postponements."""
+    url = (
+        f"https://sports.core.api.espn.com/v2/sports/soccer/leagues/{slug}/seasons/"
+        f"{start_year}/types/1/events?limit=1000&lang=en&region=us"
+    )
+    payload = fetch_json(url)
+    items = payload.get("items") if isinstance(payload, dict) else None
+    if not isinstance(items, list):
+        return []
+    result: list[str] = []
+    for item in items:
+        reference = str(item.get("$ref") or "") if isinstance(item, dict) else ""
+        match = re.search(r"/events/([^/?]+)", reference)
+        if match:
+            result.append(match.group(1))
+    return result
+
+
+def apply_double_round_robin_order(
+    fixtures: list[dict[str, object]],
+    ordered_ids: list[str],
+) -> bool:
+    """Assign rounds from ESPN's canonical event order for complete double round robins."""
+    teams = {
+        str(item.get(side))
+        for item in fixtures
+        for side in ("home_team", "away_team")
+        if item.get(side)
+    }
+    team_count = len(teams)
+    if team_count < 4 or team_count % 2 or len(fixtures) != team_count * (team_count - 1):
+        return False
+    by_id = {str(item.get("id")): item for item in fixtures if item.get("id")}
+    relevant_ids = [event_id for event_id in ordered_ids if event_id in by_id]
+    if len(relevant_ids) != len(fixtures):
+        return False
+    matches_per_round = team_count // 2
+    for offset in range(0, len(relevant_ids), matches_per_round):
+        chunk = [by_id[event_id] for event_id in relevant_ids[offset:offset + matches_per_round]]
+        chunk_teams = [
+            str(item[side])
+            for item in chunk
+            for side in ("home_team", "away_team")
+        ]
+        if len(chunk) != matches_per_round or len(set(chunk_teams)) != team_count:
+            return False
+    for index, event_id in enumerate(relevant_ids):
+        round_number = index // matches_per_round + 1
+        by_id[event_id]["round"] = round_number
+        by_id[event_id]["round_label"] = f"Turno {round_number}"
+    return True
+
+
 def fetch_espn_events(descriptor: dict[str, object], start_year: int, competition_type: str) -> list[dict[str, object]]:
     season = season_code(start_year)
-    start_date = f"{start_year}0701"
-    end_date = f"{start_year + 1}0630"
-    slug = descriptor["espn"]
-    urls = [
-        f"https://site.api.espn.com/apis/site/v2/sports/soccer/{slug}/scoreboard?dates={start_date}-{end_date}&limit=2000",
-        f"https://site.api.espn.com/apis/site/v2/sports/soccer/{slug}/scoreboard?dates={start_year}&limit=2000",
-        f"https://site.api.espn.com/apis/site/v2/sports/soccer/{slug}/scoreboard?dates={start_year + 1}&limit=2000",
-    ]
+    urls = espn_season_urls(str(descriptor["espn"]), start_year)
     raw_events: list[dict[str, object]] = []
     for url in urls:
-        try:
-            payload = fetch_json(url)
-            if isinstance(payload, dict) and isinstance(payload.get("events"), list):
-                raw_events.extend(event for event in payload["events"] if isinstance(event, dict))
-        except Exception as error:
-            print(f"ESPN {descriptor['name']} {season}: {error}", file=sys.stderr)
+        for attempt in range(2):
+            try:
+                payload = fetch_json(url)
+                if isinstance(payload, dict) and isinstance(payload.get("events"), list):
+                    raw_events.extend(event for event in payload["events"] if isinstance(event, dict))
+                break
+            except Exception as error:
+                if attempt == 0:
+                    sleep(1)
+                    continue
+                print(f"ESPN {descriptor['name']} {season}: {error}", file=sys.stderr)
     result: list[dict[str, object]] = []
     seen: set[str] = set()
     for index, event in enumerate(raw_events):
@@ -510,6 +580,17 @@ def fetch_espn_events(descriptor: dict[str, object], start_year: int, competitio
             continue
         seen.add(key)
         result.append(item)
+    if competition_type == "domestic" and result:
+        try:
+            ordered_ids = espn_event_order(str(descriptor["espn"]), start_year)
+            if not apply_double_round_robin_order(result, ordered_ids):
+                print(
+                    f"ESPN {descriptor['name']} {season}: ordine giornate ufficiale non applicabile; "
+                    "uso il fallback per data",
+                    file=sys.stderr,
+                )
+        except Exception as error:
+            print(f"ESPN ordine {descriptor['name']} {season}: {error}", file=sys.stderr)
     return sorted(result, key=lambda item: (str(item["date"]), int(item.get("source_index", 0))))
 
 
@@ -893,6 +974,70 @@ def existing_competition_fixtures(existing: dict[str, object], competition_id: s
             if isinstance(fixtures, list):
                 return [dict(item) for item in fixtures if isinstance(item, dict) and str(item.get("season")) == target_code]
     return []
+
+
+def fixture_semantic_key(item: dict[str, object]) -> tuple[str, str, str, str]:
+    """Identity shared by equivalent fixtures coming from different providers."""
+    return (
+        str(item.get("competition_id") or ""),
+        str(item.get("date") or "")[:10],
+        _fold_team_name(str(item.get("home_team") or "")),
+        _fold_team_name(str(item.get("away_team") or "")),
+    )
+
+
+def merge_fixture_feeds(
+    primary: list[dict[str, object]],
+    secondary: list[dict[str, object]],
+    *,
+    append_secondary: bool = True,
+) -> list[dict[str, object]]:
+    """Merge schedule rows without discarding useful fields from either provider.
+
+    ``primary`` wins for identity, status and scores; non-null fields from ``secondary``
+    enrich it. Matching first by provider id also handles postponed fixtures whose date changed.
+    """
+    secondary_by_id = {
+        str(item.get("id")): item
+        for item in secondary
+        if isinstance(item, dict) and item.get("id")
+    }
+    secondary_by_match = {
+        fixture_semantic_key(item): item
+        for item in secondary
+        if isinstance(item, dict)
+    }
+    used: set[int] = set()
+    merged: list[dict[str, object]] = []
+    for item in primary:
+        candidate = secondary_by_id.get(str(item.get("id") or ""))
+        if candidate is None:
+            candidate = secondary_by_match.get(fixture_semantic_key(item))
+        combined = dict(candidate or {})
+        combined.update({key: value for key, value in item.items() if value is not None})
+        if candidate is not None:
+            used.add(id(candidate))
+        merged.append(combined)
+    if append_secondary:
+        merged.extend(dict(item) for item in secondary if id(item) not in used)
+    return sorted(
+        merged,
+        key=lambda item: (str(item.get("date") or ""), int(item.get("source_index") or 0)),
+    )
+
+
+def protect_fixture_snapshot(
+    previous: list[dict[str, object]],
+    fresh: list[dict[str, object]],
+) -> tuple[list[dict[str, object]], bool]:
+    """Keep a richer previous calendar while applying fresh results and statistics."""
+    if not previous:
+        return [dict(item) for item in fresh], False
+    if not fresh:
+        return [dict(item) for item in previous], True
+    if len(fresh) >= len(previous):
+        return merge_fixture_feeds(fresh, previous, append_secondary=False), False
+    return merge_fixture_feeds(fresh, previous, append_secondary=True), True
 
 
 def load_overrides() -> dict[str, object]:

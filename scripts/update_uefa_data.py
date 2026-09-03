@@ -97,20 +97,37 @@ def score_value(score: object, side: str) -> int | None:
 
 def round_label(match: dict[str, object]) -> str | None:
     round_data = match.get("round")
+    round_name: str | None = None
     if isinstance(round_data, dict):
         metadata = round_data.get("metaData")
         if isinstance(metadata, dict):
             label = str(metadata.get("name") or metadata.get("type") or "").strip()
             if label:
-                return label[:80]
-        label = str(round_data.get("name") or "").strip()
-        if label:
-            return label[:80]
+                round_name = label
+        if not round_name:
+            label = str(round_data.get("name") or "").strip()
+            if label:
+                round_name = label
     matchday = match.get("matchday")
     if isinstance(matchday, dict):
-        label = str(matchday.get("longName") or matchday.get("name") or "").strip()
-        if label:
-            return label[:80]
+        translations = matchday.get("translations")
+        translated = None
+        if isinstance(translations, dict):
+            long_names = translations.get("longName")
+            if isinstance(long_names, dict):
+                translated = str(long_names.get("IT") or long_names.get("EN") or "").strip() or None
+        matchday_name = translated or str(matchday.get("longName") or matchday.get("name") or "").strip() or None
+        leg_type = str(matchday.get("type") or "").upper()
+        if leg_type == "FIRST_LEG":
+            matchday_name = "Andata"
+        elif leg_type == "SECOND_LEG":
+            matchday_name = "Ritorno"
+        if round_name and matchday_name:
+            return f"{round_name} · {matchday_name}"[:80]
+        if matchday_name:
+            return matchday_name[:80]
+    if round_name:
+        return round_name[:80]
     phase = str(match.get("competitionPhase") or "").strip()
     return phase.title() if phase else None
 
@@ -161,6 +178,7 @@ def normalize_uefa_match(match: dict[str, object], descriptor: dict[str, object]
         "home_country_code": str(home.get("countryCode") or "") or None,
         "away_country_code": str(away.get("countryCode") or "") or None,
         "round": None, "round_label": round_label(match), "completed": completed,
+        "phase": str(match.get("competitionPhase") or "").upper() or None,
         "source_index": source_index, "source": "UEFA public match API", "importance": 1.18,
     }
     if completed:
@@ -202,17 +220,38 @@ original_team_keys = base.team_keys
 def fetch_europe_then_espn(descriptor: dict[str, object], start_year: int, competition_type: str) -> list[dict[str, object]]:
     if competition_type != "europe":
         return original_fetch_events(descriptor, start_year, competition_type)
+    official: list[dict[str, object]] = []
+    espn: list[dict[str, object]] = []
     try:
         official = fetch_uefa_matches(descriptor, start_year)
-        if official:
-            print(f"UEFA API {descriptor['name']} {base.season_code(start_year)}: {len(official)} gare")
-            return official
     except Exception as error:
         print(f"UEFA API {descriptor['name']} {base.season_code(start_year)}: {error}", file=base.sys.stderr)
     try:
-        return original_fetch_events(descriptor, start_year, competition_type)
-    except Exception:
-        return []
+        espn = original_fetch_events(descriptor, start_year, competition_type)
+    except Exception as error:
+        print(f"ESPN {descriptor['name']} {base.season_code(start_year)}: {error}", file=base.sys.stderr)
+
+    if not official:
+        return espn
+
+    has_tournament = any(item.get("phase") == "TOURNAMENT" for item in official)
+    merged = base.merge_fixture_feeds(official, espn, append_secondary=not has_tournament)
+    statistical_fields = (
+        "home_shots", "away_shots", "home_sot", "away_sot", "home_corners", "away_corners",
+        "home_yellow", "away_yellow", "home_red", "away_red", "home_possession", "away_possession",
+    )
+    espn_enriched = 0
+    for item in merged:
+        if item.get("source") != "UEFA public match API":
+            continue
+        if any(item.get(field) is not None for field in statistical_fields):
+            item["source"] = "UEFA public match API + ESPN statistics"
+            espn_enriched += 1
+    print(
+        f"UEFA API {descriptor['name']} {base.season_code(start_year)}: {len(official)} gare; "
+        f"ESPN: {len(espn)} gare, {espn_enriched} arricchite"
+    )
+    return merged
 
 
 def collect_team_keys(items: list[dict[str, object]]) -> tuple[set[str], set[str]]:
