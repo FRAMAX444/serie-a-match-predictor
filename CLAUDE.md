@@ -211,5 +211,10 @@ produzione:
 
 Documenti di riferimento: `README.md` (funzionamento e metodo), `MISTAKES.md` (difetti arrivati in
 produzione), `docs/misure-riferimento.md` (ogni misura, numerata e citabile),
-`BRIEF-v2.md` / `PROMPT-sessione-2.md` / `PROMPT-sessione-3.md` (protocollo, in ordine di
-precedenza crescente).
+`BRIEF-v2.md` / `PROMPT-sessione-2.md` / `PROMPT-sessione-3.md` / `PROMPT-sessione-4.md`
+(protocollo, in ordine di precedenza crescente).
+
+`PROMPT-sessione-4.md` sposta l'asse del lavoro e va letto prima di proporre qualunque modifica al
+modello: il peso ottimo della miscela fra modello e mercato e' **1.000 su training e su holdout**,
+quindi un miglioramento del log loss non e' incassabile e il criterio di successo di un task non
+puo' piu' essere quello. Le misure si riproducono con `node scripts/diag_market_execution.mjs`.
