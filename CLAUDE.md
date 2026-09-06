@@ -147,8 +147,12 @@ data/matches.json  →  matchdays.js (catalogo + turni)  →  model.js (predictF
   Produzione (`app.js`, `schedina*.js`) e misura (`scripts/*.mjs`) costruiscono le opzioni come
   `{ ...modelInputs(...), <identità della partita> }`. Vedi le regole R13/R14 più sotto.
 - **`matchdays.js`** definisce `SUPPORTED_COMPETITIONS` (`ucl`, `uel`, `uecl`, `eng.1`, `esp.1`,
-  `ita.1`, `ger.1`, `fra.1`) e raggruppa le fixture in turni; i campionati minori esistono nel
-  dataset solo come supporto interno a forma ed Elo e non vanno esposti nel selettore.
+  `ita.1`, `ger.1`, `fra.1`) e raggruppa le fixture in turni. **Attenzione: i campionati minori
+  NON esistono nel dataset.** `DOMESTIC_LEAGUES` in `scripts/update_europe_data.py` ha cinque voci
+  e il dataset contiene otto competizioni in tutto, quindi 328 delle 384 squadre viste in coppa
+  (85%) non hanno nessuna gara di campionato da cui costruire Elo e forma — vedi
+  `PROMPT-sessione-5.md` §1.3. Quando verranno aggiunti resteranno supporto interno e non vanno
+  esposti nel selettore.
 - **Pagine**: `index.html`/`app.js` (pronostici e modale partita), `schedina.html` +
   `schedina-page.js` (DOM) + `schedina.js` (candidati e quote) + `slip-builder.js`
   (ottimizzatore puro, zaino su −ln p), `settings.html`, `admin.html`.
@@ -214,7 +218,18 @@ produzione), `docs/misure-riferimento.md` (ogni misura, numerata e citabile),
 `BRIEF-v2.md` / `PROMPT-sessione-2.md` / `PROMPT-sessione-3.md` / `PROMPT-sessione-4.md`
 (protocollo, in ordine di precedenza crescente).
 
-`PROMPT-sessione-4.md` sposta l'asse del lavoro e va letto prima di proporre qualunque modifica al
-modello: il peso ottimo della miscela fra modello e mercato e' **1.000 su training e su holdout**,
-quindi un miglioramento del log loss non e' incassabile e il criterio di successo di un task non
-puo' piu' essere quello. Le misure si riproducono con `node scripts/diag_market_execution.mjs`.
+I documenti 4 e 5 rispondono a **due obiettivi diversi** e vanno letti insieme prima di proporre
+qualunque modifica al modello:
+
+- **`PROMPT-sessione-4.md` — guadagnare.** Il peso ottimo della miscela fra modello e mercato e'
+  **1.000 su training e su holdout**: un log loss migliore non e' incassabile. Il punto di attacco
+  e' il prezzo, non la previsione. Misure: `node scripts/diag_market_execution.mjs`.
+- **`PROMPT-sessione-5.md` — prevedere meglio.** Nessuno dei 22 segnali del modello aggiunge nulla
+  alla linea di chiusura (44 test, il migliore a 0.53σ), ma **ancorare la matrice alle marginali di
+  mercato vale +0.0285 ± 0.0026 sull'1X2** e 4.7-11σ su ogni mercato derivato. Dove la linea non
+  esiste — le 3150 gare di coppa, 37% del dataset — il modello e' quasi cieco per un buco di dati,
+  non per un difetto. Misure: `node scripts/diag_signal_orthogonality.mjs`.
+
+**Il log loss del modello endogeno sui campionati non e' piu' un criterio di accettazione.** Un
+segnale nuovo si prova sulla bancata di ortogonalita' (due minuti) prima di implementarlo; nelle
+coppe il riferimento e' il guadagno sul prior fisso.
