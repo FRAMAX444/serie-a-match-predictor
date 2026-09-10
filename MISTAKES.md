@@ -14,13 +14,13 @@ Riferimenti puntuali in `docs/misure-riferimento.md`.
 
 ## Il quadro d'insieme
 
-Trentuno difetti, e si distribuiscono in modo molto disuguale:
+Trentadue difetti, e si distribuiscono in modo molto disuguale:
 
 | categoria | quanti | impatto misurato sulle previsioni |
 |---|---|---|
 | Identità dei dati (nomi, alias, join) | 8 | il più grande mai misurato: **+0.0145** in Champions |
 | Produzione ≠ misura | 6 | nullo o non misurabile, ma invalidava *ogni* misura |
-| Campi calcolati male | 6 | da nullo a "azzerava un'intera funzione" o "ribaltava il calendario" |
+| Campi calcolati male | 7 | da nullo a "azzerava un'intera funzione" o "ribaltava il calendario" |
 | Test e integrazione continua | 1 | nessuno sulle previsioni: bloccava il deploy |
 | Fonti dati non raggiungibili | 1 | nessuno sulle previsioni: azzerava ogni misura di mercato |
 | Interfaccia e flusso | 9 | funzione principale inutilizzabile, generata e invisibile, o salvata dove non resta |
@@ -748,6 +748,99 @@ dataset del 09/09: mediana da 1.0105 a 1.0000, squadre sopra 1 da 72 a 13, sotto
 rapporto significa. Il campo pubblicato resta quello vecchio finche' non gira
 `scripts/recompute_lineup_strength.py` o l'arricchimento completo: la correzione vale per le
 esecuzioni future, come nel difetto 15.
+
+**Coda della stessa storia, il giorno dopo.** Rilanciato l'arricchimento, e' diventato rosso un
+SECONDO contratto dello stesso file — `test_covered_teams_are_not_systematically_favoured`, che
+pretendeva **media == 1** sulle squadre coperte. I due contratti chiedevano cose incompatibili
+(uno la mediana, l'altro la media) e su una distribuzione asimmetrica non possono valere insieme:
+qualunque centratura ne soddisfa uno e rompe l'altro, ed e' per questo che per undici giorni sono
+sembrati d'accordo. La misura che ha sciolto il nodo e' la distribuzione **grezza**, prima di
+qualunque centratura: media 0.9874, **mediana 1.0000 esatta**, 38 squadre sotto 1, 41 esattamente
+a 1, 17 sopra. Due conseguenze. Primo: il difetto 15 e' gia' corretto **alla sorgente** in
+`compute_lineup_strength()` — il fattore non e' piu' a senso unico da solo — e la centratura e' un
+residuo che sulla mediana non sposta quasi nulla, mentre sulla media alzava tutti di ~0.0126.
+Secondo: quello 0.9874 non e' un bias di copertura, e' una misura — le assenze sono asimmetriche,
+una squadra perde piu' da un infortunio di quanto guadagni da un rientro. Pretendere media == 1
+chiedeva alla pipeline di cancellare le assenze che aveva appena osservato.
+
+Il contratto e' stato quindi riportato al suo scopo dichiarato, che e' la **unilateralita'** (0
+squadre sotto 1 su 95, il difetto 15) e non il livello: devono esistere squadre da entrambe le
+parti dell'1, e lo scarto fra la media delle coperte e l'1.0 delle non coperte deve restare entro
+0.03 — una soglia che intercetta una deriva vera senza negare il residuo. Verificato per mutazione
+**sui dati** e non sul codice: forzate tutte le coperte a >= 1 (difetto 15) diventa rosso,
+spostate tutte di -0.05 (deriva) diventa rosso, sui dati veri e' verde.
+
+---
+
+## 32. Le statistiche dei giocatori erano una finestra di due partite, non una stagione
+
+**Cosa.** `choose_summary_events()` aveva `samples_per_team = 2`: ogni esecuzione ricostruiva la
+voce di una squadra dalle sue **due partite piu' recenti** e `player_context.update(fresh_context)`
+sostituiva quella precedente invece di estenderla. I contatori per giocatore non potevano quindi
+crescere in nessun momento della stagione — non erano statistiche stagionali, erano una finestra
+mobile larga due. Il commento in `.github/workflows/update-data.yml` («la copertura si ACCUMULA
+fra una run e l'altra») e' la frase che ha reso il difetto invisibile: e' vera per **quante
+squadre** il dataset copre e falsa per **quante partite** ha ciascuna, e nessuno aveva motivo di
+distinguere le due cose.
+
+**Costo.** Misurato sul dataset **pubblicato dalla CI** il 09/09/2026 alle 13:12 (`292d7bc`), con
+squadre che avevano gia' giocato da 2 a 7 partite. Delle 103 voci di `player_context` solo 84
+corrispondono a una squadra del catalogo; su quelle 84, che sono le uniche che il sito legge:
+
+- `squad_appearances` valeva **1 per 941 giocatori e 2 per 1083. Nessuno a 3.**
+- `start_probability` aveva **5 valori distinti su 2024 giocatori**. Non misurava chi gioca
+  titolare: misurava quante delle proprie una o due partite campionate un giocatore avesse
+  iniziato, cioe' una tabella a cinque caselle con l'etichetta di una probabilita'.
+- Con `PRIOR_MINUTES = 360` contro i minuti osservati, il peso del rendimento reale nei tassi per
+  90 era mediana 16% e **massimo 33%**: **2024 giocatori su 2024** avevano una statistica in cui
+  contava piu' il prior del ruolo del proprio rendimento. Nessuna eccezione.
+
+Le uniche voci che accumulavano davvero — fino a 14 partite — erano le **19 orfane**, quelle sotto
+un nome che il resto del dataset non usa ("Stade Rennais" dove le partite dicono "Rennes"). Non e'
+una consolazione: accumulavano per sbaglio, perche' il tetto di due e' contato sul nome della
+fixture mentre l'aggregato finisce sotto il nome del `summary`, e chiavi diverse vogliono dire
+nessun tetto. Sono dati che nessuno legge, mentre le squadre vere corrispondenti restano senza
+alcun dato giocatore (difetto separato, vedi in fondo alla voce).
+
+Non resta nel dataset: `schedina.js:747` costruisce da `player_context[team].players` i candidati
+marcatore che passa a `estimatePlayerMarkets`, quindi quei numeri finiscono nella schedina, e
+`app.js:333` li mostra nella modale.
+
+**Perche' nessun test l'ha visto.** Perche' tutti guardavano **una** esecuzione.
+`test_player_minutes_and_roles.py` e `test_player_card_events.py` verificano che da un `summary`
+ESPN si estraggano bene minuti, cartellini e ruoli — ed era vero, l'estrazione funzionava. Il
+difetto stava in cosa succede alla **seconda** esecuzione, che nessun test faceva partire. Il
+contratto sul dataset (`player-context-contract.test.js`) conta squadre, giocatori e moduli — 96,
+2215, 14 moduli plausibili — e sono tutte quantita' che una finestra di due partite produce
+identiche a una stagione intera. Nessun numero era sbagliato: era sbagliata la finestra su cui
+erano calcolati, e la finestra non compare in nessuna asserzione.
+
+**Cosa lo intercetta adesso.** Le voci dichiarano `season` e `counted_events` (schema 4);
+`seed_player_samples()` ricostruisce i contatori grezzi dalla voce gia' in cache della stagione in
+corso e `fetch_player_samples()` **aggiunge** le sole partite non ancora conteggiate, scartando
+riga per riga quelle gia' in conto per quella squadra — necessario perche' ogni `summary` porta le
+righe di due squadre e va riletto finche' serve almeno a una.
+`tests/test_player_stats_accumulation.py` copre i tre meccanismi e ognuno e' verificato per
+mutazione: spento il seme, spento il filtro per riga o rimesso il vecchio criterio di scelta delle
+partite, il test corrispondente diventa rosso.
+
+**Resta aperto, ed e' emerso misurando questo:** 12 voci su 96 stanno sotto un nome che il
+catalogo non contiene, e le 12 squadre vere corrispondenti (Rennes, Bournemouth, Freiburg,
+Augsburg, Hamburg, Union Berlin, Auxerre, ...) non hanno **nessun** dato giocatore. `parse_summary`
+normalizza il `shortDisplayName` del `summary` ESPN, che per questi club diverge dal nome che la
+stessa ESPN usa nel calendario. L'accumulo non lo tocca: e' un difetto di identita', la famiglia
+che e' costata di piu'. La correzione robusta non e' un altro alias ma la chiave che non ha
+grafie — l'id squadra ESPN, gia' presente sia nel `summary` sia nelle fixture
+(`home_team_id`/`away_team_id`).
+
+E la **prima stesura di quei test era inutile**, il che e' la parte che vale la pena ricordare: si
+fermava a due partite, e fino a due una esecuzione senza accumulo produce lo stesso identico
+risultato di una con. Passava su entrambe le versioni del codice — su quella corretta e su quella
+difettosa — e solo la verifica per mutazione l'ha rivelato. Il test che discrimina e' quello che
+arriva alla **terza** partita, oltre il tetto per esecuzione. Piu' l'invariante sul dataset vero
+contro il rischio opposto che l'accumulo introduce, contare due volte la stessa partita: nessun
+giocatore puo' avere piu' convocazioni delle partite conteggiate, ne' piu' di 100 minuti per
+ognuna.
 
 ---
 

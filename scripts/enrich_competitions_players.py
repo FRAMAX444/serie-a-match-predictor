@@ -15,6 +15,7 @@ import re
 import statistics
 import sys
 from collections import Counter, defaultdict
+from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Iterable
@@ -434,12 +435,97 @@ def safe_int(value: object) -> int:
         return 0
 
 
+@dataclass
+class PlayerSampleState:
+    """Contatori grezzi per giocatore, accumulati fra un'esecuzione e la successiva.
+
+    `counted` e' la parte che rende l'accumulo ripetibile: senza l'elenco delle partite gia'
+    conteggiate, rileggere lo stesso `summary` raddoppierebbe minuti, gol e cartellini.
+    """
+
+    aggregates: "defaultdict[str, dict[str, dict[str, object]]]" = field(
+        default_factory=lambda: defaultdict(dict))
+    team_samples: "defaultdict[str, int]" = field(default_factory=lambda: defaultdict(int))
+    team_formations: "defaultdict[str, Counter]" = field(default_factory=lambda: defaultdict(Counter))
+    counted: "defaultdict[str, set[str]]" = field(default_factory=lambda: defaultdict(set))
+
+
+def seed_player_samples(
+    context: dict[str, dict[str, object]],
+    season: str,
+) -> PlayerSampleState:
+    """Ricostruisce i contatori dalle voci gia' in cache, per la sola stagione in corso.
+
+    Il filtro sulla stagione non e' prudenza: i totali di una stagione non devono sommarsi a
+    quelli della successiva. Una voce rimasta dalla stagione scorsa non viene pero' buttata —
+    resta il ripiego finche' la squadra non gioca la sua prima partita di questa, e a quel
+    punto viene ricostruita da zero invece che estesa.
+
+    Due campi non sopravvivono al giro, e nessuno dei due serve: `fouls` e' aggregato ma non
+    letto da nessuno, e `ratings` e' sempre vuoto perche' ESPN espone `rating: null` (difetto
+    15 di MISTAKES.md).
+    """
+    state = PlayerSampleState()
+    for team, entry in context.items():
+        if not isinstance(entry, dict) or str(entry.get("season") or "") != season:
+            continue
+        events = {str(item) for item in (entry.get("counted_events") or []) if item}
+        players = entry.get("players")
+        if not events or not isinstance(players, list):
+            continue
+        state.counted[team] = events
+        state.team_samples[team] = len(events)
+        formation = str(entry.get("formation") or "")
+        if formation and entry.get("formation_source") == "ESPN":
+            state.team_formations[team][formation] = len(events)
+        for player in players:
+            if not isinstance(player, dict) or not player.get("id"):
+                continue
+            # rounded_player() scrive "—" quando il ruolo e' ignoto: rimetterlo come se fosse
+            # un ruolo vero renderebbe il giocatore invisibile a fill_missing_positions, che
+            # cerca proprio quelli senza ruolo.
+            position = str(player.get("position") or "")
+            position = "" if position == "—" else position
+            squad_appearances = int(player.get("squad_appearances") or 0)
+            positions: Counter = Counter()
+            if position:
+                positions[position] = max(squad_appearances, 1)
+            state.aggregates[team][str(player["id"])] = {
+                "id": str(player["id"]),
+                "name": str(player.get("name") or ""),
+                "position": position,
+                "positions": positions,
+                "squad_appearances": squad_appearances,
+                "appearances": int(player.get("appearances") or 0),
+                "starts": int(player.get("starts") or 0),
+                "minutes": float(player.get("minutes") or 0),
+                "goals": float(player.get("goals") or 0),
+                "assists": float(player.get("assists") or 0),
+                "yellow_cards": float(player.get("yellow_cards") or 0),
+                "red_cards": float(player.get("red_cards") or 0),
+                "shots": float(player.get("shots") or 0),
+                "shots_on_target": float(player.get("shots_on_target") or 0),
+                "fouls": 0.0,
+                "ratings": [],
+                "last_seen": str(player.get("last_seen") or entry.get("as_of") or ""),
+            }
+    return state
+
+
 def choose_summary_events(
     events: Iterable[tuple[str, dict[str, object]]],
     max_events: int,
     samples_per_team: int = 2,
     priority_teams: set[str] | None = None,
+    counted_by_team: dict[str, set[str]] | None = None,
 ) -> list[tuple[str, dict[str, object]]]:
+    """Sceglie quali partite scaricare in QUESTA esecuzione.
+
+    `samples_per_team` non e' piu' il campione totale di una squadra ma quante partite NUOVE
+    aggiungerne per run: le statistiche si accumulano fra un'esecuzione e l'altra
+    (`counted_by_team` dice cosa e' gia' stato conteggiato), quindi il tetto qui serve solo a
+    ripartire il budget di richieste fra tante squadre invece di esaurirlo sulla prima.
+    """
     needs: defaultdict[str, int] = defaultdict(int)
     chosen: list[tuple[str, dict[str, object]]] = []
     seen: set[str] = set()
@@ -455,18 +541,23 @@ def choose_summary_events(
         ),
         reverse=True,
     )
+    counted = counted_by_team or {}
     for slug, event in ordered:
         event_id = str(event.get("id") or "")
         if not event_id or event_id in seen:
             continue
-        home = str(event.get("home_team") or "")
-        away = str(event.get("away_team") or "")
-        if needs[home] >= samples_per_team and needs[away] >= samples_per_team:
+        # Le squadre per cui questa partita ha ancora qualcosa da dare. Se sono gia' conteggiata
+        # per entrambe, scaricarla costerebbe una richiesta per riscartare ogni riga.
+        pending = [
+            team for team in (str(event.get("home_team") or ""), str(event.get("away_team") or ""))
+            if team and event_id not in counted.get(team, ())
+        ]
+        if not pending or all(needs[team] >= samples_per_team for team in pending):
             continue
         seen.add(event_id)
         chosen.append((slug, event))
-        needs[home] += 1
-        needs[away] += 1
+        for team in pending:
+            needs[team] += 1
         if len(chosen) >= max_events:
             break
     return chosen
@@ -476,11 +567,22 @@ def fetch_player_samples(
     events: Iterable[tuple[str, dict[str, object]]],
     max_events: int,
     priority_teams: set[str] | None = None,
-) -> tuple[dict[str, dict[str, dict[str, object]]], dict[str, int], dict[str, Counter]]:
-    aggregates: dict[str, dict[str, dict[str, object]]] = defaultdict(dict)
-    team_samples: defaultdict[str, int] = defaultdict(int)
-    team_formations: defaultdict[str, Counter] = defaultdict(Counter)
-    for slug, event in choose_summary_events(events, max_events, priority_teams=priority_teams):
+    seed: PlayerSampleState | None = None,
+    rename: dict[str, str] | None = None,
+) -> PlayerSampleState:
+    """Aggiunge le partite non ancora conteggiate ai contatori gia' accumulati in `seed`.
+
+    Il budget di richieste (`max_events`) copre una frazione delle squadre per esecuzione: le
+    statistiche crescono quindi run dopo run invece di essere ricostruite ogni volta dalle
+    ultime due partite. `counted` e' cio' che rende l'operazione ripetibile senza contare due
+    volte la stessa partita.
+    """
+    state = seed or PlayerSampleState()
+    aggregates, team_samples = state.aggregates, state.team_samples
+    team_formations, counted = state.team_formations, state.counted
+    for slug, event in choose_summary_events(
+        events, max_events, priority_teams=priority_teams, counted_by_team=counted,
+    ):
         event_id = str(event["id"])
         try:
             summary = base.fetch_json(
@@ -492,7 +594,15 @@ def fetch_player_samples(
             continue
         teams_seen: set[str] = set()
         formations: dict[str, str] = {}
-        for team, player in parse_summary(summary, str(event.get("date") or "")):
+        for raw_team, player in parse_summary(summary, str(event.get("date") or "")):
+            # Il seme e' indicizzato con la grafia canonica del dataset; ESPN puo' usarne
+            # un'altra. Allineare qui e non dopo: una chiave che non combacia non da' errore,
+            # fa ripartire quella squadra da zero a ogni esecuzione senza dirlo.
+            team = (rename or {}).get(raw_team, raw_team)
+            # L'altra squadra puo' aver gia' conteggiato questa partita in un'esecuzione
+            # precedente: le sue righe vanno scartate, o i suoi totali raddoppierebbero.
+            if event_id in counted[team]:
+                continue
             teams_seen.add(team)
             if player.get("team_formation"):
                 formations[team] = str(player["team_formation"])
@@ -544,10 +654,11 @@ def fetch_player_samples(
                 current["ratings"].append(float(player["rating"]))
             current["last_seen"] = max(str(current["last_seen"]), str(player["date"]))
         for team in teams_seen:
+            counted[team].add(event_id)
             team_samples[team] += 1
             if formations.get(team):
                 team_formations[team][formations[team]] += 1
-    return aggregates, dict(team_samples), dict(team_formations)
+    return state
 
 
 def main_position(player: dict[str, object]) -> str:
@@ -775,16 +886,14 @@ def compute_lineup_strength(
 
 
 def build_player_context(
-    aggregates: dict[str, dict[str, dict[str, object]]],
-    team_samples: dict[str, int],
-    team_formations: dict[str, Counter] | None = None,
+    state: PlayerSampleState,
+    season: str = "",
 ) -> dict[str, dict[str, object]]:
     result: dict[str, dict[str, object]] = {}
-    formations = team_formations or {}
-    for team, player_map in aggregates.items():
+    for team, player_map in state.aggregates.items():
         players = list(player_map.values())
-        samples = team_samples.get(team, 0)
-        counted = formations.get(team)
+        samples = state.team_samples.get(team, 0)
+        counted = state.team_formations.get(team)
         reported_formation = counted.most_common(1)[0][0] if counted else ""
         lineup = probable_lineup(players, reported_formation, samples)
         if not lineup:
@@ -811,8 +920,13 @@ def build_player_context(
             "lineup_strength": round(lineup_strength, 4),
             "squad_attack_factor": round(attack_factor, 4),
             "squad_creativity_factor": round(creativity_factor, 4),
-            "lineup_source": f"ESPN public match summaries · {samples} formazioni recenti",
+            "lineup_source": f"ESPN public match summaries · {samples} partite di stagione",
             "sampled_starters": len(starters),
+            # La stagione a cui i totali si riferiscono e le partite gia' conteggiate: sono i
+            # due campi che permettono all'esecuzione successiva di AGGIUNGERE le gare nuove
+            # invece di ricostruire tutto dalle ultime due. Senza, l'accumulo non e' ripetibile.
+            "season": season,
+            "counted_events": sorted(state.counted.get(team, ())),
             "schema": PLAYER_CONTEXT_SCHEMA,
         }
     return result
@@ -881,7 +995,10 @@ def center_lineup_strength_factors(context: dict[str, dict[str, object]]) -> Non
 #   2: minuti dagli eventi di sostituzione, cartellini dalle statistiche per giocatore, ruoli
 #      mappati correttamente, modulo riportato da ESPN, tassi con shrinkage di ruolo.
 #   3: ruoli completati dal roster di squadra per chi non è mai stato visto titolare.
-PLAYER_CONTEXT_SCHEMA = 3
+# 4: i totali per giocatore sono cumulativi sulla stagione (`season` + `counted_events`)
+# invece di descrivere le ultime due partite. Le voci di schema 3 non sono estendibili — non
+# dicono quali partite abbiano gia' contato — quindi vengono scartate e ricostruite.
+PLAYER_CONTEXT_SCHEMA = 4
 
 
 def usable_player_entry(entry: object) -> bool:
@@ -1191,21 +1308,39 @@ def main() -> None:
     if not args.skip_player_data:
         missing_teams = set(teams) - set(player_context)
         priority_teams = missing_teams or set(teams)
-        aggregates, team_samples, team_formations = fetch_player_samples(
-            summary_candidates,
+        # Solo la stagione in corso: i totali per giocatore la descrivono, e mescolarci le gare
+        # di quella precedente li renderebbe la somma di due rose diverse. Una squadra che non
+        # ha ancora giocato non compare fra i candidati, quindi non viene ricampionata e tiene
+        # la voce che ha — il ripiego di inizio stagione resta quello di prima.
+        season_candidates = [
+            (slug, event) for slug, event in summary_candidates
+            if str(event.get("season") or "") == target_code
+        ]
+        state = fetch_player_samples(
+            season_candidates,
             max(0, args.max_summary_events),
             priority_teams=priority_teams,
+            seed=seed_player_samples(player_context, target_code),
+            rename=spelling,
         )
         if not args.skip_squad_positions:
             locations = team_espn_locations(
                 {"competitions": list(competitions_by_id.values())},
                 descriptors,
             )
-            filled = fill_missing_positions(aggregates, locations)
+            filled = fill_missing_positions(state.aggregates, locations)
             if filled:
                 print(f"Ruoli completati dal roster di squadra per {filled} giocatori", file=sys.stderr)
-        fresh_context = build_player_context(aggregates, team_samples, team_formations)
+        fresh_context = build_player_context(state, target_code)
         player_context.update(canonicalize_context_keys(fresh_context, spelling))
+        sampled = [len(state.counted[team]) for team in fresh_context]
+        if sampled:
+            print(
+                f"Statistiche giocatori: {len(fresh_context)} squadre, partite di stagione "
+                f"conteggiate min {min(sampled)} / mediana {statistics.median(sampled):.0f} / "
+                f"max {max(sampled)}",
+                file=sys.stderr,
+            )
 
     # La pipeline può coprire un sottoinsieme non casuale di squadre. Centrare il rapporto
     # impedisce che "essere coperti" diventi di per sé un bonus/malus nel modello.

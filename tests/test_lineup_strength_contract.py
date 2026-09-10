@@ -95,9 +95,27 @@ class LineupStrengthContractTests(unittest.TestCase):
                 self.assertGreaterEqual(value, 0.8, f"{name}/{team}")
                 self.assertLessEqual(value, 1.15, f"{name}/{team}")
 
+    # Scarto massimo ammesso fra la media delle squadre coperte e l'1.0 delle non coperte.
+    # NON e' zero, ed e' la parte che va spiegata. Le assenze sono asimmetriche: una squadra
+    # perde piu' da un infortunio di quanto guadagni da un rientro, quindi la distribuzione ha
+    # la coda a sinistra e una media sotto 1 anche quando la mediana sta esattamente su 1.
+    # Misurato il 10/09/2026 sui valori GREZZI, prima di qualunque centratura: media 0.9874,
+    # mediana 1.0000, 38 squadre sotto 1, 41 esattamente a 1, 17 sopra. Quello 0.9874 e' una
+    # misura, non un bias di copertura: pretendere che valga 1.0 significa chiedere alla
+    # pipeline di cancellare le assenze che ha appena osservato. La soglia serve a intercettare
+    # una deriva vera, non a negare il residuo.
+    MAX_COVERAGE_GAP = 0.03
+
     def test_covered_teams_are_not_systematically_favoured(self) -> None:
-        """Il bias che il difetto produceva: le squadre coperte da player_context avevano un
-        moltiplicatore >= 1 e le altre esattamente 1, quindi essere coperte valeva forza."""
+        """Il bias che il difetto 15 produceva: le squadre coperte da player_context avevano un
+        moltiplicatore >= 1 e le altre esattamente 1, quindi essere coperte valeva forza — 0
+        squadre sotto 1 su 95, e le 95 sopra erano esattamente quelle che la pipeline era
+        riuscita a coprire.
+
+        Il contratto e' quindi sulla UNILATERALITA', non sulla media. Prima chiedeva media == 1
+        entro 0.01, che con una distribuzione asimmetrica e' incompatibile con l'altro contratto
+        di questo file (mediana == 1): passava o falliva a seconda di come cadeva la
+        distribuzione del giorno, ed e' passato per undici giorni per fortuna."""
         teams = self.payload.get("team_context") or {}
         covered = set(self.payload.get("player_context") or {})
         values = [
@@ -107,11 +125,22 @@ class LineupStrengthContractTests(unittest.TestCase):
         ]
         if not values:
             self.skipTest("nessuna squadra coperta")
+
+        below = [value for value in values if value < 1]
+        above = [value for value in values if value > 1]
+        self.assertTrue(
+            below and above,
+            f"{len(values)} squadre coperte, {len(below)} sotto 1 e {len(above)} sopra: un "
+            "fattore a senso unico trasferisce nei lambda la copertura della pipeline invece "
+            "della forza della squadra.",
+        )
+
         mean = sum(values) / len(values)
-        self.assertAlmostEqual(
-            mean, 1.0, delta=0.01,
-            msg=f"Le {len(values)} squadre coperte da player_context hanno moltiplicatore "
-                f"medio {mean:.4f}: essere coperte dalla pipeline non deve valere forza.",
+        self.assertLessEqual(
+            abs(mean - 1.0), self.MAX_COVERAGE_GAP,
+            f"Le {len(values)} squadre coperte hanno moltiplicatore medio {mean:.4f} contro "
+            f"l'1.0 esatto delle non coperte: uno scarto oltre {self.MAX_COVERAGE_GAP} non e' "
+            "piu' l'asimmetria delle assenze, e' la copertura che vale forza.",
         )
 
 
