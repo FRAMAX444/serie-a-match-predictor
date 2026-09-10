@@ -4,6 +4,14 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  # update-data.yml committa data/matches.json quattro volte al giorno con il GITHUB_TOKEN,
+  # e un push del bot non fa scattare `push:`. Senza questo trigger il dataset che il sito
+  # serve non passa mai dalla validazione qui sotto: e' esattamente cio' che e' successo fra
+  # il 29-08 e il 10-09-2026, quando 92014d6 ha rimosso il trigger e i controlli su
+  # target_season e sul minimo di gare. 18b440e ha ripristinato update-data.yml, non questo.
+  workflow_run:
+    workflows: ["Update European competition data"]
+    types: [completed]
 
 permissions:
   contents: read
@@ -16,12 +24,15 @@ concurrency:
 
 jobs:
   test-and-deploy:
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -38,11 +49,13 @@ jobs:
       # di MISTAKES.md. I controlli qui sotto sono la rete che impedisce di ricaderci.
       - name: Validate application and production payload
         run: |
-          python -m py_compile scripts/update_europe_data.py scripts/update_uefa_data.py scripts/update_top5_data.py
+          python -m py_compile scripts/update_europe_data.py scripts/update_uefa_data.py scripts/update_top5_data.py scripts/understat_team_api.py scripts/enrich_competitions_players.py
           npm test
           npm run check
           python - <<'PY'
+          import gzip
           import json
+          import re
           from pathlib import Path
 
           path = Path("data/matches.json")
@@ -56,6 +69,12 @@ jobs:
           missing = sorted(expected - available)
           if missing:
               raise SystemExit(f"Competizioni mancanti nel deploy: {', '.join(missing)}")
+          target = str(payload.get("target_season") or "")
+          if not re.fullmatch(r"\d{4}", target):
+              raise SystemExit(f"Stagione target non valida: {target!r}")
+          matches = payload.get("matches")
+          if not isinstance(matches, list) or len(matches) < 400:
+              raise SystemExit("Storico del dataset insufficiente")
           # La versione la scrive chi COSTRUISCE il dataset. Che l'arricchimento sia stato
           # eseguito lo dice player_context qui sotto, non questa stringa.
           if payload.get("model_inputs_version") != "4.1-top5-uefa-core":
@@ -78,15 +97,26 @@ jobs:
                   "Nessuna gara con xG reale nel dataset: xgValue() ripiegherebbe sul proxy "
                   "dei tiri per ogni partita, cioe' su un modello diverso da quello misurato."
               )
+          # Pages serve questo file con `content-encoding: gzip`, quindi il peso che l'utente
+          # paga e' quello compresso: 1.18 MiB il 10-09-2026, contro 12.06 MiB su disco. Il
+          # limite grezzo misurava il numero sbagliato e bocciava il caso BUONO: le 18 colonne
+          # di quote di chiusura di Football-Data pesano 2.2 MiB su disco e quasi nulla una
+          # volta compresse, quindi il dataset completo sforava mentre quello degradato, senza
+          # quote e piu' leggero, passava.
           size = path.stat().st_size
-          limit = 12 * 1024 * 1024
+          transferred = len(gzip.compress(path.read_bytes(), 6))
+          limit = 3 * 1024 * 1024
           print(
-              f"Payload produzione: {size / 1024:.1f} KiB; competizioni: {len(available)}; "
+              f"Payload produzione: {size / 1024:.1f} KiB su disco, "
+              f"{transferred / 1024:.1f} KiB trasferiti; stagione: {target}; "
+              f"competizioni: {len(available)}; training: {len(matches)}; "
               f"xG reali: {coverage.get('xg_actual_matches')}/{coverage.get('training_matches')}; "
               f"squadre con rosa: {coverage.get('player_context_teams')}"
           )
-          if size > limit:
-              raise SystemExit(f"Payload troppo pesante: {size} byte, limite {limit}")
+          if transferred > limit:
+              raise SystemExit(
+                  f"Payload troppo pesante: {transferred} byte compressi, limite {limit}"
+              )
           PY
       - name: Configure Pages
         uses: actions/configure-pages@v5
