@@ -518,11 +518,15 @@ def espn_event_order(slug: str, start_year: int) -> list[str]:
     return result
 
 
-def apply_double_round_robin_order(
+def double_round_robin_rounds(
     fixtures: list[dict[str, object]],
     ordered_ids: list[str],
-) -> bool:
-    """Assign rounds from ESPN's canonical event order for complete double round robins."""
+) -> list[list[dict[str, object]]] | None:
+    """Split a complete double round robin into matchdays following ``ordered_ids``.
+
+    Returns the matchdays in calendar order, or ``None`` when that order does not split
+    the calendar into complete rounds.
+    """
     teams = {
         str(item.get(side))
         for item in fixtures
@@ -531,12 +535,13 @@ def apply_double_round_robin_order(
     }
     team_count = len(teams)
     if team_count < 4 or team_count % 2 or len(fixtures) != team_count * (team_count - 1):
-        return False
+        return None
     by_id = {str(item.get("id")): item for item in fixtures if item.get("id")}
     relevant_ids = [event_id for event_id in ordered_ids if event_id in by_id]
     if len(relevant_ids) != len(fixtures):
-        return False
+        return None
     matches_per_round = team_count // 2
+    rounds: list[list[dict[str, object]]] = []
     for offset in range(0, len(relevant_ids), matches_per_round):
         chunk = [by_id[event_id] for event_id in relevant_ids[offset:offset + matches_per_round]]
         chunk_teams = [
@@ -545,11 +550,63 @@ def apply_double_round_robin_order(
             for side in ("home_team", "away_team")
         ]
         if len(chunk) != matches_per_round or len(set(chunk_teams)) != team_count:
-            return False
-    for index, event_id in enumerate(relevant_ids):
-        round_number = index // matches_per_round + 1
-        by_id[event_id]["round"] = round_number
-        by_id[event_id]["round_label"] = f"Turno {round_number}"
+            return None
+        rounds.append(chunk)
+    # Un elenco raggruppato per giornata non e' necessariamente in ordine di calendario:
+    # nel 2026-27 esp.1, ger.1 e fra.1 arrivano dall'ultima giornata alla prima, e
+    # numerarle nell'ordine ricevuto ribalta il campionato. La data mediana del gruppo —
+    # insensibile a un anticipo isolato — dice il verso; l'ordine buono resta intatto.
+    if round_median_date(rounds[0]) > round_median_date(rounds[-1]):
+        rounds.reverse()
+    return rounds
+
+
+def round_median_date(group: list[dict[str, object]]) -> str:
+    return sorted(str(item.get("date") or "") for item in group)[len(group) // 2]
+
+
+def rounds_span_days(rounds: list[list[dict[str, object]]]) -> int:
+    """Giorni complessivamente coperti dalle giornate: una giornata vera sta in un weekend."""
+    total = 0
+    for group in rounds:
+        days = sorted(str(item.get("date") or "") for item in group)
+        if days[0]:
+            total += (date.fromisoformat(days[-1]) - date.fromisoformat(days[0])).days
+    return total
+
+
+def apply_official_round_order(
+    fixtures: list[dict[str, object]],
+    ordered_ids: list[str],
+) -> bool:
+    """Assign the matchdays of a complete double round robin, if the calendar allows it.
+
+    Si provano due ordini: quello ufficiale ESPN, che conserva la numerazione anche dopo un
+    rinvio, e quello per data. Nessuno dei due e' affidabile da solo — nel 2026-27 l'elenco
+    ESPN di `ita.1` ed `eng.1` non e' raggruppato per giornata (38 blocchi su 38 contengono
+    una squadra due volte), mentre in `esp.1` e' l'ordine per data a non dividersi in
+    giornate per via degli anticipi — e un ordine sbagliato puo' comunque dividersi in
+    blocchi formalmente validi. Fra i due si sceglie quello con le giornate piu' compatte
+    nel tempo, che e' cio' che una giornata vera e': dieci gare nello stesso fine settimana.
+    """
+    by_date = [
+        str(fixture.get("id"))
+        for fixture in sorted(
+            fixtures,
+            key=lambda fixture: (str(fixture.get("date")), int(fixture.get("source_index", 0))),
+        )
+    ]
+    candidates = [
+        rounds
+        for order in (ordered_ids, by_date)
+        if (rounds := double_round_robin_rounds(fixtures, order)) is not None
+    ]
+    if not candidates:
+        return False
+    for index, group in enumerate(min(candidates, key=rounds_span_days), 1):
+        for item in group:
+            item["round"] = index
+            item["round_label"] = f"Turno {index}"
     return True
 
 
@@ -583,10 +640,10 @@ def fetch_espn_events(descriptor: dict[str, object], start_year: int, competitio
     if competition_type == "domestic" and result:
         try:
             ordered_ids = espn_event_order(str(descriptor["espn"]), start_year)
-            if not apply_double_round_robin_order(result, ordered_ids):
+            if not apply_official_round_order(result, ordered_ids):
                 print(
-                    f"ESPN {descriptor['name']} {season}: ordine giornate ufficiale non applicabile; "
-                    "uso il fallback per data",
+                    f"ESPN {descriptor['name']} {season}: giornate non ricostruibili "
+                    "(ne' dall'ordine ESPN ne' da quello per data); uso il raggruppamento euristico",
                     file=sys.stderr,
                 )
         except Exception as error:
@@ -880,12 +937,17 @@ def richness(item: dict[str, object]) -> int:
     return sum(item.get(key) is not None for key in keys)
 
 
+def match_identity(item: dict[str, object]) -> tuple[str, str, str, str]:
+    """Chiave con cui due righe della stessa partita, da fonti diverse, vengono unite."""
+    return (str(item.get("competition_id")), str(item.get("date")), str(item.get("home_team")), str(item.get("away_team")))
+
+
 def merge_matches(items: Iterable[dict[str, object]]) -> list[dict[str, object]]:
     merged: dict[tuple[str, str, str, str], dict[str, object]] = {}
     for item in items:
         if item.get("home_goals") is None or item.get("away_goals") is None:
             continue
-        key = (str(item.get("competition_id")), str(item.get("date")), str(item.get("home_team")), str(item.get("away_team")))
+        key = match_identity(item)
         previous = merged.get(key)
         if not previous:
             merged[key] = dict(item)

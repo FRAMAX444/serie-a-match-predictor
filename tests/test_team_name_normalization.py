@@ -195,7 +195,7 @@ class CollapseOnEveryWritingPathTests(unittest.TestCase):
         # qui sopra.
         source = (ROOT / "scripts" / "update_top5_data.py").read_text(encoding="utf8")
         collapse = source.find("spelling = base.resolve_spelling_collisions(")
-        merge = source.find("matches = [compact_match(item) for item in base.merge_matches(matches)]")
+        merge = source.find("merged = base.merge_matches(matches)")
         self.assertNotEqual(collapse, -1, "update_top5_data.py deve fondere le grafie: e' l'entry point di update-data.yml")
         self.assertNotEqual(merge, -1, "punto di riferimento non trovato: il test va aggiornato")
         self.assertLess(

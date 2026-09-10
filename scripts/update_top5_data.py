@@ -66,8 +66,54 @@ def competition_metadata(descriptor: dict[str, object], start_year: int) -> dict
     return {}
 
 
+# Colonne che solo Football-Data.co.uk fornisce: ESPN non le ha e non le rimpiazza. Quando
+# quella fonte e' irraggiungibile la pipeline riscrive comunque il dataset, e riscriverlo le
+# cancella tutte. Misurato sull'indisponibilita' iniziata il 05/09/2026 (503 su tutto il sito,
+# non solo sui CSV): 5355 -> 0 partite con quote e 1160 -> 0 con arbitro, mentre corner,
+# cartellini, possesso e tiri restavano intatti perche' arrivano da ESPN.
+FOOTBALL_DATA_ONLY_FIELDS = (
+    "home_odds", "draw_odds", "away_odds",
+    "home_odds_close", "draw_odds_close", "away_odds_close",
+    "home_odds_max_close", "draw_odds_max_close", "away_odds_max_close",
+    "over25_odds", "under25_odds",
+    "over25_odds_close", "under25_odds_close",
+    "over25_odds_max_close", "under25_odds_max_close",
+    "ah_line_close", "ah_home_odds_close", "ah_away_odds_close",
+    "referee",
+)
+
+
 def compact_match(match: dict[str, object]) -> dict[str, object]:
     return {key: match[key] for key in MATCH_FIELDS if key in match and match[key] is not None}
+
+
+def restore_missing_source_fields(
+    fresh: list[dict[str, object]],
+    existing: dict[str, object],
+) -> tuple[int, int]:
+    """Riprendi dal dataset gia' pubblicato i campi che una fonte giu' non ha fornito in questo run.
+
+    Riempie solo i buchi di partite presenti anche nel run fresco, con la stessa chiave che usa
+    ``merge_matches``: l'insieme delle partite resta deciso dai feed live e un valore fresco non
+    viene mai sovrascritto. Ritorna (campi riempiti, partite toccate).
+    """
+    previous = existing.get("matches")
+    if not isinstance(previous, list):
+        return 0, 0
+    index = {base.match_identity(item): item for item in previous if isinstance(item, dict)}
+    filled = 0
+    touched = 0
+    for item in fresh:
+        old = index.get(base.match_identity(item))
+        if not old:
+            continue
+        before = filled
+        for field in FOOTBALL_DATA_ONLY_FIELDS:
+            if item.get(field) is None and old.get(field) is not None:
+                item[field] = old[field]
+                filled += 1
+        touched += filled > before
+    return filled, touched
 
 
 def competition_payload(
@@ -297,7 +343,15 @@ def main() -> None:
             "sovrascritto:\n- " + "\n- ".join(calendar_issues)
         )
 
-    matches = [compact_match(item) for item in base.merge_matches(matches)]
+    merged = base.merge_matches(matches)
+    restored_fields, restored_matches = restore_missing_source_fields(merged, existing)
+    if restored_matches:
+        print(
+            f"ATTENZIONE: {restored_fields} campi assenti da questo run ripristinati dal dataset "
+            f"precedente su {restored_matches} partite (fonte Football-Data.co.uk irraggiungibile?)",
+            file=sys.stderr,
+        )
+    matches = [compact_match(item) for item in merged]
     if len(matches) < 400:
         raise SystemExit("Dati insufficienti per Big Five e coppe UEFA: il dataset esistente non viene sovrascritto.")
 

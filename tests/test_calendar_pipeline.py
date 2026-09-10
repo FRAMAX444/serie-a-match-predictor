@@ -1,6 +1,6 @@
 import sys
 import unittest
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -32,8 +32,62 @@ class EspnCalendarTests(unittest.TestCase):
                 event_id = f"{round_number}-{match_number}"
                 ordered_ids.append(event_id)
                 fixtures.append({"id": event_id, "home_team": home, "away_team": away})
-        self.assertTrue(base.apply_double_round_robin_order(fixtures, ordered_ids))
+        self.assertTrue(base.apply_official_round_order(fixtures, ordered_ids))
         self.assertEqual(sorted({item["round"] for item in fixtures}), list(range(1, 7)))
+
+    @staticmethod
+    def _double_round_robin() -> tuple[list[dict[str, object]], list[str]]:
+        pairs = [
+            [("A", "B"), ("C", "D")], [("A", "C"), ("D", "B")],
+            [("A", "D"), ("B", "C")], [("B", "A"), ("D", "C")],
+            [("C", "A"), ("B", "D")], [("D", "A"), ("C", "B")],
+        ]
+        fixtures: list[dict[str, object]] = []
+        ordered_ids: list[str] = []
+        for round_number, round_pairs in enumerate(pairs, 1):
+            kickoff = date(2026, 8, 22) + timedelta(days=7 * (round_number - 1))
+            for match_number, (home, away) in enumerate(round_pairs, 1):
+                event_id = f"{round_number}-{match_number}"
+                ordered_ids.append(event_id)
+                fixtures.append({
+                    "id": event_id, "home_team": home, "away_team": away,
+                    "date": kickoff.isoformat(), "source_index": len(fixtures),
+                })
+        return fixtures, ordered_ids
+
+    def test_scrambled_espn_order_falls_back_to_the_calendar_dates(self) -> None:
+        # ita.1 ed eng.1 2026-27: l'elenco ufficiale ESPN esiste ma non e' raggruppato per
+        # giornata, e senza il ripiego per data non veniva assegnata nessuna giornata.
+        fixtures, ordered_ids = self._double_round_robin()
+        scrambled = ordered_ids[::2] + ordered_ids[1::2]
+        self.assertIsNone(base.double_round_robin_rounds(fixtures, scrambled))
+        self.assertTrue(base.apply_official_round_order(fixtures, scrambled))
+        for item in fixtures:
+            self.assertEqual(item["round"], int(str(item["id"]).split("-")[0]))
+
+    def test_reversed_espn_order_does_not_invert_the_season(self) -> None:
+        # esp.1, ger.1 e fra.1 2026-27: i gruppi sono giornate vere, ma elencate dall'ultima
+        # alla prima. Numerarle nell'ordine ricevuto faceva del turno 1 l'ultima giornata.
+        fixtures, ordered_ids = self._double_round_robin()
+        reversed_rounds = [
+            event_id
+            for offset in range(len(ordered_ids) - 2, -1, -2)
+            for event_id in ordered_ids[offset:offset + 2]
+        ]
+        rounds = base.double_round_robin_rounds(fixtures, reversed_rounds)
+        self.assertIsNotNone(rounds)
+        self.assertEqual([str(item["id"]) for item in rounds[0]], ["1-1", "1-2"])
+
+    def test_scattered_rounds_lose_against_the_calendar_dates(self) -> None:
+        # Un ordine sbagliato puo' dividersi in blocchi formalmente validi — quattro squadre
+        # distinte per blocco — pescando le gare da giornate diverse: e' quello che il
+        # dataset pubblicato conteneva per la Serie A. Vince il raggruppamento piu' compatto.
+        fixtures, ordered_ids = self._double_round_robin()
+        scattered = ["1-1", "4-2", "1-2", "4-1", "2-1", "5-2", "2-2", "5-1", "3-1", "6-2", "3-2", "6-1"]
+        self.assertIsNotNone(base.double_round_robin_rounds(fixtures, scattered))
+        self.assertTrue(base.apply_official_round_order(fixtures, scattered))
+        for item in fixtures:
+            self.assertEqual(item["round"], int(str(item["id"]).split("-")[0]))
 
     def test_partial_snapshot_updates_results_without_deleting_calendar(self) -> None:
         previous = [

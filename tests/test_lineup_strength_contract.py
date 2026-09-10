@@ -21,6 +21,7 @@ coprire, non misura un effetto calcistico: misura la copertura della pipeline, e
 trasferisce nei lambda come se fosse forza.
 """
 import json
+import statistics
 import sys
 import unittest
 from pathlib import Path
@@ -178,7 +179,11 @@ class LineupStrengthUnitTests(unittest.TestCase):
         center_lineup_strength_factors(context)
         after = [float(item["lineup_strength"]) for item in context.values()]
 
-        self.assertAlmostEqual(sum(after) / len(after), 1.0, delta=0.0002)
+        # La MEDIANA, non la media: la distribuzione e' asimmetrica (poche squadre penalizzate
+        # molto, molte penalizzate poco), quindi azzerare la media lascia la maggioranza delle
+        # squadre sopra 1 — che e' lo sbilanciamento del difetto 15, e il 09/09/2026 era
+        # tornato con la media a 1.0000 e 72 squadre su 96 sopra.
+        self.assertAlmostEqual(statistics.median(after), 1.0, delta=0.0002)
         self.assertGreater(max(after) - min(after), 0.05, "il centraggio non deve appiattire il segnale")
         self.assertGreaterEqual(min(after), 0.92)
         self.assertLessEqual(max(after), 1.07)

@@ -12,6 +12,7 @@ import argparse
 import json
 import os
 import re
+import statistics
 import sys
 from collections import Counter, defaultdict
 from datetime import date, datetime, timezone
@@ -840,8 +841,19 @@ def center_lineup_strength_factors(context: dict[str, dict[str, object]]) -> Non
 
     lineup_strength è un rapporto tra l'XI probabile e l'XI tipo della STESSA squadra: la
     copertura della pipeline non deve quindi spostare sistematicamente tutte le squadre
-    coperte sopra o sotto 1. Manteniamo lo spread relativo e trasliamo solo il livello medio.
+    coperte sopra o sotto 1. Manteniamo lo spread relativo e trasliamo solo il livello.
     L'iterazione serve quando qualche valore tocca il clamp [0.92, 1.07].
+
+    Si centra la MEDIANA, non la media. La distribuzione è asimmetrica — poche squadre
+    penalizzate molto, molte penalizzate poco — quindi azzerare la media lascia comunque la
+    maggioranza delle squadre sopra 1: il 09/09/2026, con la media esattamente a 1.0000, 72
+    squadre su 96 stavano sopra e la mediana valeva 1.0105. È lo stesso sbilanciamento che il
+    difetto 15 di MISTAKES.md descrive («un fattore che può solo premiare, e premia chi la
+    pipeline è riuscita a coprire»), sopravvissuto alla correzione perché la media può stare a
+    1 mentre quasi tutte le squadre stanno sopra. La mediana è la statistica che dice davvero
+    «metà sopra, metà sotto», ed è quella che `tests/test_lineup_strength_contract.py`
+    controlla: prima il codice garantiva una cosa e il contratto ne verificava un'altra, e
+    passava o falliva a seconda di come cadeva la distribuzione del giorno.
     """
     entries = [
         item for item in context.values()
@@ -851,7 +863,7 @@ def center_lineup_strength_factors(context: dict[str, dict[str, object]]) -> Non
         return
     for _ in range(8):
         values = [float(item["lineup_strength"]) for item in entries]
-        correction = 1.0 - sum(values) / len(values)
+        correction = 1.0 - statistics.median(values)
         if abs(correction) < 0.00005:
             break
         for item in entries:

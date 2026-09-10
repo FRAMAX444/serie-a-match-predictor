@@ -14,14 +14,15 @@ Riferimenti puntuali in `docs/misure-riferimento.md`.
 
 ## Il quadro d'insieme
 
-Ventotto difetti, e si distribuiscono in modo molto disuguale:
+Trentuno difetti, e si distribuiscono in modo molto disuguale:
 
 | categoria | quanti | impatto misurato sulle previsioni |
 |---|---|---|
 | Identità dei dati (nomi, alias, join) | 8 | il più grande mai misurato: **+0.0145** in Champions |
 | Produzione ≠ misura | 6 | nullo o non misurabile, ma invalidava *ogni* misura |
-| Campi calcolati male | 4 | da nullo a "azzerava un'intera funzione" |
+| Campi calcolati male | 6 | da nullo a "azzerava un'intera funzione" o "ribaltava il calendario" |
 | Test e integrazione continua | 1 | nessuno sulle previsioni: bloccava il deploy |
+| Fonti dati non raggiungibili | 1 | nessuno sulle previsioni: azzerava ogni misura di mercato |
 | Interfaccia e flusso | 9 | funzione principale inutilizzabile, generata e invisibile, o salvata dove non resta |
 
 Tre osservazioni che il catalogo rende difficili da ignorare:
@@ -613,6 +614,140 @@ scelto non ha almeno due gare da giocare, salta dichiarando che il dataset local
 del calendario — invece di far fallire il deploy. Su un dataset fresco il contratto sulla cache
 resta verificato: entrambi i casi sono verificati per mutazione, il salto sul dataset del
 28/08/2026 e l'esecuzione piena sullo stesso dataset con le gare passate marcate concluse.
+
+---
+
+## 29. Il turno 1 era l'ultima giornata di campionato
+
+**Cosa.** `apply_double_round_robin_order` ricostruiva le giornate spezzando l'elenco ufficiale
+ESPN (`.../seasons/{anno}/types/1/events`) in blocchi da mezze-squadre e numerandoli
+nell'ordine ricevuto. Tre ipotesi implicite, e nel 2026-27 tutte e tre false: che l'elenco sia
+raggruppato per giornata (per `ita.1` ed `eng.1` non lo e', 38 blocchi su 38 contengono una
+squadra due volte, e la funzione rifiutava tutto ripiegando sul raggruppamento euristico per
+data); che sia in ordine cronologico (per `esp.1`, `ger.1` e `fra.1` va **dall'ultima giornata
+alla prima**); e che un blocco formalmente valido — dieci gare, venti squadre distinte — sia una
+giornata vera, quando lo stesso controllo passa anche su dieci gare pescate da giornate diverse.
+
+**Costo.** Tutte e cinque le leghe del dataset pubblicato hanno il calendario 2026-27 sbagliato:
+in `esp.1` il "Turno 1" e' il 30/05/2027 e il "Turno 38" il 15/08/2026, in `ger.1` il turno 1 e'
+il 22/05/2027, in `fra.1` il 29/05/2027, in `eng.1` il turno 1 va dall'8 al 30 maggio 2027, in
+`ita.1` il turno 1 mescola tre giornate vere (22/08 → 13/09/2026). Poiche' `default_round` e' il
+primo turno con gare da giocare, `default_round` valeva 1 ovunque: **il sito apriva sull'ultima
+giornata di maggio 2027**, ed e' da li' che `generateSlip()` sceglieva le gare della schedina.
+Nessun effetto sulle previsioni — il modello non usa il numero di turno — ma la funzione
+principale del sito mostrava il campionato al contrario.
+
+**Perche' nessun test l'ha visto.** L'unico test sulla funzione costruiva l'elenco **gia'**
+raggruppato per giornata e **gia'** in ordine crescente, e senza date: asseriva le due ipotesi
+da verificare invece di metterle alla prova. Il contratto di calendario
+(`calendar_contract_issues`) conta le fixture e le giornate — 38 turni da 10 gare — e un
+calendario invertito o rimescolato le conta esattamente giuste. E il difetto e' silenzioso per
+costruzione: `return False` scrive su stderr e lascia i turni all'euristica, dentro un workflow
+di aggiornamento dati di cui nessuno legge lo stderr.
+
+**Cosa lo intercetta adesso.** `double_round_robin_rounds` restituisce il raggruppamento invece
+di applicarlo, e `apply_official_round_order` prova **due** ordini — quello ESPN e quello per
+data — tenendo il raggruppamento con le giornate piu' compatte nel tempo, che e' cio' che una
+giornata e': dieci gare nello stesso fine settimana. Il verso si decide confrontando la data
+mediana del primo gruppo con quella dell'ultimo. Tre test in `tests/test_calendar_pipeline.py`
+coprono i tre modi di sbagliare (elenco non raggruppato, elenco al contrario, blocchi validi ma
+sparsi), ognuno verificato per mutazione: spento il ripiego per data, spento il controllo del
+verso o spenta la scelta del piu' compatto, il test corrispondente diventa rosso. Sui dati veri
+le cinque leghe passano ora da 0 a 38/38 e 34/34 giornate complete, con il turno 1 in agosto.
+
+---
+
+## 30. Un 503 su una fonte cancellava colonne gia' pubblicate
+
+**Cosa.** Il 05/09/2026 football-data.co.uk ha cominciato a rispondere 503 su tutto il sito
+(homepage inclusa, con qualunque User-Agent, http e https). `download_football_data()` cattura
+l'errore, lo stampa su stderr e lascia proseguire il run: e' il comportamento voluto, una fonte
+giu' non deve bloccare l'aggiornamento di risultati e calendario che ESPN e UEFA danno benissimo.
+Ma la pipeline poi riscrive `data/matches.json` **da zero** a partire dai soli feed raggiungibili.
+Le colonne che solo Football-Data fornisce non restano com'erano: spariscono. Non esisteva alcun
+percorso in cui il dataset conservasse cio' che una fonte irraggiungibile non aveva potuto ridare.
+
+**Costo.** Misurato sui commit del dataset: fra quello delle 12:02 e quello delle 17:03 del 5
+settembre, `home_odds` e' passato da 5355 partite a 0, `home_odds_close` da 5355 a 0, `referee`
+da 1160 a 0 e `referee_stats` da 34 arbitri a `{}`. Sedici run successivi hanno ripubblicato lo
+stesso vuoto, per quattro giorni. **Nessun effetto sulle previsioni**: `prediction-inputs.js` non
+legge le quote e il sito ha continuato a funzionare identico. L'effetto e' sulla misura:
+`npm run backtest:market` usciva con «Nessuna delle partite valutate ha
+home_odds/draw_odds/away_odds», e con lui `diag_market_execution` e `diag_signal_orthogonality` —
+cioe' l'intera strumentazione di PROMPT-sessione-4 e -5, che e' anche il posto da cui viene
+l'unico guadagno grosso mai misurato (+0.0285 dall'ancoraggio alle marginali di mercato).
+
+**Perche' nessun test l'ha visto.** `tests/test_closing_odds_columns.py` esiste apposta per le
+colonne quote, ma lavora su un CSV sintetico: verifica che `parse_csv()` legga le colonne giuste
+e che `compact_match()` non le scarti. Entrambe le cose restavano vere — semplicemente non c'era
+nessun CSV. Nessun test guardava la copertura quote del **dataset pubblicato**, e tutti i
+controlli che il dataset ha (`calendar_contract_issues`, la soglia `len(matches) < 400`, il
+contratto di identita') contano righe, giornate e nomi, mai colonne: un dataset con 8557 partite
+giuste e zero quote li passa tutti. Il segnale c'era, su stderr, dentro un workflow di cui nessuno
+legge lo stderr — lo stesso posto del difetto 29.
+
+**Cosa lo intercetta adesso.** `restore_missing_source_fields()` in `update_top5_data.py` riprende
+dal dataset gia' pubblicato i soli campi che solo Football-Data fornisce
+(`FOOTBALL_DATA_ONLY_FIELDS`: quote di apertura, chiusura e massime, over-under, handicap
+asiatico, arbitro), con `base.match_identity()` — la stessa chiave di `merge_matches()`, ora
+estratta in una funzione proprio perche' le due non possano divergere in silenzio. Riempie solo
+buchi di partite che i feed live riportano ancora, non sovrascrive mai un valore fresco, e stampa
+un ATTENZIONE quando scatta, cosi' l'indisponibilita' smette di essere muta.
+`tests/test_source_outage_preservation.py` mette alla prova i tre modi di sbagliarlo (sovrascrivere
+un valore fresco, far ricomparire una partita che i feed non riportano piu', divergere dalla chiave
+di merge) e aggiunge il contratto che sarebbe diventato rosso il 5 settembre: sulle stagioni
+concluse dei Big Five almeno il 90% delle partite deve avere `home_odds`. La copertura reale e'
+100%; sul dataset danneggiato il contratto misurava 0.0% su 5255 partite. Il dataset e' stato
+riparato applicando la stessa funzione all'ultima versione pubblicata che aveva le quote
+(`96a0618`): 97532 campi rimessi su 5354 partite, `backtest:market` di nuovo eseguibile.
+
+---
+
+## 31. Il centraggio azzerava la media, il contratto controllava la mediana
+
+**Cosa.** `center_lineup_strength_factors()` toglie a `lineup_strength` il bias di copertura —
+il fattore e' un rapporto fra l'XI probabile e l'XI tipo della **stessa** squadra, quindi essere
+coperti dalla pipeline non deve valere di per se' un bonus. Lo faceva traslando la distribuzione
+finche' la **media** valeva 1. Ma la distribuzione e' asimmetrica: poche squadre penalizzate
+molto, molte penalizzate pochissimo. Con la media a 1 la maggioranza delle squadre resta sopra 1.
+Il 09/09/2026, con la media a 1.0000 esatto: mediana 1.0105, **72 squadre su 96 sopra 1** e 24
+sotto. Peggio: 51 squadre su 96 hanno il rapporto grezzo **esattamente 1.0** — nessuna notizia di
+indisponibilita', XI probabile identico all'XI tipo — e il dataset le pubblicava a **1.0105**. Il
+valore che per definizione significa "nessuna informazione" era il piu' frequente del dataset e
+non stava su 1. E' il difetto 15 («un fattore che puo' solo premiare, e premia chi la pipeline e'
+riuscita a coprire») sopravvissuto alla propria correzione, perche' la correzione centrava la
+statistica sbagliata.
+
+**Costo.** **Nessuno sulle previsioni.** `teamContext` e' escluso da `prediction-inputs.js` dal
+27/08/2026 (misurato: +0.0002 ± 0.0010 su `fra.1`, 0.21σ), quindi `lineup_strength` non entra in
+nessun lambda ne' in produzione ne' in backtest: il campo resta nel dataset, testato, in attesa di
+poter essere riacceso — ed e' proprio la condizione in cui un difetto armato da' verde. Il costo
+misurabile e' sul cancello: `update-data.yml` esegue `unittest discover` **prima** dello step che
+committa il dataset, e il contratto sulla mediana passava o falliva a seconda di come cadeva la
+distribuzione del giorno — 1.0017 il 04/09 (verde), 1.0105 il 09/09 (rosso). Un cancello che
+protegge il dataset e decide a testa o croce non protegge niente: la prima volta che fosse uscito
+rosso in CI, l'aggiornamento del dataset si sarebbe fermato senza che il dataset avesse nulla che
+non andasse.
+
+**Perche' nessun test l'ha visto.** Perche' i test erano due e dicevano due cose diverse.
+`test_centering_removes_coverage_bias_without_flattening` asseriva la **media** — cioe' esattamente
+la quantita' che il codice azzerava per costruzione: un test che non poteva fallire, verde sia sul
+codice giusto sia su quello sbagliato. `test_median_is_centred_on_one` asseriva la **mediana** sul
+dataset pubblicato, che il codice non garantiva affatto. Il difetto non stava in nessuno dei due:
+stava nel fatto che il codice garantiva una statistica e il contratto ne verificava un'altra, e per
+undici giorni la distribuzione e' stata abbastanza simmetrica da farli sembrare d'accordo. Nessuno
+dei due poteva accorgersene da solo, perche' nessuno dei due nomina la statistica dell'altro.
+
+**Cosa lo intercetta adesso.** `center_lineup_strength_factors()` centra
+`statistics.median(values)`, e il docstring dice perche' non la media. Le due reti ora verificano
+la **stessa** affermazione: l'unita' asserisce la mediana, verificata per mutazione — rimesso
+`sum(values) / len(values)`, il test torna rosso — e il contratto sul dataset controlla la stessa
+grandezza che il codice garantisce, quindi smette di essere una monetina. Effetto misurato sul
+dataset del 09/09: mediana da 1.0105 a 1.0000, squadre sopra 1 da 72 a 13, sotto 1 da 24 a 31, e le
+52 squadre senza notizie di indisponibilita' finiscono esattamente su 1.0000 — che e' cio' che il
+rapporto significa. Il campo pubblicato resta quello vecchio finche' non gira
+`scripts/recompute_lineup_strength.py` o l'arricchimento completo: la correzione vale per le
+esecuzioni future, come nel difetto 15.
 
 ---
 
