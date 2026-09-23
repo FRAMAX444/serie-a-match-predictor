@@ -27,7 +27,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { predictFromMatches } from "../model.js";
+import { predictFromMatches, shinDevig } from "../model.js";
 import { modelInputs } from "../prediction-inputs.js";
 
 const SUPPORTED = new Set(["eng.1", "esp.1", "ita.1", "ger.1", "fra.1", "ucl", "uel", "uecl"]);
@@ -51,22 +51,6 @@ const finite = (x) => (Number.isFinite(x) ? x : null);
 // Shin invece del de-vig proporzionale: e' il migliore dei due contro gli esiti (+0.00086 ±
 // 0.00026, 3.3σ — vedi diag_market_execution.mjs), e qui il mercato e' il BENCHMARK da battere,
 // quindi va preso nella sua forma piu' forte. Usarne una piu' debole gonfierebbe ogni guadagno.
-function shinDevig(odds) {
-  const q = odds.map((v) => 1 / v);
-  const Q = q.reduce((s, v) => s + v, 0);
-  const implied = (z) => q.map((qi) => (Math.sqrt(z * z + 4 * (1 - z) * qi * qi / Q) - z) / (2 * (1 - z)));
-  const f = (z) => implied(z).reduce((s, v) => s + v, 0) - 1;
-  let low = 1e-9;
-  let high = 0.5;
-  if (f(low) * f(high) > 0) return q.map((v) => v / Q);
-  for (let i = 0; i < 120; i += 1) {
-    const mid = (low + high) / 2;
-    if (f(low) * f(mid) <= 0) high = mid; else low = mid;
-  }
-  const p = implied((low + high) / 2);
-  const total = p.reduce((s, v) => s + v, 0);
-  return p.map((v) => v / total);
-}
 
 function parseArguments(argv) {
   const options = { file: "data/matches.json", only: "" };

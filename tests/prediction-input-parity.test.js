@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { predictFromMatches } from "../model.js";
-import { MODEL_INPUT_DEFAULTS, FIXTURE_IDENTITY_KEYS, modelInputs } from "../prediction-inputs.js";
+import { predictFromMatches, marketOddsFrom } from "../model.js";
+import { MODEL_INPUT_DEFAULTS, FIXTURE_IDENTITY_KEYS, PER_FIXTURE_INPUTS, modelInputs } from "../prediction-inputs.js";
 
 // Criterio di accettazione di Q1 (prompt sessione 3 §1): la divergenza fra ciò che app.js
 // passa a predictFromMatches e ciò che i backtest passano deve diventare IMPOSSIBILE da
@@ -118,6 +118,16 @@ const SITES = [
   ["scripts/fantacalcio_asta.mjs", "fantacalcio_asta.mjs"],
 ];
 
+// Le due sagome di chiamata, dichiarate perche' la regola e' diversa e la differenza dev'essere
+// una scelta scritta e non un'omissione. Chi prevede un TURNO delega a
+// predictMatchdayFromMatches gli input che cambiano da una gara all'altra: non li scrive, e non
+// deve. Chi prevede una gara alla volta li scrive, ed e' l'unico posto in cui possono divergere —
+// per questo sotto se ne controlla l'ESPRESSIONE e non solo la chiave.
+const BATCH_SITES = new Set(["app.js", "schedina.js"]);
+// Prevede i 380 accoppiamenti IPOTETICI del girone doppio: partite che nessun bookmaker ha mai
+// prezzato, quindi nessuna linea da dichiarare. `null` esplicito, non chiave mancante.
+const MARKETLESS_SITES = new Set(["fantacalcio_asta.mjs"]);
+
 // Le opzioni di un chiamante stanno o in `predictionOptions()`, o direttamente nella chiamata.
 // Entrambe le forme vanno controllate: scriverle sul posto è come è nato il difetto.
 function optionEntriesOf(source, label) {
@@ -154,7 +164,9 @@ for (const [relative, label] of SITES) {
     + "Costruirle a mano è ciò che ha fatto divergere produzione e misura.",
   );
 
-  const foreign = keys.filter((key) => !FIXTURE_IDENTITY_KEYS.includes(key));
+  const foreign = keys
+    .filter((key) => !FIXTURE_IDENTITY_KEYS.includes(key))
+    .filter((key) => !PER_FIXTURE_INPUTS.includes(key));
   assert.deepEqual(
     foreign,
     [],
@@ -162,6 +174,39 @@ for (const [relative, label] of SITES) {
     + "Va dichiarato in prediction-inputs.js, dove raggiunge sia la produzione sia i backtest "
     + "(R13/R14), oppure non va passato affatto.",
   );
+
+  // Gli input per-gara. L'esenzione da `foreign` non regala nulla: e' sostituita da una regola
+  // piu' stretta, che vincola il VALORE e non solo la chiave. Chi prevede una gara alla volta li
+  // passa TUTTI, e li passa costruiti dall'unica funzione che sa leggere una linea di quote e
+  // dirne il nome; chi prevede un turno non li nomina affatto, perche' li ricava
+  // predictMatchdayFromMatches dalla fixture, in un punto solo (verificato piu' sotto).
+  const byKey = new Map(entries.filter((entry) => entry.key).map((entry) => [entry.key, entry.value]));
+  for (const key of PER_FIXTURE_INPUTS) {
+    if (BATCH_SITES.has(label)) {
+      assert.ok(
+        !byKey.has(key),
+        `${label}: ${key} non va passato a predictMatchdayFromMatches. È un dato per GARA: lo `
+        + "ricava model.js dalla fixture, con marketOddsFrom, una volta per tutte. Passarlo qui "
+        + "significherebbe una linea sola per l'intero turno, o una linea che la pagina sceglie "
+        + "e la misura no (R14).",
+      );
+      continue;
+    }
+    assert.ok(
+      byKey.has(key),
+      `${label}: manca l'input per-gara ${key}. O lo passano tutti i chiamanti che prevedono una `
+      + "gara alla volta, o nessuno (R14): misurare il regime endogeno mentre la pagina mostra "
+      + "quello ancorato è la terza opzione che R13 vieta.",
+    );
+    assert.match(
+      byKey.get(key),
+      MARKETLESS_SITES.has(label) ? /^null$/ : /^marketOddsFrom\(/,
+      `${label}: ${key} deve venire da marketOddsFrom(riga, linea), l'unica funzione che legge `
+      + "una linea di quote e ne dichiara il nome. Costruire le quote a mano restituisce al "
+      + "chiamante la scelta del VALORE, che è la falla che MODEL_INPUT_DEFAULTS non chiude "
+      + "(MISTAKES.md §25 per il nome della linea, §1 per la divergenza).",
+    );
+  }
   perSite.set(label, keys);
 }
 
@@ -171,10 +216,18 @@ for (const [relative, label] of SITES) {
 // che serve davvero: se un giorno un input dovesse essere dichiarato fuori da modelInputs(),
 // dovrebbe comunque comparire da entrambe le parti.
 const nonIdentity = (label) => perSite.get(label).filter((key) => !FIXTURE_IDENTITY_KEYS.includes(key));
+// Chi prevede un turno non SCRIVE gli input per-gara perche' glieli da' predictMatchdayFromMatches:
+// l'insieme che conta e' quello che ARRIVA al modello, ed e' quello che va confrontato. Senza
+// questo, la proprieta' «ogni chiamante manda al modello le stesse cose di app.js» sarebbe vera
+// per omissione invece che per costruzione.
+const effective = (label) => [
+  ...nonIdentity(label),
+  ...(BATCH_SITES.has(label) ? PER_FIXTURE_INPUTS : []),
+].sort();
 for (const [, label] of SITES) {
   assert.deepEqual(
-    nonIdentity(label),
-    nonIdentity("app.js"),
+    effective(label),
+    effective("app.js"),
     `${label} e app.js passano insiemi di opzioni diversi a predictFromMatches`,
   );
 }
@@ -189,6 +242,16 @@ assert.throws(
   "modelInputs deve rifiutare un input non presente in MODEL_INPUT_DEFAULTS",
 );
 assert.throws(() => modelInputs({ refereeStats: {} }), /input non dichiarato/);
+// La linea di mercato non può entrare da qui, e il rifiuto dev'essere RUMOROSO. Se fosse
+// dichiarata in MODEL_INPUT_DEFAULTS, la coercizione `Number(value)` poche righe sotto
+// scarterebbe l'oggetto quote e lascerebbe il default: la produzione crederebbe di ancorare
+// e non ancorerebbe, con ogni asserzione di questo file ancora verde. È MISTAKES.md §1 parola
+// per parola, dentro il contratto nato per impedirlo.
+assert.throws(
+  () => modelInputs({ marketOdds: { home: 2.1, draw: 3.4, away: 3.6 } }),
+  /input non dichiarato \(marketOdds\)/,
+  "modelInputs deve RIFIUTARE le quote, non coercerle silenziosamente a null",
+);
 assert.deepEqual(modelInputs({ windowDays: 730 }), { windowDays: 730, halfLifeDays: 120 });
 // Preferenze illeggibili (localStorage, Firestore) ricadono sul default invece di propagare NaN.
 assert.deepEqual(modelInputs({ windowDays: "non-numerico" }), { ...MODEL_INPUT_DEFAULTS });
@@ -230,6 +293,7 @@ const unclassified = declared
   .map((entry) => entry.key)
   .filter((key) => !(key in MODEL_INPUT_DEFAULTS))
   .filter((key) => !FIXTURE_IDENTITY_KEYS.includes(key))
+  .filter((key) => !PER_FIXTURE_INPUTS.includes(key))
   .filter((key) => !DELIBERATELY_UNWIRED.includes(key));
 assert.deepEqual(
   unclassified,
@@ -238,6 +302,48 @@ assert.deepEqual(
   + "Dichiararle in MODEL_INPUT_DEFAULTS (arrivano a produzione e misura) o in "
   + "DELIBERATELY_UNWIRED con la ragione, ma non lasciarle indecise.",
 );
+
+// L'altra meta' della garanzia sugli input per-gara: il chiamante che prevede un TURNO non li
+// scrive perche' li ricava predictMatchdayFromMatches, in UN punto solo. Se quel punto sparisse,
+// app.js e schedina.js smetterebbero di ancorare e il test qui sopra resterebbe verde — la
+// produzione tornerebbe endogena mentre la misura ancora, che e' la stessa divergenza di §1 col
+// segno invertito.
+// functionBody() non serve qui: `options = {}` nella lista dei parametri e' la prima graffa dopo
+// la firma, e la lettura ingenua restituirebbe un corpo vuoto — cioe' un assert sempre verde.
+const matchdaySignature = modelSource.indexOf("function predictMatchdayFromMatches(");
+assert.notEqual(matchdaySignature, -1, "model.js: manca function predictMatchdayFromMatches(...)");
+const matchdayParameters = scan(modelSource, modelSource.indexOf("(", matchdaySignature));
+const matchdayOpen = modelSource.indexOf("{", matchdayParameters);
+const matchdayBody = modelSource.slice(matchdayOpen, scan(modelSource, matchdayOpen) + 1);
+assert.ok(matchdayBody.length > 100, "model.js: corpo di predictMatchdayFromMatches non estratto");
+for (const key of PER_FIXTURE_INPUTS) {
+  assert.match(
+    matchdayBody,
+    new RegExp(`${key}:\\s*marketOddsFrom\\(fixture`),
+    `model.js: predictMatchdayFromMatches deve ricavare ${key} dalla fixture con marketOddsFrom, `
+    + "come gia' fa con refereeHomeBias. È l'unico punto da cui la pagina e la schedina lo "
+    + "ottengono, quindi l'unico che garantisce che lo ottengano uguale.",
+  );
+}
+
+// Nessuna seconda copia del de-vig o del riancoraggio. shinDevig era duplicata in tre script di
+// misura con tre bisezioni diverse, e anchorToMarket in due: due copie della stessa formula non
+// sollevano un'eccezione quando divergono, producono numeri plausibili — la famiglia di difetti
+// che e' costata di piu' a questo progetto (MISTAKES.md §3, §7, §27).
+for (const file of fs.readdirSync(path.join(root, "scripts")).filter((name) => name.endsWith(".mjs"))) {
+  const source = read(`scripts/${file}`);
+  // `anchorToMarket` non e' ancora in lista: scripts/diag_market_execution.mjs ne tiene una copia
+  // che de-viga in modo PROPORZIONALE, ed e' la copia con cui e' stato pubblicato il baseline su
+  // rho (media -0.0819, mediana -0.0847). Quella copia va cancellata insieme alla ri-registrazione
+  // del baseline con Shin (misurato: -0.0782 / -0.0786) — una cosa sola, in un commit suo, non
+  // due mescolate qui.
+  for (const name of ["shinDevig", "marketOddsFrom"]) {
+    assert.ok(
+      !new RegExp(`function\\s+${name}\\s*\\(`).test(source),
+      `scripts/${file}: ${name} vive in model.js. Importala, non ricopiarla.`,
+    );
+  }
+}
 
 const DAY = 86400000;
 const iso = (time) => new Date(time).toISOString().slice(0, 10);
@@ -285,5 +391,66 @@ assert.equal(explicit.lambdaAway, implicit.lambdaAway, "MODEL_INPUT_DEFAULTS div
 // backtest misura, senza perturbatori che la misura non vede.
 assert.equal(explicit.context.applied, false, "teamContext non deve più raggiungere il modello dai chiamanti");
 assert.equal(explicit.refereeBias, 0, "refereeStats non deve più raggiungere il modello dai chiamanti");
+
+// --- Senza linea, la previsione di oggi: R1 come proprietà, non come promessa ------------------
+assert.equal(explicit.marketAnchor, null, "senza quote non esiste una seconda previsione");
+assert.deepEqual(
+  explicit.probabilities, implicit.probabilities,
+  "`probabilities` resta endogena: è quella su cui schedina.js calcola l'EV, e un EV contro una "
+  + "probabilità ancorata al mercato vale zero per costruzione (MISTAKES.md §21)",
+);
+
+// --- marketOddsFrom proietta cinque prezzi e la linea, e nient'altro (R13) --------------------
+// La riga da cui legge contiene anche il risultato. Che non possa viaggiare con le quote è una
+// proprietà da verificare, non da promettere in un commento.
+const row = {
+  home_odds_close: 2.10, draw_odds_close: 3.40, away_odds_close: 3.60,
+  over25_odds_close: 1.85, under25_odds_close: 1.95,
+  home_odds: 2.05, draw_odds: 3.45, away_odds: 3.70,
+  over25_odds: 1.83, under25_odds: 1.97,
+  home_goals: 3, away_goals: 0, referee: "X",
+};
+const line = marketOddsFrom(row, "chiusura");
+assert.deepEqual(Object.keys(line).sort(), ["away", "draw", "home", "line", "over25", "under25"]);
+assert.equal(line.line, "chiusura");
+assert.equal(marketOddsFrom(row, "apertura").home, 2.05);
+assert.equal(marketOddsFrom(row, "nessuna"), null, "il regime endogeno è un valore dichiarato, non l'assenza dell'argomento");
+assert.equal(marketOddsFrom({ market_odds: { home: 2, draw: 3.4, away: 3.6, over25: 1.85, under25: 1.95 } }, "live").line, "live");
+assert.throws(
+  () => marketOddsFrom(row, "chiusura_max"),
+  /Linea di mercato non dichiarata/,
+  "una linea senza nome è un numero senza benchmark (MISTAKES.md §25)",
+);
+assert.equal(
+  marketOddsFrom({ home_odds_close: 2.10, draw_odds_close: 3.40, away_odds_close: 3.60 }, "chiusura"), null,
+  "una linea incompleta non si ancora a metà: l'ancoraggio ha tre vincoli, o ci sono tutti o non c'è",
+);
+
+// --- Con la linea: la previsione endogena non si muove, e l'ancoraggio è esatto ----------------
+const anchored = predictFromMatches(matches, { ...modelInputs(), ...identity, marketOdds: line });
+assert.equal(anchored.lambdaHome, implicit.lambdaHome, "la linea non deve toccare i lambda endogeni (R1)");
+assert.deepEqual(anchored.probabilities, implicit.probabilities, "`probabilities` resta endogena anche con la linea");
+assert.equal(anchored.marketAnchor.status, "anchored");
+assert.equal(anchored.marketAnchor.line, "chiusura", "il regime dichiara SEMPRE quale linea l'ha prodotto");
+assert.ok(anchored.marketAnchor.residual <= 1e-5, `residuo ${anchored.marketAnchor.residual} sopra 1e-5`);
+for (const key of ["home", "draw", "over25"]) {
+  const got = key === "over25" ? anchored.marketAnchor.probabilities.over25
+    : key === "home" ? anchored.marketAnchor.probabilities.homeWin
+      : anchored.marketAnchor.probabilities.draw;
+  assert.ok(Math.abs(got - anchored.marketAnchor.targets[key]) <= 1e-5, `marginale ${key} fuori da 1e-5`);
+}
+
+// --- Quando non si può ancorare, lo dice --------------------------------------------------------
+const implausible = predictFromMatches(matches, {
+  ...modelInputs(), ...identity,
+  marketOdds: { line: "live", home: 1.10, draw: 1.10, away: 1.10, over25: 1.10, under25: 1.10 },
+});
+assert.equal(implausible.marketAnchor.status, "unavailable");
+assert.equal(implausible.marketAnchor.reason, "margine-implausibile");
+assert.equal(implausible.marketAnchor.line, "live");
+assert.deepEqual(
+  implausible.probabilities, implicit.probabilities,
+  "un ancoraggio rifiutato ricade sulla previsione endogena invariata, non su una via di mezzo",
+);
 
 console.log("OK: produzione e misura passano gli stessi input a predictFromMatches (R14) — divergenza non reintroducibile in silenzio");

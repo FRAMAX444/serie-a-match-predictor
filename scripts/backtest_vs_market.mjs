@@ -12,7 +12,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { predictFromMatches } from "../model.js";
+import { predictFromMatches, marketOddsFrom } from "../model.js";
 import { modelInputs } from "../prediction-inputs.js";
 
 const SUPPORTED = new Set(["eng.1", "esp.1", "ita.1", "ger.1", "fra.1", "ucl", "uel", "uecl"]);
@@ -203,6 +203,11 @@ function evaluate(matches, options) {
         cutoffDate: match.date,
         competitionId: match.competition_id,
         season: match.season,
+        // Nessun ancoraggio, e non per dimenticanza: questo script misura il divario FRA il
+        // modello e la chiusura. Ancorare alla chiusura e poi misurarsi contro la chiusura
+        // misurerebbe il mercato contro se stesso, e il divario tenderebbe a zero per
+        // costruzione. La linea e' dichiarata perche' la scelta sia leggibile (R14).
+        marketOdds: marketOddsFrom(match, "nessuna"),
       });
       rows.push({ match, result });
     } catch (error) {

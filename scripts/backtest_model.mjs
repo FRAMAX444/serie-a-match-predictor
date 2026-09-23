@@ -2,7 +2,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { predictFromMatches } from "../model.js";
+import { predictFromMatches, marketOddsFrom, MARKET_LINES } from "../model.js";
 import { modelInputs } from "../prediction-inputs.js";
 
 const SUPPORTED = new Set(["eng.1", "esp.1", "ita.1", "ger.1", "fra.1", "ucl", "uel", "uecl"]);
@@ -11,7 +11,7 @@ const SUPPORTED = new Set(["eng.1", "esp.1", "ita.1", "ger.1", "fra.1", "ucl", "
 // divergono, il log loss stampato da questo script non descrive il modello che gira davvero
 // (R14). Fino al 27/08/2026 divergevano — vedi prediction-inputs.js. La partita è l'unica
 // cosa che cambia fra i due chiamanti, ed è l'unica scritta qui a mano.
-function predictionOptions(match) {
+function predictionOptions(match, line) {
   return {
     ...modelInputs(),
     homeTeam: match.home_team,
@@ -20,21 +20,34 @@ function predictionOptions(match) {
     cutoffDate: match.date,
     competitionId: match.competition_id,
     season: match.season,
+    // La linea di mercato della gara, dall'unica funzione che sa quali colonne sono quali. Con
+    // `--line nessuna` (il default) vale null e la previsione e' quella endogena di sempre: il
+    // numero storico resta confrontabile finche' non si chiede esplicitamente l'altro regime.
+    // Con `--line chiusura|apertura` la matrice viene riancorata, e il resoconto dice quale
+    // linea e su quante gare — un log loss che mescola gare ancorate e gare endogene senza
+    // dichiararne il conto descrive due modelli insieme (MISTAKES.md §25).
+    marketOdds: marketOddsFrom(match, line),
   };
 }
 
 function parseArguments(argv) {
-  const options = { file: "data/matches.json", competition: "", since: "", max: 1000 };
+  const options = { file: "data/matches.json", competition: "", since: "", max: 1000, line: "nessuna" };
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
     if (argument === "--competition") options.competition = String(argv[++index] || "");
     else if (argument === "--since") options.since = String(argv[++index] || "").slice(0, 10);
     else if (argument === "--max") options.max = Math.max(1, Number(argv[++index]) || 1000);
+    else if (argument === "--line") options.line = String(argv[++index] || "");
     else if (!argument.startsWith("--")) options.file = argument;
     else throw new Error(`Opzione non riconosciuta: ${argument}`);
   }
   if (options.competition && !SUPPORTED.has(options.competition)) {
     throw new Error(`Competizione non supportata: ${options.competition}`);
+  }
+  // `live` non esiste per una gara passata: il dataset ne conserva apertura e chiusura, non il
+  // prezzo del momento in cui si sarebbe guardata la pagina.
+  if (!["nessuna", "chiusura", "apertura"].includes(options.line)) {
+    throw new Error(`Linea non valida: ${options.line}. Usa ${Object.keys(MARKET_LINES).filter((name) => name !== "live").join(", ")}.`);
   }
   return options;
 }
@@ -74,7 +87,7 @@ function evaluate(matches, options) {
   for (const match of candidates) {
     if ((position.get(match) ?? 0) < 100) continue;
     try {
-      const result = predictFromMatches(chronological, predictionOptions(match));
+      const result = predictFromMatches(chronological, predictionOptions(match, options.line));
       rows.push({ match, result });
     } catch (error) {
       if (!/Dati recenti insufficienti/i.test(String(error?.message || error))) throw error;
@@ -87,7 +100,13 @@ function evaluate(matches, options) {
   let rankedProbabilityScore = 0;
   let correct = 0;
   rows.forEach(({ match, result }) => {
-    const probabilities = [result.probabilities.homeWin, result.probabilities.draw, result.probabilities.awayWin];
+    // Si misura la previsione che si MOSTRA: endogena senza linea, ancorata con una linea. Senza
+    // questa riga `--line chiusura` riporterebbe "ancorate: 200" e lo stesso identico log loss —
+    // un'opzione che dichiara di cambiare regime senza cambiarlo e' peggio di non averla.
+    // `probabilities` resta endogena nel risultato, ed e' giusto cosi': e' l'unico oggetto con
+    // cui abbia senso cercare valore. Qui non si cerca valore, si misura l'accuratezza.
+    const shown = result.marketAnchor?.status === "anchored" ? result.marketAnchor.probabilities : result.probabilities;
+    const probabilities = [shown.homeWin, shown.draw, shown.awayWin];
     const actual = resultIndex(match);
     logLoss -= Math.log(Math.max(1e-15, probabilities[actual]));
     probabilities.forEach((probability, index) => {
@@ -110,6 +129,10 @@ function evaluate(matches, options) {
     firstDate: rows[0].match.date,
     lastDate: rows.at(-1).match.date,
     competition: options.competition || "tutte",
+    // Quale linea, e su quante gare l'ancoraggio ha davvero funzionato. Senza questi due numeri
+    // il log loss qui sotto mescolerebbe gare ancorate e gare endogene sotto una cifra sola.
+    line: options.line,
+    anchored: rows.filter(({ result }) => result.marketAnchor?.status === "anchored").length,
     logLoss: round(logLoss / count),
     multiclassBrier: round(brier / count),
     rankedProbabilityScore: round(rankedProbabilityScore / count),

@@ -356,6 +356,219 @@ export function deriveMarkets(probabilities) {
   }));
 }
 
+// ------------------------------------------------------------- ancoraggio al mercato
+// Dove una linea di mercato esiste, la linea batte il modello, e il divario e' grande: sull'1X2
+// +0.0284 +/- 0.0026 di log loss (11.0 sigma) sull'intero dataset e +0.0219 +/- 0.0043 (5.1
+// sigma) sul solo holdout contro la chiusura, +0.0259 e +0.0204 contro l'apertura. Ogni mercato
+// derivato guadagna fra 2.7 e 9.9 sigma. Misura riproducibile senza rete con
+// `node scripts/diag_market_anchor.mjs`.
+//
+// VA LETTO PRIMA DI USARE QUESTI NUMERI. La matrice riancorata NON contiene informazione del
+// modello: anchorToMarket() risolve (lambda casa, lambda trasferta, rho) partendo da un seme
+// fisso e vincolandoli SOLO alle marginali del mercato. Del modello resta la famiglia
+// parametrica — Poisson piu' la correzione di Dixon-Coles — non una sua stima. E' la linea di
+// mercato riespressa come matrice dei punteggi.
+//
+// Da cui la conseguenza che decide come questo oggetto va usato: una probabilita' ancorata ha
+// valore atteso ESATTAMENTE nullo contro il mercato che l'ha prodotta. Cercarci dentro del
+// valore e' un ragionamento circolare che restituisce zero ovunque. Per quello servono le
+// probabilita' endogene, che restano in `probabilities` e non vengono mai riscritte: e' la
+// ragione per cui l'ancora vive in un campo suo e non al posto loro (MISTAKES.md §21, dove due
+// prezzi su scale diverse nello stesso campo sono gia' costati una schedina che mostrava un
+// +20% inesistente).
+
+// De-vig di Shin: assume che una frazione z del volume venga da scommettitori informati e toglie
+// il margine in modo NON proporzionale, restituendo piu' probabilita' al favorito. E' il metodo
+// giusto quando dal prezzo si vuole la probabilita' e non solo un ordinamento: sul nostro
+// dataset vale +0.00086 +/- 0.00026 (3.3 sigma) contro il de-vig proporzionale.
+//
+// Ripiega sul proporzionale quando la bisezione non ha un cambio di segno da cercare, cioe'
+// quando il margine e' troppo piccolo o negativo perche' il modello di Shin abbia soluzione.
+export function shinDevig(odds) {
+  const q = odds.map((value) => 1 / value);
+  const total = q.reduce((sum, value) => sum + value, 0);
+  const proportional = () => q.map((value) => value / total);
+  const implied = (z) => q.map((qi) => (Math.sqrt(z * z + 4 * (1 - z) * qi * qi / total) - z) / (2 * (1 - z)));
+  const excess = (z) => implied(z).reduce((sum, value) => sum + value, 0) - 1;
+  let low = 1e-9;
+  let high = 0.5;
+  if (excess(low) * excess(high) > 0) return proportional();
+  for (let step = 0; step < 200; step += 1) {
+    const middle = (low + high) / 2;
+    if (excess(low) * excess(middle) <= 0) high = middle; else low = middle;
+  }
+  const probabilities = implied((low + high) / 2);
+  const sum = probabilities.reduce((accumulated, value) => accumulated + value, 0);
+  return probabilities.map((value) => value / sum);
+}
+
+// Quote decimali grezze, col margine dentro, per la gara che si sta prevedendo. `line` dichiara
+// QUALE linea e': un numero che non dice contro quale prezzo e' stato calcolato non e'
+// interpretabile, ed e' esattamente il difetto di MISTAKES.md §25.
+const MARKET_ODDS_KEYS = Object.freeze(["home", "draw", "away", "over25", "under25"]);
+
+export function marketOddsUsable(marketOdds) {
+  if (!marketOdds || typeof marketOdds !== "object") return false;
+  return MARKET_ODDS_KEYS.every((key) => Number(marketOdds[key]) > 1);
+}
+
+// Riancoraggio: si risolvono lambda casa, lambda trasferta e rho perche' la matrice riproduca
+// ESATTAMENTE P(1), P(X) e P(Over 2.5) della linea. Tre incognite, tre vincoli: sistema
+// esattamente determinato, risolto con Newton e jacobiana alle differenze finite.
+//
+// La matrice nasce con gli stessi `maxGoals` e lo stesso `sharedDispersion` della matrice
+// endogena, cosi' che le due differiscano per i parametri e non per la griglia su cui sono
+// calcolate: confrontarle sarebbe altrimenti un confronto fra due troncature diverse.
+//
+// Ritorna null — mai una matrice approssimata — quando non converge entro 1e-5 sulle marginali
+// o quando il sistema diventa singolare. Il chiamante deve dichiarare il ripiego, non subirlo.
+export function anchorToMarket(marketOdds, options = {}) {
+  if (!marketOddsUsable(marketOdds)) return null;
+  const maxGoals = Number.isFinite(options.maxGoals) ? options.maxGoals : 8;
+  const sharedDispersion = Number.isFinite(options.sharedDispersion) ? options.sharedDispersion : 0;
+  const [home, draw] = shinDevig([marketOdds.home, marketOdds.draw, marketOdds.away]);
+  const [over] = shinDevig([marketOdds.over25, marketOdds.under25]);
+  const targets = [home, draw, over];
+
+  const margins = (matrix) => {
+    let homeWin = 0;
+    let level = 0;
+    let over25 = 0;
+    matrix.forEach((row, scored) => row.forEach((probability, conceded) => {
+      if (scored > conceded) homeWin += probability;
+      else if (scored === conceded) level += probability;
+      if (scored + conceded >= 3) over25 += probability;
+    }));
+    return [homeWin, level, over25];
+  };
+  const build = (v) => scoreMatrix(
+    Math.max(0.05, v[0]),
+    Math.max(0.05, v[1]),
+    maxGoals,
+    Math.max(-0.6, Math.min(0.6, v[2])),
+    sharedDispersion,
+  );
+  const residual = (v) => margins(build(v)).map((value, index) => value - targets[index]);
+
+  let x = [1.5, 1.2, -0.05];
+  for (let iteration = 0; iteration < 60; iteration += 1) {
+    const F = residual(x);
+    if (Math.max(...F.map(Math.abs)) < 1e-8) break;
+    const J = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+    for (let k = 0; k < 3; k += 1) {
+      const shifted = [...x];
+      shifted[k] += 1e-5;
+      const shiftedResidual = residual(shifted);
+      for (let row = 0; row < 3; row += 1) J[row][k] = (shiftedResidual[row] - F[row]) / 1e-5;
+    }
+    const A = J.map((row, index) => [...row, -F[index]]);
+    for (let index = 0; index < 3; index += 1) {
+      let pivot = index;
+      for (let row = index + 1; row < 3; row += 1) if (Math.abs(A[row][index]) > Math.abs(A[pivot][index])) pivot = row;
+      [A[index], A[pivot]] = [A[pivot], A[index]];
+      if (Math.abs(A[index][index]) < 1e-14) return null;
+      for (let row = 0; row < 3; row += 1) {
+        if (row === index) continue;
+        const factor = A[row][index] / A[index][index];
+        for (let column = index; column < 4; column += 1) A[row][column] -= factor * A[index][column];
+      }
+    }
+    const delta = [A[0][3] / A[0][0], A[1][3] / A[1][1], A[2][3] / A[2][2]];
+    const step = Math.min(1, 0.5 / Math.max(1e-9, Math.max(...delta.map(Math.abs))));
+    x = [x[0] + delta[0] * step, x[1] + delta[1] * step, Math.max(-0.6, Math.min(0.6, x[2] + delta[2] * step))];
+  }
+  const finalResidual = Math.max(...residual(x).map(Math.abs));
+  if (finalResidual > 1e-5) return null;
+  return {
+    matrix: build(x),
+    lambdaHome: x[0],
+    lambdaAway: x[1],
+    rho: x[2],
+    residual: finalResidual,
+    targets: { home: targets[0], draw: targets[1], over25: targets[2] },
+  };
+}
+
+// Margine totale della linea. Una riga con margine assurdo non solleva niente e non sembra
+// niente: produce numeri plausibili, che e' la firma dei difetti piu' costosi di questo
+// progetto. Gli estremi sono larghi di proposito — rifiutano una riga rotta, non un banco
+// aggressivo. Football-Data pubblica una manciata di righe con margine 0.42.
+const overround = (odds) => odds.reduce((sum, value) => sum + 1 / value, 0);
+
+// L'ancora come la vede chi prevede: dichiara SEMPRE il proprio stato. Il ripiego
+// sull'endogena esiste, ma chi lo subisce deve poterlo leggere — non riceverla credendola
+// ancorata (PROMPT-sessione-5.md §7.1: degradazione dichiarata, mai errore silenzioso).
+function buildMarketAnchor(marketOdds, hyperparameters) {
+  if (!marketOdds) return null;
+  const line = marketOdds.line ? String(marketOdds.line) : null;
+  if (!marketOddsUsable(marketOdds)) return { status: "unavailable", reason: "quote-incomplete", line };
+  const outcome = overround([marketOdds.home, marketOdds.draw, marketOdds.away]);
+  const totals = overround([marketOdds.over25, marketOdds.under25]);
+  if (outcome < 0.90 || outcome > 1.30 || totals < 0.90 || totals > 1.30) {
+    return { status: "unavailable", reason: "margine-implausibile", line };
+  }
+  const anchored = anchorToMarket(marketOdds, {
+    maxGoals: 8,
+    sharedDispersion: hyperparameters.sharedDispersion,
+  });
+  if (!anchored) return { status: "unavailable", reason: "non-convergente", line };
+  return {
+    status: "anchored",
+    // Quale linea ha prodotto questa previsione: chiusura, apertura o un prezzo vivo. Un
+    // numero che non dichiara il proprio riferimento non e' interpretabile (MISTAKES.md §25).
+    line,
+    devig: "shin",
+    probabilities: matrixProbabilities(anchored.matrix),
+    lambdaHome: anchored.lambdaHome,
+    lambdaAway: anchored.lambdaAway,
+    rho: anchored.rho,
+    residual: anchored.residual,
+    targets: anchored.targets,
+  };
+}
+
+
+// Le linee di mercato che esistono, e dove ciascuna vive. `live` e' la forma normalizzata che
+// schedina.js scrive sulla fixture dalle quote the-odds-api: prezzi piu' PRECOCI della chiusura,
+// quindi piu' deboli. E' l'unica asimmetria che resta fra produzione e misura, ed e' dichiarata
+// invece che nascosta.
+export const MARKET_LINES = Object.freeze({
+  chiusura: (row) => [row.home_odds_close, row.draw_odds_close, row.away_odds_close, row.over25_odds_close, row.under25_odds_close],
+  apertura: (row) => [row.home_odds, row.draw_odds, row.away_odds, row.over25_odds, row.under25_odds],
+  live: (row) => {
+    const odds = row.market_odds || {};
+    return [odds.home, odds.draw, odds.away, odds.over25, odds.under25];
+  },
+  // Nessun ancoraggio: e' un valore DICHIARATO e non l'assenza dell'argomento, perche' il
+  // regime endogeno e' una scelta di misura come le altre e va scritta. E' il default dei
+  // backtest, cosi' che il numero storico resti confrontabile finche' non si chiede l'altro.
+  nessuna: () => [],
+});
+
+// L'UNICO codice che sa quale colonna del dataset e' quale prezzo. Un secondo lettore delle
+// stesse colonne e' la forma esatta del difetto 9 (due matcher per le stesse partite) e del
+// difetto 1 (due costruttori di opzioni): due letture che divergono non sollevano niente,
+// producono numeri plausibili.
+//
+// `line` non ha default e una linea sconosciuta LANCIA: un numero ancorato che non dichiara
+// contro quale prezzo lo e' finisce confrontato col prezzo sbagliato (MISTAKES.md §25). Non
+// esiste ripiego automatico apertura<->chiusura, per la stessa ragione.
+//
+// R13: si leggono CINQUE prezzi e nient'altro. La riga da cui arrivano contiene anche il
+// risultato, e l'unico modo perche' non possa mai viaggiare insieme alle quote e' non nominarlo.
+// Tutte e tre le linee sono fissate prima del fischio d'inizio, quindi nessuna vede il futuro.
+export function marketOddsFrom(row, line) {
+  const read = MARKET_LINES[line];
+  if (!read) {
+    throw new Error(`Linea di mercato non dichiarata: ${line}. Usa ${Object.keys(MARKET_LINES).join(", ")}.`);
+  }
+  if (!row) return null;
+  const [home, draw, away, over25, under25] = read(row).map(Number);
+  const odds = { line, home, draw, away, over25, under25 };
+  return marketOddsUsable(odds) ? odds : null;
+}
+
+
 function xgValue(match, side) {
   const explicit = safe(match[`${side}_xg`], NaN);
   if (Number.isFinite(explicit)) return { value: explicit, actual: true };
@@ -1490,7 +1703,7 @@ export function estimatePlayerMarkets(player, teamLambda, teamRecentGoalsFor) {
 }
 
 export function predictFromMatches(matches, rawOptions) {
-  const options = { windowDays: 540, halfLifeDays: 120, competitionId: "", teamContext: null, hyperparameters: null, refereeHomeBias: 0, ...rawOptions };
+  const options = { windowDays: 540, halfLifeDays: 120, competitionId: "", teamContext: null, hyperparameters: null, refereeHomeBias: 0, marketOdds: null, ...rawOptions };
   if (!SUPPORTED_COMPETITION_IDS.has(options.competitionId)) {
     throw new Error("Competizione non supportata: usa i Big Five o una delle tre coppe UEFA.");
   }
@@ -1668,6 +1881,10 @@ export function predictFromMatches(matches, rawOptions) {
   const lambdaAway = clamp(calibrated.lambdaAway * awayContextAttack / homeContextDefense, ...LAMBDA_AWAY_BOUNDS);
 
   const probabilities = matrixProbabilities(scoreMatrix(lambdaHome, lambdaAway, 8, hyperparameters.rho, hyperparameters.sharedDispersion));
+  // L'ancora al mercato, quando una linea per questa gara esiste. Non tocca nulla di cio' che
+  // sta sopra: `probabilities`, `lambdaHome` e `lambdaAway` restano endogeni bit per bit, e
+  // senza quote questo campo vale null e la previsione e' identica a quella di prima (R1).
+  const marketAnchor = buildMarketAnchor(options.marketOdds, hyperparameters);
   return {
     lambdaHome,
     lambdaAway,
@@ -1676,6 +1893,11 @@ export function predictFromMatches(matches, rawOptions) {
     rawLambdaHome,
     rawLambdaAway,
     probabilities,
+    // Sempre presente, cosi' che un consumatore non debba distinguere "campo assente" da
+    // "ancora non disponibile": `null` significa che il chiamante non ha passato quote,
+    // { status: "unavailable", reason } che le ha passate e non si e' potuto ancorare, e
+    // { status: "anchored", ... } che l'ancora c'e'. Nessun ripiego muto sull'endogena.
+    marketAnchor,
     home,
     away,
     league,
@@ -1765,6 +1987,15 @@ export function predictMatchdayFromMatches(matches, fixtures, options = {}) {
       // esplicito in options ha comunque la precedenza, per il caso "lo so in anticipo e
       // lo passo a mano" che il README già documenta.
       refereeHomeBias: options.refereeHomeBias ?? refereeBiasFor(fixture, options.refereeStats),
+      // Per partita per la stessa ragione, e da QUI soltanto: e' l'unico punto in cui i due
+      // chiamanti che prevedono un turno (app.js e schedina.js) ottengono una linea, quindi non
+      // possono ottenerla in due modi diversi ne' passarne una a mano (R14). Non c'e' la via di
+      // fuga `options.marketOdds ?? ...` che refereeHomeBias concede: per le quote non esiste il
+      // caso "le so in anticipo e le passo a mano", mentre esiste eccome quello in cui la pagina
+      // ne passa una e la misura no. "live" e' l'unica linea che una fixture puo' portare; le
+      // linee storiche le passano gli script che prevedono una gara alla volta, esplicitamente.
+      // Senza `fixture.market_odds` il risultato e' null e la previsione resta endogena.
+      marketOdds: marketOddsFrom(fixture, "live"),
       homeTeam: fixture.home_team,
       awayTeam: fixture.away_team,
       date: fixture.date,

@@ -12,17 +12,18 @@
 //   node scripts/diag_market_execution.mjs --only prezzo      # solo cio' che non richiede il modello
 //   node scripts/diag_market_execution.mjs --since 2024-08-01
 //
-// Sezioni: prezzo, miscela, clv, combo, dipendenza, multipla.
+// Sezioni: prezzo, miscela, clv, combo, dipendenza, rho, multipla.
 // Le prime e le ultime due non richiedono il modello e costano un secondo; miscela, clv e combo
-// devono prevedere ogni gara e costano ~70s su 5000 gare.
+// devono prevedere ogni gara e costano ~70s su 5000 gare; rho riancora dieci volte ogni gara
+// e costa ~35s.
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { predictFromMatches, scoreMatrix } from "../model.js";
+import { predictFromMatches, scoreMatrix, shinDevig } from "../model.js";
 import { modelInputs } from "../prediction-inputs.js";
 
 const SUPPORTED = new Set(["eng.1", "esp.1", "ita.1", "ger.1", "fra.1", "ucl", "uel", "uecl"]);
-const SECTIONS = ["prezzo", "miscela", "clv", "combo", "dipendenza", "multipla"];
+const SECTIONS = ["prezzo", "miscela", "clv", "combo", "dipendenza", "rho", "multipla"];
 
 // Finestre di R7: la stima sta fino al 2025-05-31, l'holdout parte dal 2025-07-08 e non e' mai
 // stato usato per stimare nulla. Un peso di miscela scelto sul primo e letto sul secondo e' la
@@ -72,22 +73,6 @@ const devig = (odds) => {
 // Shin: assume che una frazione z del volume venga da scommettitori informati e corregge il
 // margine in modo NON proporzionale, restituendo piu' probabilita' al favorito. E' il metodo
 // standard quando il favourite-longshot bias conta, cioe' quando si scommette e non si misura.
-function shinDevig(odds) {
-  const q = odds.map((value) => 1 / value);
-  const Q = q.reduce((sum, value) => sum + value, 0);
-  const implied = (z) => q.map((qi) => (Math.sqrt(z * z + 4 * (1 - z) * qi * qi / Q) - z) / (2 * (1 - z)));
-  const f = (z) => implied(z).reduce((sum, value) => sum + value, 0) - 1;
-  let low = 1e-9;
-  let high = 0.5;
-  if (f(low) * f(high) > 0) return devig(odds);
-  for (let step = 0; step < 200; step += 1) {
-    const middle = (low + high) / 2;
-    if (f(low) * f(middle) <= 0) high = middle; else low = middle;
-  }
-  const p = implied((low + high) / 2);
-  const total = p.reduce((sum, value) => sum + value, 0);
-  return p.map((value) => value / total);
-}
 
 // Righe con quote massime incoerenti: Football-Data pubblica MaxC come massimo fra i book
 // tracciati, e una manciata di righe contiene un prezzo palesemente errato (overround 0.42).
@@ -464,20 +449,15 @@ function anchorToMarket(targets) {
   return { matrix: build(x), lambdaHome: x[0], lambdaAway: x[1], rho: x[2] };
 }
 
-function sectionDipendenza(rows) {
-  console.log("\n=== DIPENDENZA — quanto e' esatta la struttura di dipendenza del modello? ===\n");
-  console.log("La matrice viene riancorata alle marginali di mercato: P(1), P(X) e P(Over 2.5) diventano");
-  console.log("identiche a quelle della linea di chiusura. Cio' che resta del modello e' solo la");
-  console.log("dipendenza fra i due punteggi. Se predice la congiunta meglio del prodotto, quella");
-  console.log("dipendenza e' informazione — su una dimensione dove il modello non e' indietro.\n");
-  const usable = rows.filter((m) => Number(m.over25_odds_close) > 1 && Number(m.under25_odds_close) > 1);
+// Si scartano le coppie logicamente annidate o incompatibili (1 e 1X, X e 12): il loro R vale
+// 1/p per costruzione e non dice nulla sulla dipendenza. Il paniere dipende dal campione, quindi
+// va costruito una volta sola e condiviso da chi lo confronta.
+function dependencePairs(usable) {
   const names = Object.keys(DEPENDENCE_EVENTS);
   const pairs = [];
   for (let i = 0; i < names.length; i += 1) {
     for (let j = i + 1; j < names.length; j += 1) {
       const [A, B] = [names[i], names[j]];
-      // Si scartano le coppie logicamente annidate o incompatibili (1 e 1X, X e 12): il loro R
-      // vale 1/p per costruzione e non dice nulla sulla dipendenza.
       const both = usable.filter((m) => DEPENDENCE_EVENTS[A](m.home_goals, m.away_goals) && DEPENDENCE_EVENTS[B](m.home_goals, m.away_goals)).length;
       const onlyA = usable.filter((m) => DEPENDENCE_EVENTS[A](m.home_goals, m.away_goals)).length;
       const onlyB = usable.filter((m) => DEPENDENCE_EVENTS[B](m.home_goals, m.away_goals)).length;
@@ -485,6 +465,17 @@ function sectionDipendenza(rows) {
       pairs.push([A, B]);
     }
   }
+  return pairs;
+}
+
+function sectionDipendenza(rows) {
+  console.log("\n=== DIPENDENZA — quanto e' esatta la struttura di dipendenza del modello? ===\n");
+  console.log("La matrice viene riancorata alle marginali di mercato: P(1), P(X) e P(Over 2.5) diventano");
+  console.log("identiche a quelle della linea di chiusura. Cio' che resta del modello e' solo la");
+  console.log("dipendenza fra i due punteggi. Se predice la congiunta meglio del prodotto, quella");
+  console.log("dipendenza e' informazione — su una dimensione dove il modello non e' indietro.\n");
+  const usable = rows.filter((m) => Number(m.over25_odds_close) > 1 && Number(m.under25_odds_close) > 1);
+  const pairs = dependencePairs(usable);
   const accumulator = new Map(pairs.map((p) => [p.join("+"), { n: 0, observed: 0, joint: 0, product: 0, lossJoint: 0, lossProduct: 0 }]));
   const rhos = [];
   let solved = 0;
@@ -558,6 +549,179 @@ function sectionDipendenza(rows) {
   console.log("una singola coppia; le colonne 'err.rel' per coppia dicono dove la matrice sbaglia davvero.");
 }
 
+// ---------------------------------------------------------------- sezione: rho
+// T3. anchorToMarket() qui sopra risolve TRE incognite contro TRE vincoli: rho e' gia' determinato
+// dal mercato e non e' piu' un parametro libero, quindi in quella forma la domanda "quale rho
+// prevede meglio la congiunta?" non e' nemmeno ponibile. Qui l'ancoraggio e' a rho FISSO — due
+// incognite (lambda casa, lambda trasferta) contro due vincoli (P(1), P(X)) — cosi' OGNI braccio
+// riproduce esattamente le stesse marginali 1X2 e l'unica differenza fra i bracci e' la struttura
+// di dipendenza.
+//
+// Conseguenza da dichiarare: con due soli vincoli P(Over 2.5) resta LIBERA e si muove con rho
+// (rho sposta massa sui punteggi bassi, quindi abbassa il totale atteso a marginali 1X2 fisse).
+// Il log loss sulle 70 coppie include percio' anche la dimensione del totale, e per questo il log
+// loss sull'Over/Under 2.5 e' riportato a parte: e' la quota di differenza che NON viene dalla
+// dipendenza.
+const RHO_GRID = [0, -0.02, -0.04, -0.06, -0.08, -0.10, -0.12, -0.14, -0.16, -0.20];
+const PRODUCTION_RHO = -0.04;
+
+function anchorFixedRho(targets, rho, seed) {
+  const build = (v) => scoreMatrix(Math.max(0.05, v[0]), Math.max(0.05, v[1]), 10, rho, 0);
+  const residual = (v) => {
+    let home = 0;
+    let draw = 0;
+    build(v).forEach((row, h) => row.forEach((p, a) => {
+      if (h > a) home += p; else if (h === a) draw += p;
+    }));
+    return [home - targets[0], draw - targets[1]];
+  };
+  let x = [seed[0], seed[1]];
+  for (let iteration = 0; iteration < 60; iteration += 1) {
+    const F = residual(x);
+    if (Math.max(Math.abs(F[0]), Math.abs(F[1])) < 1e-12) break;
+    const J = [[0, 0], [0, 0]];
+    for (let k = 0; k < 2; k += 1) {
+      const shifted = [...x];
+      shifted[k] += 1e-6;
+      const Fp = residual(shifted);
+      J[0][k] = (Fp[0] - F[0]) / 1e-6;
+      J[1][k] = (Fp[1] - F[1]) / 1e-6;
+    }
+    const det = J[0][0] * J[1][1] - J[0][1] * J[1][0];
+    if (!Number.isFinite(det) || Math.abs(det) < 1e-14) return null;
+    const delta = [(-F[0] * J[1][1] + F[1] * J[0][1]) / det, (F[0] * J[1][0] - F[1] * J[0][0]) / det];
+    const step = Math.min(1, 0.5 / Math.max(1e-9, Math.max(Math.abs(delta[0]), Math.abs(delta[1]))));
+    x = [Math.max(0.05, x[0] + delta[0] * step), Math.max(0.05, x[1] + delta[1] * step)];
+  }
+  const F = residual(x);
+  if (Math.max(Math.abs(F[0]), Math.abs(F[1])) > 1e-9) return null;
+  return { matrix: build(x), lambdaHome: x[0], lambdaAway: x[1] };
+}
+
+function sectionRho(rows) {
+  console.log("\n=== RHO — quale dipendenza prevede meglio la congiunta, a marginali 1X2 identiche? ===\n");
+  console.log("Ancoraggio a rho FISSO: due incognite (lambda casa, lambda trasferta) contro due vincoli");
+  console.log("(P(1), P(X) della chiusura de-vigata in proporzione). Ogni riga della griglia riproduce le");
+  console.log("STESSE marginali 1X2, quindi il log loss dell'1X2 e' identico per costruzione e l'unica");
+  console.log("differenza e' la struttura della congiunta. P(Over 2.5) resta libera: la sua quota di");
+  console.log("differenza e' isolata nella colonna O/U.\n");
+  console.log("Il rho si sceglie sul TRAINING e si giudica sull'HOLDOUT. Sceglierlo sull'holdout e' il");
+  console.log("sovradattamento che PROMPT-sessione-5.md §1.1 documenta.\n");
+
+  const usable = rows.filter((m) => Number(m.over25_odds_close) > 1 && Number(m.under25_odds_close) > 1);
+  const pairs = dependencePairs(usable);
+  // Le coppie si fissano sull'intero campione, non per finestra: rifiltrarle su training e holdout
+  // separatamente cambierebbe il paniere fra i due e renderebbe i numeri non confrontabili.
+  const side = 11; // maxGoals = 10, come anchorToMarket
+  const cells = [];
+  for (let h = 0; h < side; h += 1) for (let a = 0; a < side; a += 1) cells.push([h, a]);
+  const pairCells = pairs.map(([A, B]) => cells
+    .map(([h, a], index) => (DEPENDENCE_EVENTS[A](h, a) && DEPENDENCE_EVENTS[B](h, a) ? index : -1))
+    .filter((index) => index >= 0));
+  const overCells = cells.map(([h, a], index) => (h + a >= 3 ? index : -1)).filter((index) => index >= 0);
+
+  const samples = [];
+  let failed = 0;
+  let marginalError = 0;
+  for (const match of usable) {
+    const [pHome, pDraw] = devig([match.home_odds_close, match.draw_odds_close, match.away_odds_close]);
+    const flats = [];
+    let seed = [1.5, 1.2];
+    for (const rho of RHO_GRID) {
+      const anchored = anchorFixedRho([pHome, pDraw], rho, seed);
+      if (!anchored) break;
+      seed = [anchored.lambdaHome, anchored.lambdaAway];
+      flats.push(anchored.matrix.flat());
+    }
+    // Una gara entra solo se e' risolta su TUTTA la griglia: bracci con campioni diversi non sono
+    // appaiabili, ed e' il confronto appaiato che porta il segnale.
+    if (flats.length !== RHO_GRID.length) { failed += 1; continue; }
+    const hits = pairs.map(([A, B]) => (
+      DEPENDENCE_EVENTS[A](match.home_goals, match.away_goals) && DEPENDENCE_EVENTS[B](match.home_goals, match.away_goals)
+    ));
+    const over = match.home_goals + match.away_goals >= 3;
+    const pairLoss = [];
+    const ouLoss = [];
+    for (const flat of flats) {
+      let sum = 0;
+      let home = 0;
+      let draw = 0;
+      for (let index = 0; index < flat.length; index += 1) {
+        const [h, a] = cells[index];
+        if (h > a) home += flat[index]; else if (h === a) draw += flat[index];
+      }
+      marginalError = Math.max(marginalError, Math.abs(home - pHome), Math.abs(draw - pDraw));
+      for (let p = 0; p < pairCells.length; p += 1) {
+        let probability = 0;
+        for (const index of pairCells[p]) probability += flat[index];
+        sum += hits[p] ? -Math.log(Math.max(1e-12, probability)) : -Math.log(Math.max(1e-12, 1 - probability));
+      }
+      pairLoss.push(sum / pairCells.length);
+      let pOver = 0;
+      for (const index of overCells) pOver += flat[index];
+      ouLoss.push(over ? -Math.log(Math.max(1e-12, pOver)) : -Math.log(Math.max(1e-12, 1 - pOver)));
+    }
+    samples.push({ date: String(match.date), pairLoss, ouLoss });
+  }
+
+  const train = samples.filter((s) => s.date <= TRAIN_END);
+  const holdout = samples.filter((s) => s.date >= HOLDOUT_START);
+  console.log(`gare riancorate su tutta la griglia: ${samples.length}/${usable.length}`
+    + (failed ? ` (${failed} scartate: almeno un rho non converge)` : ""));
+  console.log(`coppie: ${pairs.length} · training ${train.length} gare (fino al ${TRAIN_END}) · holdout ${holdout.length} gare (dal ${HOLDOUT_START})`);
+  console.log(`scostamento massimo delle marginali 1X2 dal bersaglio, su tutta la griglia: ${marginalError.toExponential(1)}\n`);
+
+  const column = (group, field, index) => mean(group.map((s) => s[field][index]));
+  console.log("  rho   | logLoss coppie train | logLoss O/U train | logLoss coppie HOLDOUT | logLoss O/U HOLDOUT");
+  console.log("-".repeat(100));
+  let best = 0;
+  for (let g = 0; g < RHO_GRID.length; g += 1) {
+    if (column(train, "pairLoss", g) < column(train, "pairLoss", best)) best = g;
+  }
+  const production = RHO_GRID.indexOf(PRODUCTION_RHO);
+  for (let g = 0; g < RHO_GRID.length; g += 1) {
+    const mark = g === production ? " <- produzione" : (g === best ? " <- migliore sul training" : "");
+    console.log(
+      ` ${RHO_GRID[g].toFixed(2).padStart(5)} |        ${column(train, "pairLoss", g).toFixed(5)}       |      ${column(train, "ouLoss", g).toFixed(5)}      |`
+      + `        ${column(holdout, "pairLoss", g).toFixed(5)}         |       ${column(holdout, "ouLoss", g).toFixed(5)}${mark}`,
+    );
+  }
+
+  const paired = (group, field, index = best) => {
+    const differences = group.map((s) => s[field][production] - s[field][index]);
+    const average = mean(differences);
+    const error = standardError(differences);
+    return { average, error, sigma: average / error };
+  };
+  console.log(`\nconfronto APPAIATO gara per gara: rho = ${PRODUCTION_RHO.toFixed(2)} (produzione) contro rho = ${RHO_GRID[best].toFixed(2)} (migliore sul training).`);
+  console.log("Positivo = il rho scelto sul training prevede meglio. L'unita' e' la gara, non la coppia:");
+  console.log("le 70 coppie della stessa gara sono fortemente correlate e contarle come indipendenti");
+  console.log("sgonfierebbe l'errore standard di circa un ordine di grandezza.\n");
+  for (const [label, group] of [["training", train], ["HOLDOUT", holdout]]) {
+    const pair = paired(group, "pairLoss");
+    const ou = paired(group, "ouLoss");
+    console.log(
+      `  ${label.padEnd(9)} n=${String(group.length).padStart(4)}  coppie ${pair.average >= 0 ? "+" : ""}${pair.average.toFixed(5)} ± ${pair.error.toFixed(5)}`
+      + ` (${pair.sigma.toFixed(2).padStart(6)}σ)  |  O/U ${ou.average >= 0 ? "+" : ""}${ou.average.toFixed(5)} ± ${ou.error.toFixed(5)} (${ou.sigma.toFixed(2).padStart(6)}σ)`,
+    );
+  }
+  console.log("\nlo stesso confronto appaiato sull'holdout per OGNI rho della griglia: dice se una scelta");
+  console.log("diversa avrebbe superato la soglia, non solo quella fatta sul training.");
+  for (let g = 0; g < RHO_GRID.length; g += 1) {
+    if (g === production) continue;
+    const pair = paired(holdout, "pairLoss", g);
+    console.log(
+      `  rho = ${RHO_GRID[g].toFixed(2).padStart(5)}   coppie ${pair.average >= 0 ? "+" : ""}${pair.average.toFixed(5)} ± ${pair.error.toFixed(5)} (${pair.sigma.toFixed(2).padStart(6)}σ)`,
+    );
+  }
+
+  const verdict = paired(holdout, "pairLoss");
+  console.log(`\nSOGLIA PRE-REGISTRATA (PROMPT-sessione-5.md §5, P4): ≥ +0.0020 sull'holdout a ≥ 2σ.`);
+  console.log(`  misurato: ${verdict.average >= 0 ? "+" : ""}${verdict.average.toFixed(5)} a ${verdict.sigma.toFixed(2)}σ`
+    + `  ->  ${(verdict.average >= 0.0020 && verdict.sigma >= 2) ? "SUPERATA" : "NON superata"}`);
+  console.log("Il verdetto sul parametro lo prende il coordinatore: qui si riporta il numero.");
+}
+
 // ---------------------------------------------------------------- main
 try {
   const options = parseArguments(process.argv.slice(2));
@@ -581,6 +745,7 @@ try {
   if (wants("multipla")) sectionMultipla(rows);
   if (wants("combo")) sectionCombo(rows);
   if (wants("dipendenza")) sectionDipendenza(rows);
+  if (wants("rho")) sectionRho(rows);
 
   if (wants("miscela") || wants("clv")) {
     if (options.only) console.error("(previsione del modello su ogni gara: qualche decina di secondi)");

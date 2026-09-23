@@ -330,9 +330,13 @@ export function marketOddsForKey(odds, key) {
 // Quote medie di mercato 1/X/2 per ogni partita del turno. Le fixture senza corrispondenza
 // tornano con odds: null sui tre esiti — restano visibili come "senza quote" invece di sparire,
 // e `oddsEventId` dice a quale evento sono state agganciate quelle che ce l'hanno.
-export function matchOddsToFixtures(predictions, oddsEvents) {
-  const assigned = assignEventsToFixtures(predictions.map(({ fixture }) => fixture), oddsEvents);
-  return predictions.map(({ fixture, result }, index) => {
+// Le quote per fixture, nell'ordine delle fixture. Estratta da matchOddsToFixtures perche'
+// generateSlip ne ha bisogno PRIMA di prevedere — le quote ancorano la matrice — e rifare
+// l'assegnazione una seconda volta sarebbe un secondo matcher sulle stesse partite, che e'
+// esattamente il difetto 9 di MISTAKES.md.
+export function oddsByFixture(fixtures, oddsEvents) {
+  const assigned = assignEventsToFixtures(fixtures, oddsEvents);
+  return fixtures.map((fixture, index) => {
     const event = assigned.get(index) || null;
     const odds = event
       ? marketPricesFromEvent(event)
@@ -340,7 +344,36 @@ export function matchOddsToFixtures(predictions, oddsEvents) {
         home: null, draw: null, away: null, totals: {},
         btts: { yes: null, no: null }, teamScores: { home: null, away: null },
       };
-    return { fixture, result, odds, matched: Boolean(event), oddsEventId: event?.id ?? null };
+    return { odds, matched: Boolean(event), oddsEventId: event?.id ?? null };
+  });
+}
+
+export function matchOddsToFixtures(predictions, oddsEvents) {
+  const priced = oddsByFixture(predictions.map(({ fixture }) => fixture), oddsEvents);
+  return predictions.map(({ fixture, result }, index) => ({ fixture, result, ...priced[index] }));
+}
+
+// La linea 1X2 + Over/Under 2.5 nella forma che model.js consuma, scritta sulla fixture perche'
+// predictMatchdayFromMatches la legga con marketOddsFrom(fixture, "live") — l'unico punto da cui
+// una previsione di turno ottiene una linea, quindi l'unico da cui la pagina e la misura non
+// possono ottenerne due diverse (R14).
+//
+// Copia con spread, mai mutazione: `payload.matches` e il calendario non vengono toccati.
+//
+// Senza chiave API, senza evento agganciato o senza il totale 2.5 il campo manca e la previsione
+// resta endogena, com'e' oggi bit per bit. Le quote restano un MIGLIORAMENTO opzionale e non un
+// prerequisito, che e' il principio gia' scritto in generateSlip.
+function pricedFixtures(fixtures, priced) {
+  return fixtures.map((fixture, index) => {
+    const odds = priced?.[index]?.odds;
+    const totals = odds?.totals?.["2.5"] || {};
+    if (!(odds?.home && odds?.draw && odds?.away && totals.over && totals.under)) return fixture;
+    return {
+      ...fixture,
+      market_odds: {
+        home: odds.home, draw: odds.draw, away: odds.away, over25: totals.over, under25: totals.under,
+      },
+    };
   });
 }
 
@@ -376,6 +409,17 @@ export function buildMarketCandidates(entries, options = {}) {
   entries.forEach((entry, fixtureIndex) => {
     const fixtureLabel = `${entry.fixture.home_team} - ${entry.fixture.away_team}`;
     const reliability = clampReliability(entry.result?.quality?.score);
+    // Le probabilita' ANCORATE alla linea di mercato, quando la gara ne ha una. Sono la stima
+    // migliore di quanto una selezione sia probabile, e sono inutilizzabili per decidere su cosa
+    // scommettere: contro il mercato che le ha prodotte il loro valore atteso e' esattamente
+    // ZERO per costruzione. Vivono in un campo separato e non entrano ne' nel vincolo ne'
+    // nell'obiettivo di slip-builder.js (MISTAKES.md §21, PROMPT-sessione-5.md §3 T1).
+    const anchored = entry.result.marketAnchor?.status === "anchored"
+      ? new Map(deriveMarkets(entry.result.marketAnchor.probabilities).map((item) => [item.key, item.probability]))
+      : null;
+    // ENDOGENA, e non e' un dettaglio: e' cio' che sceglie la giocata. `entry.result.probabilities`
+    // non cambia mai regime — model.js non la riscrive quando ancora — quindi qui non c'e' nulla
+    // da ricordarsi di fare, ed e' il motivo per cui l'ancora vive in un campo suo.
     deriveMarkets(entry.result.probabilities).forEach((market) => {
       if (!allowed.has(market.group) || market.probability < minLegProbability) return;
       const liveOdds = marketOddsForKey(entry.odds, market.key);
@@ -394,7 +438,13 @@ export function buildMarketCandidates(entries, options = {}) {
         group: market.group,
         label: marketLabel(market, entry.fixture),
         probability: market.probability,
+        // Solo da mostrare: non entra nell'EV, nel punteggio della schedina o in slip-builder.js.
+        shownProbability: anchored?.get(market.key) ?? null,
+        anchorLine: entry.result.marketAnchor?.line ?? null,
         odds: usesLiveOdds ? liveOdds : market.fairOdds,
+        // Resta la quota equa ENDOGENA anche quando la gara e' ancorata: e' il ripiego usato come
+        // `odds` quando il banco non prezza quel mercato, e una fairOdds ancorata farebbe apparire
+        // del valore dove c'e' solo il mercato che si specchia.
         fairOdds: market.fairOdds,
         source: usesLiveOdds ? "market" : "model",
         reliability,
@@ -847,22 +897,27 @@ export async function generateSlip({
     );
   }
 
-  const { predictions } = predictMatchdayFromMatches(payload.matches, fixtures, { ...modelInputs(), competitionId });
-
-  // Le quote reali sono un MIGLIORAMENTO opzionale, non un prerequisito: senza chiave API la
-  // schedina si costruisce lo stesso sulle quote eque del modello. Prima era il contrario — la
-  // pagina non produceva nulla senza chiave — il che rendeva inutilizzabile la funzione
-  // principale del sito per chiunque non avesse un account su un servizio di quote.
-  let entries = predictions.map(({ fixture, result }) => ({
-    fixture, result, odds: { home: null, draw: null, away: null }, matched: false,
-  }));
+  // Le quote arrivano PRIMA della previsione, e l'ordine non e' un dettaglio di stile: con una
+  // linea leggibile la matrice dei punteggi viene riancorata alle marginali di mercato, quindi le
+  // quote sono un input del modello e non piu' solo un prezzo da affiancare. Fino al 22/09/2026
+  // si prevedeva e poi si scaricava.
+  //
+  // Le quote reali restano un MIGLIORAMENTO opzionale, non un prerequisito: senza chiave API la
+  // schedina si costruisce lo stesso sulle quote eque del modello, sulla previsione endogena.
+  // Prima era il contrario — la pagina non produceva nulla senza chiave — il che rendeva
+  // inutilizzabile la funzione principale del sito per chiunque non avesse un account su un
+  // servizio di quote.
+  let priced = null;
   let sportTitle = null;
   let oddsError = null;
   let requestEstimate = 0;
+  let leagueMarkets = [];
+  let eventMarkets = [];
+  let discovery = null;
   const cacheLedger = { force: forceRefresh, fromCache: 0, fetched: 0, oldestMinutes: 0 };
   if (apiKey) {
     try {
-      const discovery = sportKey
+      discovery = sportKey
         ? { key: sportKey, title: sportKey, candidates: [] }
         : await discoverSportKey(apiKey, competitionId);
       if (!discovery.key) {
@@ -871,27 +926,46 @@ export async function generateSlip({
         throw error;
       }
       sportTitle = discovery.title;
-      const leagueMarkets = oddsMarketsFor(marketGroups);
+      leagueMarkets = oddsMarketsFor(marketGroups);
       const leagueOdds = await fetchOddsCached(
         leagueOddsKey(discovery.key, matchday.round, leagueMarkets),
         () => fetchLeagueOdds(apiKey, discovery.key, leagueMarkets),
         cacheLedger,
       );
-      entries = matchOddsToFixtures(predictions, leagueOdds);
-      // I mercati non-featured richiedono una chiamata per partita: si fanno solo se uno dei
-      // gruppi selezionati li consuma davvero, e il preventivo finisce nel resoconto.
-      const eventMarkets = eventMarketsFor(marketGroups, playerMarkets);
-      if (eventMarkets.length) {
-        const coverage = await collectEventOdds(apiKey, discovery.key, entries, eventMarkets, cacheLedger);
-        entries.playerIndexByFixture = coverage.playerIndexByFixture;
-        entries.eventOddsCoverage = coverage.summary;
-      }
+      // Una sola assegnazione evento -> fixture per tutto il turno: la stessa che alimenta la
+      // linea di mercato del modello e i prezzi mostrati. Due matcher sulle stesse partite
+      // davano risultati diversi ed e' il difetto 9; ora l'incoerenza sposterebbe anche la
+      // previsione, non solo il prezzo.
+      priced = oddsByFixture(fixtures, leagueOdds);
+      eventMarkets = eventMarketsFor(marketGroups, playerMarkets);
       requestEstimate = estimateOddsRequests(fixtures.length, leagueMarkets, eventMarkets);
     } catch (error) {
       if (error.candidates) throw error; // scelta manuale del campionato: la gestisce la pagina
       // Le quote sono opzionali: un errore di rete non deve impedire la generazione della
       // schedina, ma va riportato invece di far sembrare "modello" una quota mancante.
       oddsError = error.message;
+    }
+  }
+
+  const { predictions } = predictMatchdayFromMatches(
+    payload.matches,
+    pricedFixtures(fixtures, priced),
+    { ...modelInputs(), competitionId }
+  );
+  let entries = predictions.map(({ fixture, result }, index) => ({
+    fixture, result, ...(priced?.[index] || { odds: { home: null, draw: null, away: null }, matched: false }),
+  }));
+
+  // I mercati non-featured richiedono una chiamata per partita: si fanno solo se uno dei gruppi
+  // selezionati li consuma davvero, e il preventivo finisce nel resoconto. Restano DOPO la
+  // previsione: non contengono 1X2 ne' il totale 2.5, quindi non entrano nell'ancoraggio.
+  if (apiKey && priced && eventMarkets.length) {
+    try {
+      const coverage = await collectEventOdds(apiKey, discovery.key, entries, eventMarkets, cacheLedger);
+      entries.playerIndexByFixture = coverage.playerIndexByFixture;
+      entries.eventOddsCoverage = coverage.summary;
+    } catch (error) {
+      oddsError = oddsError || error.message;
     }
   }
 

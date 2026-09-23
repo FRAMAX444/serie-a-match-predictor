@@ -40,6 +40,43 @@ export const FIXTURE_IDENTITY_KEYS = Object.freeze([
   "season",
 ]);
 
+// Terza categoria, e l'unica che serviva davvero: numeri che DESCRIVONO la gara, cambiano a
+// ogni chiamata come l'identità, ma che il modello USA per prevedere.
+//
+// `marketOdds` — la linea di mercato della gara, nella forma che produce marketOddsFrom(riga,
+//   linea) in model.js. Con una linea leggibile la matrice dei punteggi viene riancorata alle
+//   marginali del mercato e il risultato porta `marketAnchor`; senza, `marketAnchor` è null e la
+//   previsione è quella endogena di sempre, bit per bit.
+//
+// Perché NON in MODEL_INPUT_DEFAULTS, che è dove PROMPT-sessione-5.md §3 T1 lo chiedeva. Due
+// ragioni, e la seconda è quella grave:
+//   1. modelInputs() coerce ogni override con Number() e scarta ciò che non è finito e > 0: un
+//      oggetto quote verrebbe sostituito dal default in SILENZIO, cioè un chiamante crederebbe
+//      di ancorare e non ancorerebbe. Il contratto lo rifiuta rumorosamente, ed è verificato.
+//   2. MODEL_INPUT_DEFAULTS dà una garanzia di CANALE, non di VALORE: assicura che un input
+//      dichiarato esista su entrambi i lati, non che i due lati gli diano lo stesso valore —
+//      app.js passa le preferenze dell'utente, i backtest i default, e per windowDays è voluto.
+//      Per la linea un valore diverso non è una preferenza: è un modello ancorato da una parte
+//      ed endogeno dall'altra, cioè MISTAKES.md §1 un piano più sotto, con ogni assert di oggi
+//      ancora verde perché il confronto fra chiamanti confronta le CHIAVI.
+//
+// E perché NON in FIXTURE_IDENTITY_KEYS: quelle chiavi sono ESENTI dal confronto fra chiamanti,
+// quindi la divergenza diventerebbe scrivibile alla luce del sole. È il buco che R14 chiude.
+//
+// La garanzia che sostituisce quella di MODEL_INPUT_DEFAULTS è più stretta, e vincola il VALORE:
+// chi prevede una gara alla volta scrive `marketOdds: marketOddsFrom(<riga>, <linea>)` e nient'
+// altro — tests/prediction-input-parity.test.js controlla l'ESPRESSIONE, non solo la chiave — e
+// chi prevede un turno non lo scrive affatto, perché lo ricava predictMatchdayFromMatches dalla
+// fixture con la stessa funzione, in un punto solo. Il valore non è mai scelto da chi chiama.
+//
+// R13: le tre linee (chiusura, apertura, live) sono tutte fissate PRIMA del fischio d'inizio,
+// quindi nessuna vede il futuro. Ma la chiusura non è ricostruibile in produzione, dove si vedono
+// prezzi più precoci: è il LIMITE SUPERIORE di quanto l'ancoraggio può dare, l'apertura il limite
+// inferiore, e la produzione sta in mezzo. Ogni misura va riportata contro entrambe — MISTAKES.md
+// §25 è un numero che non dichiarava il proprio benchmark e si è rivelato calcolato su quello
+// sbagliato. Per questo `line` è obbligatoria e viaggia dentro l'oggetto quote.
+export const PER_FIXTURE_INPUTS = Object.freeze(["marketOdds"]);
+
 // Input deliberatamente ESCLUSI, con la misura che li esclude — non dimenticati:
 //
 // `teamContext` — spento in produzione il 27/08/2026. Misurato con
@@ -60,6 +97,22 @@ export const FIXTURE_IDENTITY_KEYS = Object.freeze([
 //   qui pubblica le designazioni e `fixture.referee` è vuoto per ogni partita futura — ma
 //   lasciarlo cablato significava tenere armato un effetto che nessun backtest può vedere.
 //   refereeBiasFor() resta in model.js e resta testato.
+//
+// `marketOdds` — la linea di mercato per la gara (T1, PROMPT-sessione-5.md §3). Non è escluso
+//   perché misurato a zero: al contrario, è la cosa più grande mai misurata su questo modello
+//   (+0.0284 ± 0.0026 di log loss sull'1X2 sull'intero dataset, +0.0219 ± 0.0043 sul solo
+//   holdout, riproducibile con `node scripts/diag_market_anchor.mjs`). È escluso perché OGGI
+//   non esiste una fonte che lo raggiunga in produzione: app.js non scarica quote, e le
+//   fixture future del dataset non ne portano — la pipeline legge le colonne di Football-Data
+//   solo per le gare concluse. Cablarlo qui senza quella fonte produrrebbe un backtest che
+//   misura un regime che il sito non esegue.
+//
+//   E non potrebbe comunque passare da MODEL_INPUT_DEFAULTS: la coercizione `Number(value)`
+//   qui sotto scarta un oggetto quote in silenzio, quindi il chiamante crederebbe di ancorare
+//   senza ancorare. Il meccanismo vive in model.js (`anchorToMarket`, `shinDevig`), produce un
+//   campo `marketAnchor` separato che non tocca mai `probabilities` né i lambda endogeni, ed è
+//   classificato in DELIBERATELY_UNWIRED dentro tests/prediction-input-parity.test.js, che
+//   spiega per esteso cosa serve per accenderlo.
 
 export function modelInputs(overrides = {}) {
   const unknown = Object.keys(overrides).filter((key) => !(key in MODEL_INPUT_DEFAULTS));

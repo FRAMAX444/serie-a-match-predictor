@@ -504,6 +504,10 @@ function proiezioneSquadre(payload, squadre, data, stagione) {
         date: data,
         competitionId: "ita.1",
         season: stagione,
+        // I 380 accoppiamenti del girone doppio sono IPOTETICI: partite che nessun bookmaker ha
+        // mai prezzato, quindi non esiste una linea da dichiarare. `null` esplicito, non chiave
+        // mancante: l'assenza va scritta come le altre scelte (R14).
+        marketOdds: null,
       });
       const { probabilities: p } = risultato;
       const inCasa = stato.get(casa);
