@@ -67,9 +67,10 @@ export const FIXTURE_IDENTITY_KEYS = Object.freeze([
 // chi prevede una gara alla volta scrive `marketOdds: marketOddsFrom(<riga>, <linea>)` e nient'
 // altro — tests/prediction-input-parity.test.js controlla l'ESPRESSIONE, non solo la chiave — e
 // chi prevede un turno non lo scrive affatto, perché lo ricava predictMatchdayFromMatches dalla
-// fixture con la stessa funzione, in un punto solo. Il valore non è mai scelto da chi chiama.
+// fixture con la stessa funzione, in un punto solo ("live" se la schedina l'ha scritta, se no
+// "prepartita" dalla pipeline). Il valore non è mai scelto da chi chiama.
 //
-// R13: le tre linee (chiusura, apertura, live) sono tutte fissate PRIMA del fischio d'inizio,
+// R13: le linee (chiusura, apertura, prepartita, live) sono tutte fissate PRIMA del fischio d'inizio,
 // quindi nessuna vede il futuro. Ma la chiusura non è ricostruibile in produzione, dove si vedono
 // prezzi più precoci: è il LIMITE SUPERIORE di quanto l'ancoraggio può dare, l'apertura il limite
 // inferiore, e la produzione sta in mezzo. Ogni misura va riportata contro entrambe — MISTAKES.md
@@ -98,21 +99,11 @@ export const PER_FIXTURE_INPUTS = Object.freeze(["marketOdds"]);
 //   lasciarlo cablato significava tenere armato un effetto che nessun backtest può vedere.
 //   refereeBiasFor() resta in model.js e resta testato.
 //
-// `marketOdds` — la linea di mercato per la gara (T1, PROMPT-sessione-5.md §3). Non è escluso
-//   perché misurato a zero: al contrario, è la cosa più grande mai misurata su questo modello
-//   (+0.0284 ± 0.0026 di log loss sull'1X2 sull'intero dataset, +0.0219 ± 0.0043 sul solo
-//   holdout, riproducibile con `node scripts/diag_market_anchor.mjs`). È escluso perché OGGI
-//   non esiste una fonte che lo raggiunga in produzione: app.js non scarica quote, e le
-//   fixture future del dataset non ne portano — la pipeline legge le colonne di Football-Data
-//   solo per le gare concluse. Cablarlo qui senza quella fonte produrrebbe un backtest che
-//   misura un regime che il sito non esegue.
-//
-//   E non potrebbe comunque passare da MODEL_INPUT_DEFAULTS: la coercizione `Number(value)`
-//   qui sotto scarta un oggetto quote in silenzio, quindi il chiamante crederebbe di ancorare
-//   senza ancorare. Il meccanismo vive in model.js (`anchorToMarket`, `shinDevig`), produce un
-//   campo `marketAnchor` separato che non tocca mai `probabilities` né i lambda endogeni, ed è
-//   classificato in DELIBERATELY_UNWIRED dentro tests/prediction-input-parity.test.js, che
-//   spiega per esteso cosa serve per accenderlo.
+// (`marketOdds` NON sta in questo elenco: è un input per gara, vedi PER_FIXTURE_INPUTS sopra.
+//   Fino al 10/11/2026 qui c'era scritto che nessuna fonte lo portava alla pagina principale;
+//   dal 10/11 la pipeline scrive `prematch_odds` sulle fixture future da Football-Data
+//   fixtures.csv, predictMatchdayFromMatches lo legge come linea "prepartita", e app.js mostra la
+//   matrice ancorata con il regime dichiarato. Misura: docs/misure-riferimento.md §28.)
 
 export function modelInputs(overrides = {}) {
   const unknown = Object.keys(overrides).filter((key) => !(key in MODEL_INPUT_DEFAULTS));

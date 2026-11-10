@@ -1,4 +1,5 @@
-import { predictMatchdayFromMatches, estimatePlayerMarkets } from "./model.js";
+import { predictMatchdayFromMatches, estimatePlayerMarkets, shownPrediction } from "./model.js";
+import { datasetFreshness, freshnessMessage } from "./data-freshness.js";
 import { modelInputs } from "./prediction-inputs.js";
 import { buildCompetitionCatalog, buildMatchdays, matchdayLabel } from "./matchdays.js";
 import { DEFAULT_GLOBAL_SETTINGS, applyGlobalSettings, initializeGlobalSettings } from "./global-settings.js";
@@ -244,6 +245,14 @@ function recentTeamAverage(matches, team, homeField, awayField, count = 5) {
 // la stessa fiducia di aprile — mentre lì il log loss misurato è 1.0435 contro ~0.990.
 // `confidence` non tocca nessuna previsione: dichiara soltanto cosa manca, e cosa manca è
 // scritto in `confidence.limits`.
+// Una previsione ancorata alla linea di mercato e una del solo modello non sono la stessa stima
+// e non vanno mostrate come tali (PROMPT-sessione-5.md §3 T1, punto 5).
+function regimeBadgeMarkup(result) {
+  return result.regime === "ancorata"
+    ? '<span class="quality" title="Probabilità ancorate alle quote pre-partita dei bookmaker (media, senza margine): più accurate della stima del solo modello">mercato</span>'
+    : '<span class="quality" title="Nessuna quota disponibile per questa partita: stima del solo modello">modello</span>';
+}
+
 function qualityBadgeMarkup(result) {
   if (!globalSettings.showDataQuality) return "";
   const confidence = result.confidence;
@@ -446,6 +455,7 @@ function fixtureModalMarkup(item) {
       <div>
         <div class="fixture-modal__meta">
           <span>${formatDate(fixture.date)}</span>
+          ${regimeBadgeMarkup(result)}
           ${qualityBadgeMarkup(result)}
         </div>
         <h2 id="fixture-modal-title">${escapeHtml(fixture.home_team)} – ${escapeHtml(fixture.away_team)}</h2>
@@ -595,6 +605,11 @@ async function runMatchdayPrediction() {
   await new Promise((resolve) => setTimeout(resolve, 30));
   try {
     const batch = predictMatchdayFromMatches(payload.matches, matchday.fixtures, predictionOptions());
+    // Dove la pipeline ha scritto una linea pre-partita, la pagina mostra la matrice ancorata:
+    // sui campionati vale +0.027 di log loss contro l'apertura (docs/misure-riferimento.md §28).
+    batch.predictions = batch.predictions.map(({ fixture, result }) => ({
+      fixture, result: shownPrediction(result, fixture.home_team, fixture.away_team),
+    }));
     renderMatchday(matchday, batch);
   } catch (caught) {
     error.textContent = caught.message || "Errore durante il calcolo.";
@@ -619,6 +634,9 @@ async function init() {
     const response = await fetch("data/matches.json", { cache: "no-store" });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     payload = unpackMatches(await response.json());
+    const freshness = datasetFreshness(payload);
+    $("data-freshness").textContent = freshnessMessage(freshness);
+    $("data-freshness").hidden = !freshness.stale;
     competitionCatalog = buildCompetitionCatalog(payload);
     if (!competitionCatalog.length) throw new Error("Le competizioni supportate non sono disponibili nel dataset.");
     populateCompetitions();

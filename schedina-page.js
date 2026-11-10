@@ -73,12 +73,17 @@ function legRow(leg) {
   const badge = leg.source === "model"
     ? '<span class="schedina-leg__source" title="Quota equa stimata dal modello (1 ÷ probabilità): nessuna quota reale disponibile per questa selezione">stima</span>'
     : "";
+  // Il regime va dichiarato: una probabilita' ancorata alla linea di mercato e una del solo
+  // modello non sono la stessa stima (PROMPT-sessione-5.md §3 T1, punto 5).
+  const regime = leg.regime === "endogena"
+    ? '<span class="schedina-leg__source" title="Nessuna linea di mercato per questa partita: probabilità del solo modello, che storicamente sovrastima la sicurezza delle schedine">solo modello</span>'
+    : "";
   const weak = leg.reliability < 0.5
     ? '<span class="schedina-leg__source" title="Il modello ha pochi dati su questa selezione: stima meno solida delle altre">dati scarsi</span>'
     : "";
   return `<div class="schedina-leg">
     <span class="schedina-leg__match">${escapeHtml(leg.fixtureLabel)}</span>
-    <span class="schedina-leg__pick">${escapeHtml(leg.label)}${badge}${weak}</span>
+    <span class="schedina-leg__pick">${escapeHtml(leg.label)}${badge}${regime}${weak}</span>
     <span class="schedina-leg__odds">@${number(leg.odds)}</span>
     <span class="schedina-leg__prob">${percent(leg.probability)}</span>
   </div>`;
@@ -126,7 +131,7 @@ async function renderSeries(slips, notes, context) {
     summaryItem("Schedine", `${slips.length}`),
     summaryItem("Sicurezza richiesta", `${best.confidence.label} (${percent(best.targetProbability)})`),
     `<p class="schedina-summary__note">${best.usesMarketOdds
-      ? `Ritorno atteso su 1€ giocato: <strong>${number(best.expectedReturn)}€</strong> sulla prima schedina, secondo il modello.`
+      ? `Ritorno atteso su 1€ giocato: <strong>${number(best.expectedReturn)}€</strong> sulla prima schedina. Dove esiste una linea di mercato le probabilità sono ancorate ad essa: il ritorno atteso misura il margine del banco, non un vantaggio.`
       : "Quote eque del modello (1 ÷ probabilità), non quote di un banco: il ritorno atteso è 1 per costruzione."}
       <strong>Le dieci schedine sono le dieci migliori dello stesso turno, quindi condividono le
       partite e gli esiti: giocarle tutte non è diversificare, è la stessa scommessa moltiplicata.</strong></p>`,

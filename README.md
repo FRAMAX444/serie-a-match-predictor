@@ -269,6 +269,7 @@ Validata: `npm run diagnose:confidence` su 8141 gare dà Alta 0.9905, Media 1.02
 - **`sharedDispersion`**: varianza di un fattore di prolificità condiviso fra le due squadre della stessa partita (binomiale negativa bivariata). Alza il pareggio a spese di entrambe le vittorie. Resta **0 per decisione misurata**: respinto con soglia pre-registrata, train e holdout entrambi monotoni verso il peggio. Vedi `docs/misure-riferimento.md` §20.
 - **`seasonQualityWeight`**: peso della freschezza di stagione dentro `dataQuality` (vedi sotto). Resta **0 per decisione misurata**, non per dimenticanza.
 - **`seasonEloRegression`**: quota di scostamento dalla media di lega che una squadra conserva al cambio di stagione. Resta **1 (nessuna regressione) per decisione misurata**, vedi sotto.
+- **`cupCountryPriorWeight`**: Elo di partenza di un club mai visto in una gara di coppa — 0 = 1500, 1 = forza del suo campionato nazionale (`home_league_strength`/`away_league_strength`, scritti dalla pipeline dal codice nazione UEFA). Default **1**, accettato con soglia pre-registrata: +0.0076 ± 0.0017 di log loss sulle coppe in holdout (`docs/pre-registrazione-cup-country-prior.md`). Non tocca le previsioni di campionato.
 - **`newcomerEloAnchor` / `newcomerEloRetention`**: dove sta l'ancora del prior da neopromossa (0 = il 1500 storico, 1 = la media della lega di destinazione) e quanto Elo una squadra rientrata conserva per ogni stagione di assenza. Default 0 e 1, entrambi neutri.
 
 ### Neopromosse: la definizione era sbagliata
@@ -769,15 +770,33 @@ quelli dei gruppi accesi nel form. Su un turno da 10 partite, con le due regioni
 
 | gruppi accesi | richieste |
 |---|---|
-| 1X2, doppia chance | 1 |
-| + Over/Under e Gol/No gol | 1 + 1 + 2×2×10 = **42** |
+| 1X2, doppia chance | 1 + 1 = **2** |
+| + Over/Under e Gol/No gol | 2 + 2×2×10 = **42** |
 | + squadra segna | + 2×10 = **62** |
 | + mercati sui giocatori | + 3×2×10 = **122** |
 
-Sul piano gratuito da 500 al mese sono ~4 generazioni complete, contro 500 con le sole 1X2 e
-doppie chance. Il preventivo compare nel resoconto della schedina insieme alle richieste rimaste,
+`totals` si chiede **sempre**, anche con le sole 1X2 (dal 10/11/2026): insieme a `h2h` dà la
+linea 1X2 + Over/Under 2.5 che serve ad ancorare la matrice al mercato, e senza ancora la schedina
+torna sulla probabilità del solo modello, che dichiarava il doppio della sicurezza reale (vedi
+sotto). Sul piano gratuito da 500 al mese sono ~4 generazioni complete, contro 250 con le sole 1X2
+e doppie chance. Il preventivo compare nel resoconto della schedina insieme alle richieste rimaste,
 lette dagli header `x-requests-used` e `x-requests-remaining` di ogni risposta: senza, l'unico
 modo di sapere di aver finito la quota è vedere fallire una generazione con HTTP 429.
+
+### Quale probabilità decide la schedina
+
+Dove la partita ha una linea di mercato (quote 1X2 e Over/Under 2.5), il vincolo di sicurezza e
+la probabilità mostrata usano la matrice **ancorata** a quella linea, non la stima del solo
+modello. Rigiocando il costruttore su 511 turni passati con le quote di chiusura (3 selezioni,
+sicurezza media), la stima del solo modello dichiarava il 20.7% e le schedine vincevano l'8.8%;
+quella ancorata dichiara il 20.1% e vince il 18.8% (`node scripts/diag_slip_replay.mjs`,
+`MISTAKES.md` §34). La ragione: l'ottimizzatore cerca la quota più alta a parità di probabilità,
+quindi con la stima del modello sceglie proprio le selezioni in cui il modello dissente dal
+mercato — cioè dove sbaglia.
+
+Conseguenza da non dimenticare: con probabilità ancorate il ritorno atteso mostrato misura il
+**margine del banco**, non un vantaggio. Le partite senza linea restano sulla stima del modello e
+la selezione è etichettata «solo modello».
 
 ### Cache locale delle quote
 

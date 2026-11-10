@@ -41,7 +41,42 @@ MATCH_FIELDS = (
     "home_yellow", "away_yellow", "home_red", "away_red",
     "home_possession", "away_possession",
     "referee",
+    # Nazione UEFA del club e forza del suo campionato, solo sulle righe di coppa: servono al
+    # prior Elo di model.js (`cupCountryPriorWeight`). Sono note prima della partita e non
+    # contengono risultati (R13).
+    "home_country_code", "away_country_code",
+    "home_league_strength", "away_league_strength",
 )
+
+
+# Forza del campionato nazionale per codice nazione UEFA, dalle stesse tabelle che la pipeline
+# usa per scegliere i campionati (DOMESTIC_LEAGUES + EXTRA_DOMESTIC_LEAGUES). Una sola fonte:
+# una seconda tabella di forze divergerebbe dalla prima in silenzio.
+#
+# LEAGUE_COUNTRY_CODES dice in quali campionati GIOCANO club di una nazione (il Monaco in
+# Ligue 1, il Vaduz in Svizzera), non quale sia il campionato nazionale: WAL compare sia in
+# eng.1 sia in wal.1. Si prende quindi il campionato piu' debole, che e' quello in cui gioca un
+# club gallese arrivato in Conference dal suo campionato. SMR e AND compaiono SOLO sotto ita.1
+# ed esp.1, e un club sammarinese o andorrano in coppa viene dal suo campionato, non da quello:
+# darebbe 1550 al Tre Penne. Restano senza forza, cioe' al 1500 di sempre.
+_NO_OWN_LEAGUE = {"SMR", "AND"}
+COUNTRY_LEAGUE_STRENGTH: dict[str, int] = {}
+for _league in (*base.DOMESTIC_LEAGUES, *uefa.EXTRA_DOMESTIC_LEAGUES):
+    for _code in uefa.LEAGUE_COUNTRY_CODES.get(str(_league["id"]), ()):
+        if _code not in _NO_OWN_LEAGUE:
+            COUNTRY_LEAGUE_STRENGTH[_code] = min(COUNTRY_LEAGUE_STRENGTH.get(_code, 10_000), int(_league["strength"]))
+
+
+def annotate_country_strength(rows: list[dict[str, object]]) -> int:
+    """Scrive ``<lato>_league_strength`` dove il codice nazione e' noto. Ritorna i lati annotati."""
+    annotated = 0
+    for row in rows:
+        for side in ("home", "away"):
+            strength = COUNTRY_LEAGUE_STRENGTH.get(str(row.get(f"{side}_country_code") or "").upper())
+            if strength is not None:
+                row[f"{side}_league_strength"] = strength
+                annotated += 1
+    return annotated
 
 
 def competition_metadata(descriptor: dict[str, object], start_year: int) -> dict[str, str]:
@@ -82,6 +117,14 @@ FOOTBALL_DATA_ONLY_FIELDS = (
     "referee",
 )
 
+# Stesso difetto, fonte diversa. Dal 01/11/2026 Understat risponde a ogni richiesta con una pagina
+# d'errore HTML (anche getTeamData, anche a mano): il run perde gli xG di TUTTE le stagioni, il
+# contratto XgCoverageContractTests diventa rosso — giustamente — e il workflow non pubblica piu'
+# nulla. Otto giorni di sito fermo al 1 novembre per una fonte che descrive partite GIA' GIOCATE,
+# il cui xG non cambia. Si ripristinano in coppia: un xG di casa senza quello in trasferta non
+# esiste in nessuna fonte, e un mezzo valore sarebbe un numero plausibile e sbagliato.
+XG_FIELDS = ("home_xg", "away_xg")
+
 
 def compact_match(match: dict[str, object]) -> dict[str, object]:
     return {key: match[key] for key in MATCH_FIELDS if key in match and match[key] is not None}
@@ -95,7 +138,8 @@ def restore_missing_source_fields(
 
     Riempie solo i buchi di partite presenti anche nel run fresco, con la stessa chiave che usa
     ``merge_matches``: l'insieme delle partite resta deciso dai feed live e un valore fresco non
-    viene mai sovrascritto. Ritorna (campi riempiti, partite toccate).
+    viene mai sovrascritto. Gli xG si riempiono solo in coppia e solo se mancano entrambi.
+    Ritorna (campi riempiti, partite toccate).
     """
     previous = existing.get("matches")
     if not isinstance(previous, list):
@@ -112,8 +156,47 @@ def restore_missing_source_fields(
             if item.get(field) is None and old.get(field) is not None:
                 item[field] = old[field]
                 filled += 1
+        if all(item.get(field) is None for field in XG_FIELDS) and all(old.get(field) is not None for field in XG_FIELDS):
+            for field in XG_FIELDS:
+                item[field] = old[field]
+                filled += 1
         touched += filled > before
     return filled, touched
+
+
+def attach_prematch_odds(
+    competitions: list[dict[str, object]],
+    rows: list[dict[str, object]],
+    spelling: dict[str, str],
+    fetched_at: str,
+) -> dict[str, dict[str, int]]:
+    """Scrive ``prematch_odds`` sulle fixture NON concluse che hanno una riga in fixtures.csv.
+
+    L'aggancio e' su (competizione, casa, trasferta) dopo la stessa normalizzazione e la stessa
+    fusione delle grafie delle fixture: in una stagione di campionato la coppia ordinata e' unica,
+    e la data non entra nella chiave perche' Football-Data scrive la data locale e ESPN quella UTC.
+    Ritorna, per lega, quante righe della fonte hanno trovato la loro fixture: e' il contatore
+    che il contratto controlla, perche' una grafia divergente qui non solleva niente — lascia
+    solo quella gara senza linea, cioe' endogena in silenzio.
+    """
+    index: dict[tuple[str, str, str], dict[str, object]] = {}
+    for competition in competitions:
+        for fixture in competition.get("fixtures") or []:
+            if isinstance(fixture, dict) and not fixture.get("completed"):
+                index[(str(fixture.get("competition_id")), str(fixture.get("home_team")), str(fixture.get("away_team")))] = fixture
+    health: dict[str, dict[str, int]] = {}
+    for row in rows:
+        league = str(row["competition_id"])
+        home = spelling.get(str(row["home_team"]), str(row["home_team"]))
+        away = spelling.get(str(row["away_team"]), str(row["away_team"]))
+        counts = health.setdefault(league, {"rows": 0, "matched": 0})
+        counts["rows"] += 1
+        fixture = index.get((league, home, away))
+        if fixture is None:
+            continue
+        counts["matched"] += 1
+        fixture["prematch_odds"] = {**row["odds"], "fetched_at": fetched_at}
+    return health
 
 
 def competition_payload(
@@ -308,6 +391,8 @@ def main() -> None:
                 )
             source = "UEFA public match API; ESPN fallback"
 
+        annotate_country_strength(current)
+        annotate_country_strength(european_history)
         competitions.append(competition_payload(descriptor, current, source, target_start, "europe", target_code))
         fixture_count += len(current)
         matches.extend(european_history)
@@ -336,6 +421,16 @@ def main() -> None:
             f"({', '.join(f'{key}->{value}' for key, value in sorted(spelling.items())[:6])})"
         )
 
+    # Dopo la fusione delle grafie, perche' l'aggancio usa i nomi gia' fusi delle fixture.
+    prematch_health = attach_prematch_odds(
+        competitions,
+        base.download_fixture_odds(TOP_FIVE_LEAGUES),
+        spelling,
+        datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    )
+    for league, counts in sorted(prematch_health.items()):
+        print(f"quote pre-partita {league}: {counts['matched']}/{counts['rows']} righe agganciate a una fixture")
+
     calendar_issues = calendar_contract_issues(competitions, target_start)
     if calendar_issues:
         raise SystemExit(
@@ -348,7 +443,7 @@ def main() -> None:
     if restored_matches:
         print(
             f"ATTENZIONE: {restored_fields} campi assenti da questo run ripristinati dal dataset "
-            f"precedente su {restored_matches} partite (fonte Football-Data.co.uk irraggiungibile?)",
+            f"precedente su {restored_matches} partite (Football-Data.co.uk o Understat irraggiungibili?)",
             file=sys.stderr,
         )
     matches = [compact_match(item) for item in merged]
@@ -394,6 +489,7 @@ def main() -> None:
             "european_training_matches": sum(str(item.get("competition_id")) in EUROPE_COMPETITION_IDS for item in matches),
             "fixture_snapshot_guards": sorted(set(guarded_competitions)),
             "fixture_statistics": fixture_statistics_health(competitions),
+            "prematch_odds": prematch_health,
         },
         "sources": {
             "fixtures_results": "UEFA public match API for European cups; ESPN public scoreboards for domestic leagues and fallback",

@@ -753,6 +753,50 @@ def compute_referee_stats(matches: list[dict[str, object]], prior_strength: floa
     return stats
 
 
+# Quote PRE-PARTITA delle gare future, dallo stesso sito e con le stesse colonne dei CSV storici.
+# Servono all'ancoraggio della pagina principale (model.js anchorToMarket): senza una linea per le
+# gare future il sito mostrava solo la previsione endogena, che sui campionati e' indietro al
+# mercato di +0.028 di log loss (docs/misure-riferimento.md §28). Media dei book, non massimo:
+# e' una stima di probabilita', non un prezzo da incassare.
+FIXTURE_ODDS_URL = "https://www.football-data.co.uk/fixtures.csv"
+
+
+def parse_fixture_odds(content: str, leagues: Iterable[dict[str, object]]) -> list[dict[str, object]]:
+    by_code = {str(league["fd"]): league for league in leagues if league.get("fd")}
+    rows: list[dict[str, object]] = []
+    for row in csv.DictReader(content.splitlines()):
+        league = by_code.get(str(row.get("Div") or "").strip())
+        if not league or not row.get("Date"):
+            continue
+        try:
+            odds = {
+                "home": optional_float(row, "AvgH", "B365H", "PSH"),
+                "draw": optional_float(row, "AvgD", "B365D", "PSD"),
+                "away": optional_float(row, "AvgA", "B365A", "PSA"),
+                "over25": optional_float(row, "Avg>2.5", "B365>2.5", "P>2.5"),
+                "under25": optional_float(row, "Avg<2.5", "B365<2.5", "P<2.5"),
+            }
+            date_value = parse_date(row["Date"])
+        except (TypeError, ValueError):
+            continue
+        if any(value is None or value <= 1 for value in odds.values()):
+            continue
+        home, away = normalize_team(row.get("HomeTeam", "")), normalize_team(row.get("AwayTeam", ""))
+        if home and away:
+            rows.append({"competition_id": league["id"], "date": date_value, "home_team": home, "away_team": away, "odds": odds})
+    return rows
+
+
+def download_fixture_odds(leagues: Iterable[dict[str, object]]) -> list[dict[str, object]]:
+    try:
+        rows = parse_fixture_odds(fetch_bytes(FIXTURE_ODDS_URL).decode("utf-8-sig", errors="replace"), leagues)
+        print(f"Football-Data quote pre-partita: {len(rows)} gare")
+        return rows
+    except Exception as error:
+        print(f"Football-Data quote pre-partita: {error}", file=sys.stderr)
+        return []
+
+
 def download_football_data(league: dict[str, object], starts: Iterable[int]) -> list[dict[str, object]]:
     code = league.get("fd")
     if not code:

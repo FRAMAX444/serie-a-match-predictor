@@ -100,6 +100,54 @@ def totals(context: dict, team: str = "Alpha", player_id: str = "111") -> dict[s
     return next(p for p in context[team]["players"] if p["id"] == player_id)
 
 
+class EspnTeamIdTests(unittest.TestCase):
+    """Il summary ESPN chiama alcune squadre con un nome che il calendario non usa ("Stade
+    Rennais" dove le fixture dicono "Rennes"): i loro giocatori finivano sotto una chiave che il
+    sito non legge, e 12 squadre dei Big Five restavano senza alcun dato giocatore. L'id ESPN
+    della squadra non ha grafie, ed e' gia' nelle fixture."""
+
+    def _summary(self) -> dict[str, object]:
+        payload = summary()
+        payload["rosters"][0]["team"] = {"id": "169", "shortDisplayName": "Stade Rennais", "displayName": "Stade Rennais FC"}
+        return payload
+
+    def test_i_giocatori_finiscono_sotto_il_nome_del_calendario(self) -> None:
+        events = [("fra.1", {"id": "e1", "date": "2026-09-01", "season": SEASON, "home_team": "Rennes", "away_team": "Beta"})]
+        with patch.object(base, "fetch_json", lambda *a, **k: self._summary()):
+            state = enrich.fetch_player_samples(events, 50, team_ids={"169": "Rennes"})
+        context = enrich.build_player_context(state, SEASON)
+        self.assertIn("Rennes", context)
+        self.assertNotIn("Stade Rennais", context)
+        self.assertEqual(totals(context, "Rennes")["goals"], 1)
+
+    def test_la_mappa_scarta_un_id_con_due_nomi(self) -> None:
+        competitions = [{"fixtures": [
+            {"home_team": "Rennes", "home_team_id": "169", "away_team": "Lens", "away_team_id": "175"},
+            {"home_team": "Lens", "home_team_id": "175", "away_team": "Altro", "away_team_id": "169"},
+        ]}]
+        self.assertEqual(enrich.team_names_by_espn_id(competitions), {"175": "Lens"})
+
+
+class PublishedPlayerContextKeysTests(unittest.TestCase):
+    """Ogni voce di player_context deve stare sotto un nome che il calendario usa: una voce
+    orfana e' un dato raccolto che nessuna pagina leggera' mai."""
+
+    def setUp(self) -> None:
+        if not DATASET.exists():
+            self.skipTest("data/matches.json assente")
+        self.payload = json.loads(DATASET.read_text(encoding="utf8"))
+
+    def test_nessuna_voce_orfana(self) -> None:
+        teams = {
+            str(fixture.get(side))
+            for competition in self.payload.get("competitions", [])
+            for fixture in competition.get("fixtures") or []
+            for side in ("home_team", "away_team")
+        }
+        orphans = sorted(set(self.payload.get("player_context") or {}) - teams)
+        self.assertEqual(orphans, [], "voci player_context sotto un nome che il calendario non contiene")
+
+
 class AccumulationTests(unittest.TestCase):
     def test_i_totali_superano_il_tetto_per_esecuzione(self) -> None:
         """Il contratto centrale, e va oltre `samples_per_team` di proposito: fino a due partite

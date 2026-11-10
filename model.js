@@ -169,6 +169,20 @@ export const DEFAULT_HYPERPARAMETERS = Object.freeze({
   // in produzione è stimato sulle stagioni 2324+2425 e validato sull'holdout 2526, mai usato
   // per la stima. Vedi docs/misure-riferimento.md.
   seasonQualityWeight: 0,
+  // Prior Elo di un club che compare per la prima volta in una gara di COPPA: 0 = il 1500 piatto
+  // di sempre, bit per bit; 1 = la forza del suo campionato nazionale, che la pipeline scrive
+  // come `home_league_strength`/`away_league_strength` sulle righe di coppa dal codice nazione
+  // UEFA (tabella in scripts/update_europe_data.py, da 1570 a 1225). Oggi un portoghese e un
+  // gibilterrino partono dallo stesso Elo, e l'85% dei club di coppa non ha nessuna gara di
+  // campionato da cui correggerlo.
+  //
+  // ACCETTATO il 10/11/2026 con soglia pre-registrata (docs/pre-registrazione-cup-country-prior.md):
+  // holdout coppe +0.0076 ± 0.0017 (4.5σ, 1533 gare), ucl +0.0061, uel +0.0102, uecl +0.0070;
+  // training +0.0082. Vale solo per le previsioni di COPPA, l'unico ramo misurato: le previsioni
+  // di campionato partono dal 1500 di sempre. Inerte finche' il dataset non porta
+  // `*_league_strength` sulle gare storiche (la CI li scrive dal 10/11/2026); va rimisurato su
+  // quel dataset (C3).
+  cupCountryPriorWeight: 1,
   calibration: DEFAULT_CALIBRATION,
 });
 
@@ -539,6 +553,13 @@ export const MARKET_LINES = Object.freeze({
     const odds = row.market_odds || {};
     return [odds.home, odds.draw, odds.away, odds.over25, odds.under25];
   },
+  // Quote pre-partita (media dei book) che la pipeline scrive sulle fixture future da
+  // Football-Data fixtures.csv, con la data di raccolta in `fetched_at`. Piu' precoci di `live`
+  // e della chiusura: e' la linea della pagina principale, che non scarica quote da sola.
+  prepartita: (row) => {
+    const odds = row.prematch_odds || {};
+    return [odds.home, odds.draw, odds.away, odds.over25, odds.under25];
+  },
   // Nessun ancoraggio: e' un valore DICHIARATO e non l'assenza dell'argomento, perche' il
   // regime endogeno e' una scelta di misura come le altre e va scritta. E' il default dei
   // backtest, cosi' che il numero storico resti confrontabile finche' non si chiede l'altro.
@@ -827,6 +848,17 @@ function applyNewcomerPrior(state, seasonsAway, leagueMean, hyperparameters, com
   state.elo = anchor + (state.elo - anchor) * kept;
 }
 
+// Elo di partenza di un club mai visto quando si prevede una gara di COPPA. Solo sulle righe di
+// coppa e solo se la pipeline ha scritto la forza del campionato nazionale: altrimenti
+// `fallback`, la league_strength della riga (1500 in coppa), cioe' cio' che il modello usava
+// prima. Con il peso a 0 restituisce `fallback` invariato: neutro bit per bit.
+function cupCountryPrior(match, side, hyperparameters, fallback) {
+  const weight = safe(hyperparameters.cupCountryPriorWeight, 0);
+  const strength = Number(match[`${side}_league_strength`]);
+  if (!weight || !Number.isFinite(strength) || !EUROPE_COMPETITION_IDS.has(String(match.competition_id))) return fallback;
+  return fallback + weight * (strength - fallback);
+}
+
 function applyMatch(states, match, crossCompetition = false, hyperparameters = DEFAULT_HYPERPARAMETERS, newcomers = null) {
   const leagueBaseline = safe(match.league_strength, 1500);
   const newcomerKey = `${String(match.competition_id || "")}|${String(match.season || "")}|`;
@@ -834,8 +866,8 @@ function applyMatch(states, match, crossCompetition = false, hyperparameters = D
   const awayAway = newcomers?.get(`${newcomerKey}${match.away_team}`);
   const homeIsNewcomer = !crossCompetition && homeAway !== undefined && !states.has(match.home_team);
   const awayIsNewcomer = !crossCompetition && awayAway !== undefined && !states.has(match.away_team);
-  const homeInitialElo = crossCompetition ? leagueBaseline : (homeIsNewcomer ? newcomerAnchor(leagueBaseline, hyperparameters, String(match.competition_id || "")) : 1500);
-  const awayInitialElo = crossCompetition ? leagueBaseline : (awayIsNewcomer ? newcomerAnchor(leagueBaseline, hyperparameters, String(match.competition_id || "")) : 1500);
+  const homeInitialElo = crossCompetition ? cupCountryPrior(match, "home", hyperparameters, leagueBaseline) : (homeIsNewcomer ? newcomerAnchor(leagueBaseline, hyperparameters, String(match.competition_id || "")) : 1500);
+  const awayInitialElo = crossCompetition ? cupCountryPrior(match, "away", hyperparameters, leagueBaseline) : (awayIsNewcomer ? newcomerAnchor(leagueBaseline, hyperparameters, String(match.competition_id || "")) : 1500);
   const homeState = states.get(match.home_team) || emptyState(homeInitialElo);
   const awayState = states.get(match.away_team) || emptyState(awayInitialElo);
   states.set(match.home_team, homeState);
@@ -1975,6 +2007,33 @@ export function refereeBiasFor(fixture, refereeStats) {
   return entry ? safe(entry.home_bias, 0) : 0;
 }
 
+// La previsione come la MOSTRA una pagina: dove la gara e' ancorata, probabilita', risultati
+// esatti, lambda (quindi anche i mercati sui giocatori) ed esito piu' probabile vengono TUTTI
+// dalla matrice riancorata; altrimenti tutti da quella endogena. Una sola matrice per vista,
+// cosi' card, modale e mercati derivati non possono contraddirsi — la proprieta' che il progetto
+// ha sempre difeso. L'endogena resta leggibile in `endogenous`, e `regime` dice quale delle due
+// si sta guardando (PROMPT-sessione-5.md §3 T1, punto 5). Non si usa per cercare valore: per
+// costruzione l'ancorata vale zero contro la linea che l'ha prodotta.
+export function shownPrediction(result, homeTeam, awayTeam) {
+  const anchor = result?.marketAnchor?.status === "anchored" ? result.marketAnchor : null;
+  if (!anchor) return { ...result, regime: "endogena", endogenous: null };
+  return {
+    ...result,
+    probabilities: anchor.probabilities,
+    lambdaHome: anchor.lambdaHome,
+    lambdaAway: anchor.lambdaAway,
+    mostLikelyOutcome: outcomeName(anchor.probabilities, homeTeam, awayTeam),
+    regime: "ancorata",
+    anchorLine: anchor.line,
+    endogenous: {
+      probabilities: result.probabilities,
+      lambdaHome: result.lambdaHome,
+      lambdaAway: result.lambdaAway,
+      mostLikelyOutcome: result.mostLikelyOutcome,
+    },
+  };
+}
+
 export function predictMatchdayFromMatches(matches, fixtures, options = {}) {
   if (!fixtures?.length) throw new Error("Il turno selezionato non contiene partite.");
   const ordered = fixtures.slice().sort((left, right) => left.date.localeCompare(right.date));
@@ -1992,10 +2051,13 @@ export function predictMatchdayFromMatches(matches, fixtures, options = {}) {
       // possono ottenerla in due modi diversi ne' passarne una a mano (R14). Non c'e' la via di
       // fuga `options.marketOdds ?? ...` che refereeHomeBias concede: per le quote non esiste il
       // caso "le so in anticipo e le passo a mano", mentre esiste eccome quello in cui la pagina
-      // ne passa una e la misura no. "live" e' l'unica linea che una fixture puo' portare; le
-      // linee storiche le passano gli script che prevedono una gara alla volta, esplicitamente.
-      // Senza `fixture.market_odds` il risultato e' null e la previsione resta endogena.
-      marketOdds: marketOddsFrom(fixture, "live"),
+      // ne passa una e la misura no. Una fixture puo' portare due linee: "live" (scritta da
+      // schedina.js con le quote the-odds-api, la piu' recente) e "prepartita" (scritta dalla
+      // pipeline da fixtures.csv, l'unica che raggiunge la pagina principale). Vince la piu'
+      // recente; l'ancora dichiara quale ha usato. Le linee storiche le passano gli script che
+      // prevedono una gara alla volta, esplicitamente. Senza nessuna delle due il risultato e'
+      // null e la previsione resta endogena.
+      marketOdds: marketOddsFrom(fixture, "live") ?? marketOddsFrom(fixture, "prepartita"),
       homeTeam: fixture.home_team,
       awayTeam: fixture.away_team,
       date: fixture.date,

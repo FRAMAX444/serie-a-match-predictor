@@ -220,11 +220,11 @@ assert.equal(bySelection.get("OVER35").odds, bySelection.get("OVER35").fairOdds)
 // "Casa segna" non ha un mercato standard su the-odds-api.
 assert.equal(bySelection.get("HOME_SCORES").source, "model");
 
-// Ogni mercato x regione e' una richiesta sul piano gratuito: chi non gioca il gruppo "gol"
-// non deve pagare i totals.
-assert.deepEqual(oddsMarketsFor(["1X2", "doppia"]), ["h2h"]);
+// h2h e totals sempre, qualunque gruppo: senza la linea 2.5 la gara non si ancora e la schedina
+// torna sulla probabilita' endogena, che dichiarava il doppio della sicurezza reale.
+assert.deepEqual(oddsMarketsFor(["1X2", "doppia"]), ["h2h", "totals"]);
 assert.deepEqual(oddsMarketsFor(["1X2", "gol"]), ["h2h", "totals"]);
-assert.deepEqual(oddsMarketsFor(["squadra"]), ["h2h"]);
+assert.deepEqual(oddsMarketsFor(["squadra"]), ["h2h", "totals"]);
 assert.equal(marketOddsForKey(null, "1"), null);
 
 // L'endpoint di lega accetta solo i mercati "featured": uno non-featured non degrada la

@@ -357,6 +357,10 @@ def parse_summary(payload: object, event_date: str) -> list[tuple[str, dict[str,
         team = base.normalize_team(str(
             team_data.get("shortDisplayName") or team_data.get("displayName") or team_data.get("name") or ""
         ))
+        # L'id ESPN della squadra non ha grafie: e' la chiave che fetch_player_samples usa per
+        # ritrovare il nome del calendario quando shortDisplayName diverge ("Stade Rennais" contro
+        # "Rennes", "AFC Bournemouth" contro "Bournemouth"). Vedi team_names_by_espn_id.
+        team_id = str(team_data.get("id") or "")
         roster = group.get("roster") if isinstance(group.get("roster"), list) else group.get("athletes")
         if not team or not isinstance(roster, list):
             continue
@@ -397,6 +401,7 @@ def parse_summary(payload: object, event_date: str) -> list[tuple[str, dict[str,
             event_cards = cards.get(player_id, {"yellow": 0.0, "red": 0.0})
             parsed.append((team, {
                 "id": player_id,
+                "team_id": team_id,
                 "name": name,
                 "position": position_code(entry.get("position") or athlete.get("position")),
                 "formation_place": safe_int(entry.get("formationPlace")),
@@ -569,6 +574,7 @@ def fetch_player_samples(
     priority_teams: set[str] | None = None,
     seed: PlayerSampleState | None = None,
     rename: dict[str, str] | None = None,
+    team_ids: dict[str, str] | None = None,
 ) -> PlayerSampleState:
     """Aggiunge le partite non ancora conteggiate ai contatori gia' accumulati in `seed`.
 
@@ -598,7 +604,11 @@ def fetch_player_samples(
             # Il seme e' indicizzato con la grafia canonica del dataset; ESPN puo' usarne
             # un'altra. Allineare qui e non dopo: una chiave che non combacia non da' errore,
             # fa ripartire quella squadra da zero a ogni esecuzione senza dirlo.
-            team = (rename or {}).get(raw_team, raw_team)
+            #
+            # Prima di tutto l'id ESPN: 12 squadre dei Big Five (Rennes, Bournemouth, Freiburg,
+            # Augsburg, Union Berlin, ...) finivano sotto il shortDisplayName del summary, una
+            # chiave che il sito non legge, e restavano senza alcun dato giocatore.
+            team = (team_ids or {}).get(str(player.get("team_id") or "")) or (rename or {}).get(raw_team, raw_team)
             # L'altra squadra puo' aver gia' conteggiato questa partita in un'esecuzione
             # precedente: le sue righe vanno scartate, o i suoi totali raddoppierebbero.
             if event_id in counted[team]:
@@ -930,6 +940,25 @@ def build_player_context(
             "schema": PLAYER_CONTEXT_SCHEMA,
         }
     return result
+
+
+def team_names_by_espn_id(competitions: Iterable[dict[str, object]]) -> dict[str, str]:
+    """Id squadra ESPN -> nome usato dal calendario, dalle fixture che portano l'id.
+
+    Un id che compare sotto due nomi diversi viene scartato invece che risolto a caso: e' il
+    segno di una collisione, e indovinare produrrebbe un club con i giocatori di un altro.
+    """
+    names: dict[str, set[str]] = defaultdict(set)
+    for competition in competitions:
+        for fixture in competition.get("fixtures") or []:
+            if not isinstance(fixture, dict):
+                continue
+            for side in ("home", "away"):
+                team_id = str(fixture.get(f"{side}_team_id") or "")
+                team = str(fixture.get(f"{side}_team") or "")
+                if team_id and team:
+                    names[team_id].add(team)
+    return {team_id: next(iter(found)) for team_id, found in names.items() if len(found) == 1}
 
 
 def canonicalize_context_keys(
@@ -1322,6 +1351,11 @@ def main() -> None:
             priority_teams=priority_teams,
             seed=seed_player_samples(player_context, target_code),
             rename=spelling,
+            # Solo i campionati: le fixture di coppa portano gli id dell'API UEFA, un altro
+            # spazio di numeri, e una coincidenza darebbe a un club i giocatori di un altro.
+            team_ids=team_names_by_espn_id(
+                item for item in competitions_by_id.values() if item.get("type") == "domestic"
+            ),
         )
         if not args.skip_squad_positions:
             locations = team_espn_locations(
@@ -1333,6 +1367,14 @@ def main() -> None:
                 print(f"Ruoli completati dal roster di squadra per {filled} giocatori", file=sys.stderr)
         fresh_context = build_player_context(state, target_code)
         player_context.update(canonicalize_context_keys(fresh_context, spelling))
+        # Una voce sotto un nome che il calendario non usa e' un dato che nessuna pagina legge.
+        # Si scarta DICHIARANDOLO invece di pubblicarla: lasciarla al contratto sul dataset
+        # bloccherebbe l'intero aggiornamento per un dato che non serve a nessuno, che e' la
+        # forma del difetto 33 di MISTAKES.md.
+        orphans = sorted(set(player_context) - set(teams))
+        if orphans:
+            print(f"ATTENZIONE: scartate {len(orphans)} voci player_context sotto un nome che il calendario non usa: {', '.join(orphans)}", file=sys.stderr)
+            player_context = {team: item for team, item in player_context.items() if team in teams}
         sampled = [len(state.counted[team]) for team in fresh_context]
         if sampled:
             print(

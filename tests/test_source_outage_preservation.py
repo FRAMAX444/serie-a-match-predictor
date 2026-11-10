@@ -95,10 +95,30 @@ class RestoreMissingSourceFieldsTests(unittest.TestCase):
             self.assertEqual(len(base.merge_matches([same[0], other])), 2, field)
             self.assertNotEqual(base.match_identity(same[0]), base.match_identity(other), field)
 
+    def test_riempie_gli_xg_quando_understat_e_giu(self) -> None:
+        """Dal 01/11/2026 Understat risponde HTML a ogni richiesta: senza questo ripristino il run
+        perde gli xG di tutte le stagioni e il contratto di copertura blocca la pubblicazione."""
+        fresh = [match()]
+        existing = {"matches": [match(home_xg=1.42, away_xg=0.88)]}
+        filled, touched = top5.restore_missing_source_fields(fresh, existing)
+        self.assertEqual((filled, touched), (2, 1))
+        self.assertEqual((fresh[0]["home_xg"], fresh[0]["away_xg"]), (1.42, 0.88))
+
+    def test_gli_xg_non_sovrascrivono_ne_si_spezzano(self) -> None:
+        """Un xG fresco vince; e un xG fresco a meta' non viene completato con il vecchio, perche'
+        la coppia mescolerebbe due fonti in un numero plausibile."""
+        existing = {"matches": [match(home_xg=1.42, away_xg=0.88)]}
+        fresh = [match(home_xg=2.10, away_xg=0.30)]
+        self.assertEqual(top5.restore_missing_source_fields(fresh, existing), (0, 0))
+        self.assertEqual((fresh[0]["home_xg"], fresh[0]["away_xg"]), (2.10, 0.30))
+        half = [match(home_xg=2.10)]
+        self.assertEqual(top5.restore_missing_source_fields(half, existing), (0, 0))
+        self.assertIsNone(half[0].get("away_xg"))
+
     def test_i_campi_ripristinati_sopravvivono_alla_compattazione(self) -> None:
         """MATCH_FIELDS decide cosa finisce nel dataset: un campo ripristinato e non elencato li'
         verrebbe riscartato subito dopo, e il ripristino sarebbe un giro a vuoto."""
-        for field in top5.FOOTBALL_DATA_ONLY_FIELDS:
+        for field in (*top5.FOOTBALL_DATA_ONLY_FIELDS, *top5.XG_FIELDS):
             self.assertIn(field, top5.MATCH_FIELDS, f"{field} non sopravvive a compact_match()")
 
 

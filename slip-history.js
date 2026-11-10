@@ -62,6 +62,9 @@ export function saveSlipSeries(entry, options = {}) {
         label: leg.label,
         group: leg.group,
         probability: leg.probability,
+        // In quale regime e' quella probabilita': la calibrazione dello storico mescolerebbe
+        // altrimenti schedine endogene (che dichiaravano il doppio del reale) e ancorate.
+        regime: leg.regime ?? null,
         odds: leg.odds,
         source: leg.source,
         competitionId: leg.competitionId,

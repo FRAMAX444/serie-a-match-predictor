@@ -214,9 +214,9 @@ export async function discoverSportKey(apiKey, competitionId) {
 const FEATURED_MARKETS = Object.freeze(["h2h", "spreads", "totals", "outrights"]);
 
 // ATTENZIONE ALLA QUOTA: the-odds-api conta una richiesta per ogni combinazione mercato x
-// regione, quindi chiedere h2h+totals costa 2 richieste invece di 1 (piano gratuito: 500 al
-// mese). Per questo la lista non e' fissa: `totals` si chiede solo se l'utente ha acceso il
-// gruppo "gol", e chi gioca 1X2 e doppia chance continua a pagare una richiesta sola.
+// regione, quindi h2h+totals costa 2 richieste invece di 1 (piano gratuito: 500 al mese). Dal
+// 10/11/2026 `totals` si chiede sempre, perche' senza la linea 2.5 l'ancoraggio non avviene: vedi
+// oddsMarketsFor.
 export const ODDS_MARKETS_BY_GROUP = Object.freeze({
   "1X2": ["h2h"],
   doppia: ["h2h"], // 1X/12/X2 si ricavano esattamente dalle tre quote 1X2, nessun mercato in piu'
@@ -226,7 +226,11 @@ export const ODDS_MARKETS_BY_GROUP = Object.freeze({
 });
 
 export function oddsMarketsFor(groups) {
-  const markets = new Set(["h2h"]); // sempre: e' la base di 1X2 e delle doppie chance
+  // Sempre h2h e totals: insieme danno la linea 1X2 + Over/Under 2.5 che serve all'ancoraggio
+  // (model.js anchorToMarket). Senza totals la gara non si ancora e la schedina torna in
+  // silenzio sulla probabilita' endogena, che dichiara il doppio della sicurezza reale (vedi
+  // buildMarketCandidates). Costa una richiesta in piu' per turno anche a chi gioca solo 1X2.
+  const markets = new Set(["h2h", "totals"]);
   for (const group of groups || []) {
     for (const market of ODDS_MARKETS_BY_GROUP[group] || []) markets.add(market);
   }
@@ -409,18 +413,30 @@ export function buildMarketCandidates(entries, options = {}) {
   entries.forEach((entry, fixtureIndex) => {
     const fixtureLabel = `${entry.fixture.home_team} - ${entry.fixture.away_team}`;
     const reliability = clampReliability(entry.result?.quality?.score);
-    // Le probabilita' ANCORATE alla linea di mercato, quando la gara ne ha una. Sono la stima
-    // migliore di quanto una selezione sia probabile, e sono inutilizzabili per decidere su cosa
-    // scommettere: contro il mercato che le ha prodotte il loro valore atteso e' esattamente
-    // ZERO per costruzione. Vivono in un campo separato e non entrano ne' nel vincolo ne'
-    // nell'obiettivo di slip-builder.js (MISTAKES.md §21, PROMPT-sessione-5.md §3 T1).
-    const anchored = entry.result.marketAnchor?.status === "anchored"
-      ? new Map(deriveMarkets(entry.result.marketAnchor.probabilities).map((item) => [item.key, item.probability]))
-      : null;
-    // ENDOGENA, e non e' un dettaglio: e' cio' che sceglie la giocata. `entry.result.probabilities`
-    // non cambia mai regime — model.js non la riscrive quando ancora — quindi qui non c'e' nulla
-    // da ricordarsi di fare, ed e' il motivo per cui l'ancora vive in un campo suo.
-    deriveMarkets(entry.result.probabilities).forEach((market) => {
+    // QUALE probabilita' decide la giocata. Fino al 10/11/2026 era sempre l'endogena, e un
+    // commento qui lo motivava con la circolarita': contro il mercato che l'ha prodotta una
+    // probabilita' ancorata ha valore atteso zero. Vero, e irrilevante per cio' che questa
+    // funzione fa davvero: l'ottimizzatore cerca la quota piu' alta a parita' di probabilita',
+    // quindi con l'endogena sceglie le gambe dove il modello dissente di piu' dal mercato — cioe'
+    // dove sbaglia (PROMPT-sessione-4 §0.1: piu' «valore» dichiara, peggio va). Misurato
+    // rigiocando il costruttore su 511 turni con le quote di chiusura, 3 gambe, sicurezza media:
+    //
+    //                      dichiarata   osservata        ROI
+    //   endogena             20.9%     10.0% ± 1.3   -25.0% ± 10.2
+    //   ancorata             20.2%     18.8% ± 1.7   -17.0% ±  7.6
+    //
+    // La schedina dichiarava il DOPPIO della probabilita' reale. Con l'ancora la sicurezza scritta
+    // e' quella che si osserva (scripts/diag_slip_replay.mjs, docs/misure-riferimento.md §28).
+    //
+    // Regola che tiene insieme le due scale (MISTAKES.md §21): probabilita' e quota di ogni
+    // candidato vengono dallo STESSO regime. Una gamba ancorata senza prezzo di mercato prende la
+    // quota equa ANCORATA, non quella endogena: mescolarle farebbe apparire un valore atteso pari
+    // a p_ancorata / p_endogena, che e' di nuovo il disaccordo col mercato travestito da valore.
+    // L'endogena resta nel candidato come `endogenousProbability`, da mostrare e basta.
+    const anchor = entry.result.marketAnchor?.status === "anchored" ? entry.result.marketAnchor : null;
+    const endogenous = new Map(deriveMarkets(entry.result.probabilities).map((item) => [item.key, item.probability]));
+    const regime = anchor ? "ancorata" : "endogena";
+    deriveMarkets(anchor ? anchor.probabilities : entry.result.probabilities).forEach((market) => {
       if (!allowed.has(market.group) || market.probability < minLegProbability) return;
       const liveOdds = marketOddsForKey(entry.odds, market.key);
       const usesLiveOdds = Number.isFinite(liveOdds) && liveOdds > 1;
@@ -438,13 +454,10 @@ export function buildMarketCandidates(entries, options = {}) {
         group: market.group,
         label: marketLabel(market, entry.fixture),
         probability: market.probability,
-        // Solo da mostrare: non entra nell'EV, nel punteggio della schedina o in slip-builder.js.
-        shownProbability: anchored?.get(market.key) ?? null,
-        anchorLine: entry.result.marketAnchor?.line ?? null,
+        regime,
+        anchorLine: anchor?.line ?? null,
+        endogenousProbability: endogenous.get(market.key) ?? null,
         odds: usesLiveOdds ? liveOdds : market.fairOdds,
-        // Resta la quota equa ENDOGENA anche quando la gara e' ancorata: e' il ripiego usato come
-        // `odds` quando il banco non prezza quel mercato, e una fairOdds ancorata farebbe apparire
-        // del valore dove c'e' solo il mercato che si specchia.
         fairOdds: market.fairOdds,
         source: usesLiveOdds ? "market" : "model",
         reliability,

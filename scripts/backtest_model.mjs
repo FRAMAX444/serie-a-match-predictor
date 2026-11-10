@@ -47,7 +47,7 @@ function parseArguments(argv) {
   // `live` non esiste per una gara passata: il dataset ne conserva apertura e chiusura, non il
   // prezzo del momento in cui si sarebbe guardata la pagina.
   if (!["nessuna", "chiusura", "apertura"].includes(options.line)) {
-    throw new Error(`Linea non valida: ${options.line}. Usa ${Object.keys(MARKET_LINES).filter((name) => name !== "live").join(", ")}.`);
+    throw new Error(`Linea non valida: ${options.line}. Usa ${Object.keys(MARKET_LINES).filter((name) => !["live", "prepartita"].includes(name)).join(", ")}.`);
   }
   return options;
 }

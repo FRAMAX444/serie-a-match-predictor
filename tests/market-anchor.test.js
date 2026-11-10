@@ -7,8 +7,11 @@ import {
   scoreMatrix,
   deriveMarkets,
   predictFromMatches,
+  predictMatchdayFromMatches,
+  shownPrediction,
 } from "../model.js";
 import { modelInputs } from "../prediction-inputs.js";
+import { buildMarketCandidates } from "../schedina.js";
 
 // T1 (PROMPT-sessione-5.md §3). Dove una linea di mercato esiste, la linea batte il modello:
 // +0.0284 ± 0.0026 sull'1X2 (11.0σ) sull'intero dataset, +0.0219 ± 0.0043 (5.1σ) sul solo
@@ -197,8 +200,8 @@ const LINEA = { home: 2.10, draw: 3.40, away: 3.60, over25: 1.95, under25: 1.90,
 
 // --- La circolarità, resa esplicita invece che spiegata in un commento -------------------------
 // Una previsione ancorata ha valore atteso ESATTAMENTE nullo contro la linea che l'ha prodotta.
-// È la ragione per cui schedina.js deve continuare a cercare valore sulle probabilità endogene:
-// cercarlo su queste restituisce zero ovunque, e zero non somiglia a un errore.
+// Non è un motivo per non usarla nella schedina (vedi il blocco più sotto): è il motivo per cui
+// l'interfaccia non deve chiamare «valore» il ritorno atteso di una schedina ancorata.
 {
   const ancora = anchorToMarket(LINEA);
   const probabilita = matrixProbabilities(ancora.matrix);
@@ -227,15 +230,75 @@ const LINEA = { home: 2.10, draw: 3.40, away: 3.60, over25: 1.95, under25: 1.90,
   assert.equal(incompleta.marketAnchor.reason, "quote-incomplete");
 }
 
-// --- Nessun chiamante ancora oggi, e non per dimenticanza -------------------------------------
-// app.js e index.html non scaricano quote da nessuna fonte, e le 2614 fixture future del
-// dataset non portano alcun campo quote: il regime ancorato NON è raggiungibile in produzione
-// oggi. Il meccanismo esiste, è misurato e è testato; il cablaggio è una decisione separata,
-// e finché non viene presa tests/prediction-input-parity.test.js impedisce a un chiamante di
-// passare `marketOdds` di nascosto — che sarebbe "produzione ≠ misura" col segno invertito.
+// --- La schedina decide sulla probabilità ANCORATA, e prezzo e probabilità restano su una scala --
+// Rigiocando il costruttore su 511 turni con le quote di chiusura, la probabilità endogena
+// dichiarava 20.9% e si osservava 10.0% ± 1.3; quella ancorata dichiarava 20.2% e si osservava
+// 18.8% ± 1.7 (scripts/diag_slip_replay.mjs). Questo blocco difende le due proprietà da cui
+// quel risultato dipende e il cui cedimento non solleverebbe niente.
 {
-  const scoreMatrice = scoreMatrix(1.5, 1.2, 8, -0.04, 0);
-  assert.equal(scoreMatrice.length, 9, "la griglia di produzione resta 8");
+  const endogena = predictFromMatches(matches, { ...modelInputs(), ...identity });
+  const ancorata = predictFromMatches(matches, { ...modelInputs(), ...identity, marketOdds: LINEA });
+  const fixture = { home_team: identity.homeTeam, away_team: identity.awayTeam, date: identity.date, competition_id: "ita.1" };
+  const oddsSoloH2H = {
+    home: LINEA.home, draw: LINEA.draw, away: LINEA.away, totals: {},
+    btts: { yes: null, no: null }, teamScores: { home: null, away: null },
+  };
+  const gruppi = ["1X2", "doppia", "gol", "squadra"];
+  const [conAncora, senzaAncora] = [ancorata, endogena].map((result) => buildMarketCandidates(
+    [{ fixture, result, odds: oddsSoloH2H }], { groups: gruppi },
+  ));
+  const ancoraPerChiave = new Map(deriveMarkets(ancorata.marketAnchor.probabilities).map((m) => [m.key, m.probability]));
+  const endogenaPerChiave = new Map(deriveMarkets(endogena.probabilities).map((m) => [m.key, m.probability]));
+
+  for (const candidate of conAncora) {
+    assert.equal(candidate.regime, "ancorata");
+    assert.equal(candidate.anchorLine, "chiusura");
+    assert.equal(candidate.probability, ancoraPerChiave.get(candidate.key), `${candidate.key}: deve decidere l'ancorata`);
+    assert.equal(candidate.endogenousProbability, endogenaPerChiave.get(candidate.key), `${candidate.key}: l'endogena resta visibile`);
+    // MISTAKES.md §21: senza prezzo di mercato la quota è l'equa dello STESSO regime. Con l'equa
+    // endogena il ritorno atteso varrebbe p_ancorata / p_endogena: valore inventato.
+    if (candidate.source === "model") {
+      assert.ok(Math.abs(candidate.odds * candidate.probability - 1) < 1e-9, `${candidate.key}: quota e probabilità su scale diverse`);
+    }
+  }
+  assert.ok(conAncora.some((candidate) => candidate.source === "model"), "il caso da difendere deve comparire nel test");
+  for (const candidate of senzaAncora) {
+    assert.equal(candidate.regime, "endogena", "senza linea il regime si dichiara, non si presume");
+    assert.equal(candidate.probability, endogenaPerChiave.get(candidate.key));
+  }
 }
 
-console.log("OK: ancoraggio al mercato — marginali riprodotte entro 1e-5 (anche con φ acceso e griglia diversa), endogena intatta bit per bit, valore atteso nullo contro la propria linea, margine assurdo rifiutato e dichiarato");
+// --- La pagina: una sola matrice per vista, e la linea scelta in un punto solo -----------------
+{
+  const ancorata = predictFromMatches(matches, { ...modelInputs(), ...identity, marketOdds: LINEA });
+  const vista = shownPrediction(ancorata, identity.homeTeam, identity.awayTeam);
+  assert.equal(vista.regime, "ancorata");
+  assert.equal(vista.anchorLine, "chiusura");
+  // Card, risultati esatti, mercati sui giocatori ed esito più probabile dalla STESSA matrice.
+  assert.equal(vista.probabilities, ancorata.marketAnchor.probabilities);
+  assert.equal(vista.lambdaHome, ancorata.marketAnchor.lambdaHome);
+  assert.equal(vista.lambdaAway, ancorata.marketAnchor.lambdaAway);
+  const massima = Math.max(vista.probabilities.homeWin, vista.probabilities.draw, vista.probabilities.awayWin);
+  assert.equal(vista.mostLikelyOutcome.probability, massima, "esito più probabile da un'altra matrice");
+  assert.equal(vista.endogenous.probabilities, ancorata.probabilities, "l'endogena resta leggibile");
+
+  const endogena = predictFromMatches(matches, { ...modelInputs(), ...identity });
+  const vistaEndogena = shownPrediction(endogena, identity.homeTeam, identity.awayTeam);
+  assert.equal(vistaEndogena.regime, "endogena");
+  assert.equal(vistaEndogena.probabilities, endogena.probabilities);
+  assert.equal(vistaEndogena.lambdaHome, endogena.lambdaHome);
+
+  // predictMatchdayFromMatches: la linea pre-partita della pipeline ancora la pagina; quella
+  // live della schedina, più recente, vince; senza nessuna delle due resta endogena.
+  const base = { home_team: identity.homeTeam, away_team: identity.awayTeam, date: identity.date, competition_id: "ita.1", season: "2526" };
+  const prematch = { home: LINEA.home, draw: LINEA.draw, away: LINEA.away, over25: LINEA.over25, under25: LINEA.under25, fetched_at: "2025-11-01T08:00:00+00:00" };
+  const live = { home: 1.80, draw: 3.70, away: 4.60, over25: 1.85, under25: 2.00 };
+  const [soloPrepartita] = predictMatchdayFromMatches(matches, [{ ...base, prematch_odds: prematch }], modelInputs()).predictions;
+  assert.equal(soloPrepartita.result.marketAnchor.line, "prepartita");
+  const [entrambe] = predictMatchdayFromMatches(matches, [{ ...base, prematch_odds: prematch, market_odds: live }], modelInputs()).predictions;
+  assert.equal(entrambe.result.marketAnchor.line, "live");
+  const [nessuna] = predictMatchdayFromMatches(matches, [base], modelInputs()).predictions;
+  assert.equal(nessuna.result.marketAnchor, null);
+}
+
+console.log("OK: ancoraggio al mercato — marginali riprodotte entro 1e-5 (anche con φ acceso e griglia diversa), endogena intatta bit per bit, valore atteso nullo contro la propria linea, margine assurdo rifiutato e dichiarato, schedina decisa sull'ancorata con quota e probabilità dello stesso regime, pagina su una sola matrice con la linea prepartita");
