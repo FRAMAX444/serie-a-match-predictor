@@ -19,8 +19,9 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import update_europe_data as base  # noqa: E402
 import update_top5_data as top5  # noqa: E402
 
-# Sotto questa quota di righe agganciate, per lega, c'e' una grafia da sistemare.
-MIN_MATCHED_SHARE = 0.9
+# Oltre questa quota di righe senza NESSUNA fixture, per lega, c'e' una grafia da sistemare.
+# Le righe di gare gia' concluse non contano: sono il ritardo della fonte, non un difetto.
+MAX_UNMATCHED_SHARE = 0.1
 
 HEADER = "Div,Date,Time,HomeTeam,AwayTeam,AvgH,AvgD,AvgA,Avg>2.5,Avg<2.5"
 CSV = "\n".join([
@@ -59,13 +60,16 @@ class AttachPrematchOddsTests(unittest.TestCase):
         health = top5.attach_prematch_odds([{"fixtures": [future]}], self.rows, {}, "2026-11-10T08:00:00+00:00")
         self.assertEqual(future["prematch_odds"]["home"], 1.90)
         self.assertEqual(future["prematch_odds"]["fetched_at"], "2026-11-10T08:00:00+00:00")
-        self.assertEqual(health["ita.1"], {"rows": 1, "matched": 1})
-        self.assertEqual(health["eng.1"], {"rows": 1, "matched": 0})
+        self.assertEqual(health["ita.1"], {"rows": 1, "matched": 1, "stale": 0, "unmatched": 0})
+        self.assertEqual(health["eng.1"], {"rows": 1, "matched": 0, "stale": 0, "unmatched": 1})
 
-    def test_non_tocca_una_gara_conclusa(self) -> None:
+    def test_non_tocca_una_gara_conclusa_e_la_conta_come_ritardo_non_come_grafia(self) -> None:
+        """Il caso dell'11/11/2026: fixtures.csv conteneva ancora un turno gia' giocato. Contarlo
+        come grafia divergente ha bloccato la pubblicazione del dataset."""
         played = fixture("Inter", "Milan", completed=True)
-        top5.attach_prematch_odds([{"fixtures": [played]}], self.rows, {}, "t")
+        health = top5.attach_prematch_odds([{"fixtures": [played]}], self.rows, {}, "t")
         self.assertNotIn("prematch_odds", played)
+        self.assertEqual(health["ita.1"], {"rows": 1, "matched": 0, "stale": 1, "unmatched": 0})
 
     def test_usa_la_fusione_delle_grafie(self) -> None:
         """La fixture porta il nome fuso: senza la mappa la riga resterebbe orfana in silenzio."""
@@ -84,13 +88,13 @@ class PublishedPrematchOddsContractTests(unittest.TestCase):
         if self.health is None:
             self.skipTest("dataset generato prima delle quote pre-partita")
 
-    def test_ogni_lega_aggancia_quasi_tutte_le_righe(self) -> None:
-        low = [
-            f"{league}: {counts['matched']}/{counts['rows']}"
+    def test_quasi_nessuna_riga_resta_senza_fixture(self) -> None:
+        high = [
+            f"{league}: {counts.get('unmatched', 0)}/{counts['rows']}"
             for league, counts in sorted(self.health.items())
-            if counts["rows"] and counts["matched"] / counts["rows"] < MIN_MATCHED_SHARE
+            if counts["rows"] and counts.get("unmatched", 0) / counts["rows"] > MAX_UNMATCHED_SHARE
         ]
-        self.assertEqual(low, [], "righe di fixtures.csv senza fixture: una grafia diverge fra Football-Data ed ESPN")
+        self.assertEqual(high, [], "righe di fixtures.csv senza fixture: una grafia diverge fra Football-Data ed ESPN")
 
     def test_le_linee_scritte_sono_leggibili_dal_modello(self) -> None:
         for competition in self.payload["competitions"]:

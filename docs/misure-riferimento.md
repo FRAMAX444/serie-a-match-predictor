@@ -2118,3 +2118,92 @@ dimensione in cui il modello sia vicino al mercato. Con un modello dietro la lin
 il disaccordo con il mercato **e' l'errore del modello**, non un'opportunita': un filtro del tipo
 "punta dove vedo il 5% di valore" seleziona per costruzione le partite in cui il modello sbaglia
 di piu'. E' la definizione di essere dietro, non un problema di taratura.
+
+---
+
+# SESSIONE 6
+
+## 28. Stato al 09/11/2026, schedina ancorata, linea pre-partita sulla pagina
+
+Dataset del 01/11/2026 (8993 gare concluse): il workflow di aggiornamento non pubblicava dal
+01/11 (`MISTAKES.md` §33). Tutte le misure di questa sezione sono riproducibili senza rete.
+
+### 28.1 Divario dal mercato, rimisurato
+
+```
+node scripts/backtest_vs_market.mjs --since 2023-08-01 --max 9000
+  5558 gare con quote · modello 0.9920 · mercato 0.9638 · divario +0.0282 ± 0.0025 (11.5σ)
+node scripts/backtest_vs_market.mjs --since 2026-08-01 --max 5000 --by league
+  404 gare · modello 0.9887 · mercato 0.9573 · divario +0.0315 ± 0.0111 (2.9σ)
+  esp.1 +0.0811 ± 0.0195 (4.2σ) · ita.1 −0.0200 ± 0.0192 · ger.1 −0.0002 · eng.1 +0.0375 · fra.1 +0.0485
+```
+
+Il divario della stagione in corso non e' diverso da quello storico. La Liga 2026-27 e' l'unico
+segmento fuori dal rumore: il modello assegna al Barcellona il 66.4% medio contro il 78.5% del
+mercato (9 vittorie su 10) e al Atletico il 43.7% contro il 54.2%, e sopravvaluta le tre
+neopromosse senza storia nel dataset. E' compressione dei favoriti forti, non un difetto di dati.
+
+### 28.2 Ancoraggio, rimisurato (`node scripts/diag_market_anchor.mjs`)
+
+5557 gare appaiate, 1 non convergente. 1X2: **+0.0292 ± 0.0025** contro la chiusura, **+0.0267 ±
+0.0024** contro l'apertura; holdout +0.0242 ± 0.0041 e +0.0228 ± 0.0040. Ogni lega e ogni mercato
+derivato positivi. P1 di `PROMPT-sessione-5.md` §5 superata di nuovo.
+
+### 28.3 La schedina dichiarava il doppio della sicurezza reale
+
+`node scripts/diag_slip_replay.mjs`: il costruttore di produzione (`buildMarketCandidates` +
+`buildSlipSeries`) rigiocato su 511 turni dei Big Five, quote di chiusura come prezzo e come
+linea, prima schedina del turno, gruppi 1X2 + doppia + gol.
+
+```
+                        dichiarata   osservata        ROI
+3 gambe, media
+  endogena (prima)        20.7%      8.8% ± 1.3%    −31.5% ± 10.0%
+  ancorata (ora)          20.1%     18.8% ± 1.7%     −6.5% ±  8.6%
+holdout, solo gambe con prezzo di mercato
+  endogena                21.0%     10.3% ± 2.0%    −27.3% ± 14.6%
+  ancorata                20.2%     19.2% ± 2.6%    −17.0% ± 11.4%
+```
+
+Il ROI della riga «tutti i candidati» non e' denaro: le gambe senza prezzo usano la quota equa del
+proprio regime. La riga che conta e' la sicurezza osservata.
+
+**Questo rovescia una prescrizione di `PROMPT-sessione-5.md` §3 T1** («`schedina.js` deve
+continuare a usare le probabilita' endogene per l'EV»). La prescrizione rispondeva alla domanda
+«dove cercare valore», e li' resta vera: contro la linea che l'ha prodotta l'ancorata vale zero.
+Ma l'ottimizzatore non cerca valore — cerca la massima quota a sicurezza data — e con l'endogena
+quella ricerca seleziona il disaccordo col mercato, cioe' l'errore del modello. Il documento 5 non
+viene riscritto; questa misura ha precedenza su quella frase.
+
+### 28.4 Linea pre-partita per la pagina principale
+
+Football-Data pubblica `fixtures.csv` con le quote pre-partita delle gare future, stesse colonne
+dei CSV storici. Sul file del 09/11/2026 contro le fixture del dataset del 01/11: **48 righe su 48
+agganciate** (10 eng.1, 10 esp.1, 9 fra.1, 9 ger.1, 10 ita.1). La pipeline le scrive come
+`prematch_odds` con `fetched_at`; il modello le legge come linea `prepartita` e la pagina mostra la
+matrice ancorata. **Riserva aggiunta l'11/11:** quel 48/48 era su un dataset vecchio quanto il
+file. Football-Data aggiorna `fixtures.csv` in ritardo (l'11/11 conteneva ancora il turno del 6-8
+novembre), quindi per giorni la linea puo' mancare del tutto e la pagina resta endogena,
+dichiarandolo («modello»). Contro le fixture ESPN fresche dell'11/11: 47 righe di gare concluse,
+1 grafia risolta in CI (`MISTAKES.md` §35). Il guadagno atteso, quando la linea c'e', sta fra
+l'apertura (+0.0267) e la chiusura (+0.0292): la
+linea di fixtures.csv viene raccolta prima della chiusura. Copre i soli Big Five; le coppe restano
+endogene.
+
+### 28.5 Prior Elo per nazione dei club di coppa — **accettato**, primo parametro dopo dieci rifiuti
+
+Pre-registrato in `docs/pre-registrazione-cup-country-prior.md` prima di misurare. Un club mai
+visto, in una gara di coppa, parte dalla forza del suo campionato nazionale (codice nazione UEFA →
+tabella delle forze della pipeline) invece che da 1500. Un solo valore (peso 1), nessuna stima.
+
+```
+node scripts/diag_cup_country_prior.mjs <dataset annotato>
+  holdout +0.0076 ± 0.0017 (4.5σ, 1533 gare) · ucl +0.0061 · uel +0.0102 · uecl +0.0070
+  training +0.0082 ± 0.0017
+```
+
+Coerente con la regola «correggere i dati paga, aggiungere parametri no»: non e' una leva
+stimata ma un dato che mancava (la nazione del club), e il peso non e' stato cercato. Il dataset
+della misura e' ricostruito in memoria dalle fixture 2026-27: i club usciti dalle coppe prima di
+quella stagione restano a 1500 in entrambi i bracci, quindi la misura sottostima. Da rifare (C3)
+sul dataset rigenerato dalla CI, che porta la forza su ogni gara di coppa.

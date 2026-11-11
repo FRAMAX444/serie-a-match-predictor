@@ -175,27 +175,38 @@ def attach_prematch_odds(
     L'aggancio e' su (competizione, casa, trasferta) dopo la stessa normalizzazione e la stessa
     fusione delle grafie delle fixture: in una stagione di campionato la coppia ordinata e' unica,
     e la data non entra nella chiave perche' Football-Data scrive la data locale e ESPN quella UTC.
-    Ritorna, per lega, quante righe della fonte hanno trovato la loro fixture: e' il contatore
-    che il contratto controlla, perche' una grafia divergente qui non solleva niente — lascia
-    solo quella gara senza linea, cioe' endogena in silenzio.
+    Ritorna, per lega, tre contatori distinti, perche' due cause diverse lasciano una riga
+    senza linea e solo una e' un difetto:
+
+    - ``matched``: agganciata a una fixture futura;
+    - ``stale``: la coppia esiste ma la gara e' gia' conclusa. Football-Data aggiorna il file in
+      ritardo — l'11/11/2026 conteneva ancora il turno del 6-8 novembre — e una fonte in ritardo
+      non e' un errore nostro. Il primo contratto contava queste righe come grafie divergenti e
+      ha bloccato la pubblicazione su 48 righe su 48: la forma del difetto 33 di MISTAKES.md;
+    - ``unmatched``: nessuna fixture con quella coppia. Questo e' il contatore che il contratto
+      controlla, perche' una grafia divergente non solleva niente — lascia solo quella gara
+      senza linea, cioe' endogena in silenzio.
     """
     index: dict[tuple[str, str, str], dict[str, object]] = {}
     for competition in competitions:
         for fixture in competition.get("fixtures") or []:
-            if isinstance(fixture, dict) and not fixture.get("completed"):
+            if isinstance(fixture, dict):
                 index[(str(fixture.get("competition_id")), str(fixture.get("home_team")), str(fixture.get("away_team")))] = fixture
     health: dict[str, dict[str, int]] = {}
     for row in rows:
         league = str(row["competition_id"])
         home = spelling.get(str(row["home_team"]), str(row["home_team"]))
         away = spelling.get(str(row["away_team"]), str(row["away_team"]))
-        counts = health.setdefault(league, {"rows": 0, "matched": 0})
+        counts = health.setdefault(league, {"rows": 0, "matched": 0, "stale": 0, "unmatched": 0})
         counts["rows"] += 1
         fixture = index.get((league, home, away))
         if fixture is None:
-            continue
-        counts["matched"] += 1
-        fixture["prematch_odds"] = {**row["odds"], "fetched_at": fetched_at}
+            counts["unmatched"] += 1
+        elif fixture.get("completed"):
+            counts["stale"] += 1
+        else:
+            counts["matched"] += 1
+            fixture["prematch_odds"] = {**row["odds"], "fetched_at": fetched_at}
     return health
 
 
@@ -429,7 +440,10 @@ def main() -> None:
         datetime.now(timezone.utc).isoformat(timespec="seconds"),
     )
     for league, counts in sorted(prematch_health.items()):
-        print(f"quote pre-partita {league}: {counts['matched']}/{counts['rows']} righe agganciate a una fixture")
+        print(
+            f"quote pre-partita {league}: {counts['matched']} agganciate, {counts['stale']} di gare gia' "
+            f"concluse, {counts['unmatched']} senza fixture (su {counts['rows']})"
+        )
 
     calendar_issues = calendar_contract_issues(competitions, target_start)
     if calendar_issues:

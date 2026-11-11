@@ -14,15 +14,15 @@ Riferimenti puntuali in `docs/misure-riferimento.md`.
 
 ## Il quadro d'insieme
 
-Trentadue difetti, e si distribuiscono in modo molto disuguale:
+Trentacinque difetti, e si distribuiscono in modo molto disuguale:
 
 | categoria | quanti | impatto misurato sulle previsioni |
 |---|---|---|
 | Identità dei dati (nomi, alias, join) | 8 | il più grande mai misurato: **+0.0145** in Champions |
 | Produzione ≠ misura | 6 | nullo o non misurabile, ma invalidava *ogni* misura |
-| Campi calcolati male | 7 | da nullo a "azzerava un'intera funzione" o "ribaltava il calendario" |
-| Test e integrazione continua | 1 | nessuno sulle previsioni: bloccava il deploy |
-| Fonti dati non raggiungibili | 1 | nessuno sulle previsioni: azzerava ogni misura di mercato |
+| Campi calcolati male | 8 | da nullo a "azzerava un'intera funzione" o "ribaltava il calendario" |
+| Test e integrazione continua | 2 | nessuno sulle previsioni: bloccavano il deploy o la pubblicazione dei dati |
+| Fonti dati non raggiungibili | 2 | azzerava ogni misura di mercato; teneva il sito fermo otto giorni senza dirlo |
 | Interfaccia e flusso | 9 | funzione principale inutilizzabile, generata e invisibile, o salvata dove non resta |
 
 Tre osservazioni che il catalogo rende difficili da ignorare:
@@ -824,14 +824,18 @@ righe di due squadre e va riletto finche' serve almeno a una.
 mutazione: spento il seme, spento il filtro per riga o rimesso il vecchio criterio di scelta delle
 partite, il test corrispondente diventa rosso.
 
-**Resta aperto, ed e' emerso misurando questo:** 12 voci su 96 stanno sotto un nome che il
+**Chiuso il 10/11/2026** (era aperto, ed era emerso misurando questo): 12 voci su 96 stavano sotto un nome che il
 catalogo non contiene, e le 12 squadre vere corrispondenti (Rennes, Bournemouth, Freiburg,
 Augsburg, Hamburg, Union Berlin, Auxerre, ...) non hanno **nessun** dato giocatore. `parse_summary`
 normalizza il `shortDisplayName` del `summary` ESPN, che per questi club diverge dal nome che la
 stessa ESPN usa nel calendario. L'accumulo non lo tocca: e' un difetto di identita', la famiglia
 che e' costata di piu'. La correzione robusta non e' un altro alias ma la chiave che non ha
 grafie — l'id squadra ESPN, gia' presente sia nel `summary` sia nelle fixture
-(`home_team_id`/`away_team_id`).
+(`home_team_id`/`away_team_id`). Fatto cosi': `parse_summary` porta l'id ESPN della squadra,
+`fetch_player_samples` lo traduce nel nome del calendario con `team_names_by_espn_id()` (solo
+fixture di campionato: quelle di coppa portano id UEFA, un altro spazio di numeri; un id con due
+nomi viene scartato). `PublishedPlayerContextKeysTests` fallisce se una voce sta sotto un nome
+che il calendario non contiene — rosso sul dataset del 01/11 finche' la CI non lo rigenera.
 
 E la **prima stesura di quei test era inutile**, il che e' la parte che vale la pena ricordare: si
 fermava a due partite, e fino a due una esecuzione senza accumulo produce lo stesso identico
@@ -841,6 +845,101 @@ arriva alla **terza** partita, oltre il tetto per esecuzione. Piu' l'invariante 
 contro il rischio opposto che l'accumulo introduce, contare due volte la stessa partita: nessun
 giocatore puo' avere piu' convocazioni delle partite conteggiate, ne' piu' di 100 minuti per
 ognuna.
+
+---
+
+## 33. Il sito e' rimasto fermo otto giorni perche' Understat rispondeva HTML
+
+**Cosa.** Dal 01/11/2026 Understat risponde a ogni richiesta — pagina squadra e `getTeamData`, con
+qualunque intestazione — con una pagina d'errore HTML. La pipeline perde gli xG di **tutte** le
+stagioni dei Big Five, `XgCoverageContractTests` diventa rosso (0% su eng.1 2324, ecc.) e il
+workflow non pubblica. Il contratto ha fatto il suo lavoro: un dataset senza xG non e' andato in
+produzione. Ma la conseguenza e' stata un'altra forma dello stesso danno — **il sito e' rimasto
+con il dataset del 01/11**, e nessuna pagina lo diceva, perche' nessuna leggeva `generated_at`.
+Gli xG mancanti sono di partite gia' giocate: il loro valore non cambia, e il dataset pubblicato li
+aveva tutti. Il difetto 30 aveva gia' costruito il ripristino dal dataset precedente, ma solo per
+le colonne di Football-Data.
+
+**Costo.** 18 esecuzioni consecutive senza pubblicazione fra la sera del 01/11 e il 09/11 (5 annullate, 13 fallite; verificato con
+`gh run list`). Previsioni calcolate senza i risultati di un turno di campionato e di uno di coppa
+per otto giorni, mostrate come attuali. Nessuna misura di accuratezza ne' risente: i backtest
+leggono il dataset locale.
+
+**Perche' nessun test l'ha visto.** Il contratto sulla copertura xG controlla il dataset che si
+sta per pubblicare, ed era corretto che fallisse. Nessun test controlla cosa succede **dopo** che
+un contratto blocca: la pipeline non aveva un percorso di degradazione per gli xG, e la pagina non
+aveva un modo di dire che i dati erano vecchi. Il segnale era nel log di un workflow fallito, lo
+stesso posto dei difetti 29 e 30.
+
+**Cosa lo intercetta adesso.** `restore_missing_source_fields()` riprende anche `home_xg`/`away_xg`
+(`XG_FIELDS`), in coppia e solo se mancano entrambi: un mezzo xG mescolerebbe due fonti in un
+numero plausibile. `tests/test_source_outage_preservation.py` verifica riempimento, non
+sovrascrittura e non completamento di una coppia a meta', e ogni ramo e' verificato per mutazione.
+`data-freshness.js` mostra sulla pagina principale «Dati fermi al …» oltre 36 ore (sei esecuzioni
+mancate), e una data illeggibile e' dichiarata, non presunta fresca (`tests/data-freshness.test.js`).
+Le gare giocate DOPO l'interruzione restano senza xG finche' Understat non torna: il modello usa il
+proxy dei tiri, come per le coppe.
+
+---
+
+## 34. La schedina dichiarava il doppio della sicurezza reale
+
+**Cosa.** `buildMarketCandidates()` passava all'ottimizzatore la probabilita' **endogena** anche
+quando la gara aveva una linea di mercato e la matrice ancorata era gia' calcolata. Il commento la
+motivava con la circolarita' («contro il mercato che l'ha prodotta una probabilita' ancorata ha
+valore atteso zero»): vero, e irrilevante. L'ottimizzatore cerca la quota piu' alta a parita' di
+probabilita', quindi con l'endogena seleziona proprio le gambe in cui il modello dissente di piu'
+dal mercato — cioe' quelle in cui sbaglia (`PROMPT-sessione-4.md` §0.1: piu' valore dichiara,
+peggio va). La probabilita' combinata mostrata all'utente era quella di quelle gambe.
+
+**Costo.** Rigiocando il costruttore su 511 turni dei Big Five con le quote di chiusura (3 gambe,
+sicurezza media): dichiarata **20.7%**, osservata **8.8% ± 1.3%**. Con la probabilita' ancorata:
+dichiarata 20.1%, osservata 18.8% ± 1.7%. Holdout dello stesso segno (21.0% contro 10.3% ± 2.0%).
+Ogni schedina generata con una chiave API prometteva una sicurezza che si realizzava meno della
+meta' delle volte. `node scripts/diag_slip_replay.mjs`, docs/misure-riferimento.md §28.
+
+**Perche' nessun test l'ha visto.** I test della schedina verificano che il vincolo di sicurezza
+sia rispettato **rispetto alla probabilita' che ricevono**: lo era. Nessun test confrontava mai la
+sicurezza dichiarata con la frequenza osservata, che e' l'unica cosa che l'utente legge. E la
+scelta era difesa da un ragionamento corretto su un'altra domanda (cercare valore), non su
+quella che la funzione risolve (stimare quanto e' probabile la schedina): la forma del difetto 21,
+due grandezze diverse sotto lo stesso nome, e della regola «il commento che spiega perche' una
+scorciatoia e' sicura e' il posto dove guardare».
+
+**Cosa lo intercetta adesso.** Dove esiste una linea, ogni candidato porta probabilita' e quota
+dello stesso regime (`regime: "ancorata"`): le gambe senza prezzo di mercato prendono la quota equa
+ancorata, non quella endogena, che farebbe riapparire un valore pari a p_ancorata / p_endogena.
+`totals` si chiede sempre all'API, perche' senza la linea 2.5 la gara non si ancora e tornerebbe
+endogena in silenzio. `tests/market-anchor.test.js` verifica le due proprieta' (verificate per
+mutazione), la pagina etichetta «solo modello» le gambe senza linea, e lo storico registra il
+regime di ogni probabilita'. `scripts/diag_slip_replay.mjs` e' la misura che va rifatta a ogni
+modifica dell'ottimizzatore.
+
+---
+
+## 35. Il contratto sulle quote pre-partita scambiava il ritardo della fonte per una grafia
+
+**Cosa.** `attach_prematch_odds()` contava come «non agganciata» ogni riga di `fixtures.csv`
+senza una fixture FUTURA, e il contratto chiedeva almeno il 90% di righe agganciate per lega.
+Ma Football-Data aggiorna il file in ritardo: l'11/11/2026 conteneva ancora il turno del 6-8
+novembre, gia' giocato. Quelle righe corrispondevano a gare concluse — giustamente senza linea —
+e il contratto le ha lette come grafie divergenti: 0 su 48 in tutte e cinque le leghe.
+
+**Costo.** Il primo run dopo la correzione del difetto 33 ha costruito un dataset completo (xG
+ripristinati su 5240 partite) e non l'ha pubblicato: tre esecuzioni fallite il 10-11/11, sito
+ancora fermo al 01/11. Nessun effetto sulle previsioni oltre a quello.
+
+**Perche' nessun test l'ha visto.** La verifica fatta prima del commit usava il dataset del 01/11,
+in cui il turno del 6-8 novembre era ancora da giocare: 48 su 48. Era una prova sul dato vero, ma
+su un dato vecchio quanto la fonte, quindi i due ritardi si compensavano. Lo stesso difetto di
+pensiero del 33: un contratto che blocca la pubblicazione per un dato che nessuna pagina legge.
+
+**Cosa lo intercetta adesso.** Tre contatori per lega: `matched`, `stale` (la coppia esiste ma la
+gara e' conclusa: ritardo della fonte, non conta) e `unmatched` (nessuna fixture con quella
+coppia: grafia). Il contratto controlla solo `unmatched`, al massimo il 10%.
+`tests/test_prematch_odds.py` riproduce il caso dell'11/11. Verificato sul file di Football-Data
+dell'11/11 contro le fixture ESPN fresche: 47 righe `stale`, 1 `unmatched` (`Malaga`, che in CI la
+fusione delle grafie risolve in `Málaga`), 0 errori di aggancio.
 
 ---
 
