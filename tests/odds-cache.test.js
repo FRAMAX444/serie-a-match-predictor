@@ -98,21 +98,26 @@ if (!fs.existsSync(datasetPath)) {
   const { buildMatchdays } = await import("../matchdays.js");
   const payload = JSON.parse(fs.readFileSync(datasetPath, "utf8"));
 
-  // Il turno che generateSlip sceglierebbe deve avere ancora gare da giocare, altrimenti
-  // solleva — ed e' giusto che sollevi, perche' non esistono quote per eventi conclusi.
-  // Quello che NON deve fare e' far fallire questo test, che verifica la cache delle quote e
-  // non la freschezza del dataset. La condizione arriva da sola: il dataset lo rigenera la CI
-  // quattro volte al giorno, quindi basta che quella si fermi (o che si lavori in locale il
-  // giorno dopo l'ultimo aggiornamento) perche' l'ultimo turno aperto finisca nel passato.
-  // La stessa selezione di generateSlip, replicata con le sue stesse funzioni per non
-  // indovinare quale turno guardera'.
+  // L'orologio e' quello del dataset, non quello del muro. Con il muro questa parte saltava
+  // ogni volta che il dataset era piu' vecchio dell'ultimo turno aperto — in locale e nel
+  // deploy su push quasi sempre — e girava davvero solo nel job che pubblica i dati, sul
+  // dataset fresco: e' li' che il difetto 36 si e' visto per la prima volta, bloccando 13
+  // pubblicazioni di fila. Alla data in cui e' stato generato, il turno aperto e' futuro.
+  const now = new Date(payload.generated_at);
+
+  // Il turno che generateSlip sceglierebbe deve avere almeno due gare da giocare a quella data,
+  // altrimenti solleva — ed e' giusto, non esistono quote per eventi conclusi. Succede solo se
+  // il dataset e' stato generato con l'ultima gara del turno ancora da giocare: allora si
+  // salta, perche' questo test verifica la cache delle quote e non il calendario. La stessa
+  // selezione di generateSlip, replicata con le sue stesse funzioni per non indovinare quale
+  // turno guardera'.
   const calendar = buildMatchdays(payload, "ita.1");
   const matchday = calendar.firstUpcoming || calendar.matchdays?.[0];
-  const playable = matchday ? upcomingFixtures(matchday.fixtures).length : 0;
+  const playable = matchday ? upcomingFixtures(matchday.fixtures, now).length : 0;
   if (playable < 2) {
     console.log(
-      `SALTATO (integrazione): il turno ${matchday?.round ?? "?"} ha ${playable} gare ancora da `
-      + "giocare, il dataset locale e' piu' vecchio del calendario",
+      `SALTATO (integrazione): al ${payload.generated_at} il turno ${matchday?.round ?? "?"} ha `
+      + `${playable} gare ancora da giocare`,
     );
     process.exit(0);
   }
@@ -136,7 +141,7 @@ if (!fs.existsSync(datasetPath)) {
 
   const options = {
     payload, competitionId: "ita.1", legs: 2, confidence: "media",
-    marketGroups: ["1X2", "doppia"], playerMarkets: [], apiKey: "chiave-finta",
+    marketGroups: ["1X2", "doppia"], playerMarkets: [], apiKey: "chiave-finta", now,
   };
 
   const first = await generateSlip({ ...options });
@@ -149,13 +154,15 @@ if (!fs.existsSync(datasetPath)) {
   assert.equal(second.oddsCache.fetched, 0);
   assert.equal(second.oddsCache.fromCache, 1, "la risposta deve arrivare dalla cache");
 
-  // Cambiare i mercati richiesti e' un'altra richiesta: servire la vecchia darebbe una schedina
-  // costruita su quote che non contengono i mercati chiesti. Qui si guarda il registro e non il
-  // contatore grezzo, perche' accendere il gruppo "gol" aggiunge anche l'elenco eventi — che e'
-  // un endpoint diverso, gratuito e non messo in cache.
-  const otherMarkets = await generateSlip({ ...options, marketGroups: ["1X2", "doppia", "gol"] });
-  assert.equal(otherMarkets.oddsCache.fromCache, 0, "mercati diversi = richiesta diversa, la cache non deve rispondere");
-  assert.ok(otherMarkets.oddsCache.fetched >= 1);
+  // Dal 10/11/2026 h2h e totals si chiedono sempre (oddsMarketsFor), quindi accendere "gol" non
+  // cambia la richiesta di lega: la cache DEVE rispondere, altrimenti si spende quota per la
+  // stessa risposta. Che mercati diversi diano una chiave diversa lo verifica la parte unitaria
+  // sopra. Fino all'11/11 qui si asseriva il contrario: in CI, sul dataset fresco, ha bloccato la
+  // pubblicazione (MISTAKES.md §36). Si guarda il registro e non il contatore grezzo, perche'
+  // "gol" aggiunge anche l'elenco eventi — endpoint diverso, gratuito e non in cache.
+  const withGoals = await generateSlip({ ...options, marketGroups: ["1X2", "doppia", "gol"] });
+  assert.equal(withGoals.oddsCache.fromCache, 1, "stessa richiesta di lega (h2h+totals sempre): deve rispondere la cache");
+  assert.equal(withGoals.oddsCache.fetched, 0);
 
   // La casella "riscarica" deve poter scavalcare la cache, altrimenti non c'e' modo di
   // aggiornare i prezzi quando il turno si avvicina.

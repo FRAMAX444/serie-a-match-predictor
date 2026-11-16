@@ -882,6 +882,10 @@ export async function generateSlip({
   // Quante schedine produrre in un colpo solo, e la quota minima ammessa per selezione.
   seriesCount = 10,
   minLegOdds = DEFAULT_MIN_LEG_ODDS,
+  // Il giorno rispetto a cui una gara e' "ancora da giocare". In produzione e' l'orologio; il
+  // test d'integrazione delle quote passa la data del dataset, altrimenti girerebbe solo sul
+  // dataset appena rigenerato, cioe' nel job che pubblica i dati (MISTAKES.md §36).
+  now = new Date(),
 }) {
   const catalog = buildCompetitionCatalog(payload);
   const competition = catalog.find((entry) => entry.id === competitionId);
@@ -894,7 +898,7 @@ export async function generateSlip({
   if (!matchday) throw new Error("Nessun turno futuro trovato per questa lega.");
 
   const requestedLegs = Math.max(1, Math.round(legs));
-  const fixtures = upcomingFixtures(matchday.fixtures);
+  const fixtures = upcomingFixtures(matchday.fixtures, now);
   if (!fixtures.length) {
     throw new Error(
       `Il turno ${matchday.round} risulta gia' giocato per intero: non c'e' nulla su cui `

@@ -14,14 +14,14 @@ Riferimenti puntuali in `docs/misure-riferimento.md`.
 
 ## Il quadro d'insieme
 
-Trentacinque difetti, e si distribuiscono in modo molto disuguale:
+Trentasei difetti, e si distribuiscono in modo molto disuguale:
 
 | categoria | quanti | impatto misurato sulle previsioni |
 |---|---|---|
 | Identità dei dati (nomi, alias, join) | 8 | il più grande mai misurato: **+0.0145** in Champions |
 | Produzione ≠ misura | 6 | nullo o non misurabile, ma invalidava *ogni* misura |
 | Campi calcolati male | 8 | da nullo a "azzerava un'intera funzione" o "ribaltava il calendario" |
-| Test e integrazione continua | 2 | nessuno sulle previsioni: bloccavano il deploy o la pubblicazione dei dati |
+| Test e integrazione continua | 3 | nessuno sulle previsioni: bloccavano il deploy o la pubblicazione dei dati |
 | Fonti dati non raggiungibili | 2 | azzerava ogni misura di mercato; teneva il sito fermo otto giorni senza dirlo |
 | Interfaccia e flusso | 9 | funzione principale inutilizzabile, generata e invisibile, o salvata dove non resta |
 
@@ -940,6 +940,42 @@ coppia: grafia). Il contratto controlla solo `unmatched`, al massimo il 10%.
 `tests/test_prematch_odds.py` riproduce il caso dell'11/11. Verificato sul file di Football-Data
 dell'11/11 contro le fixture ESPN fresche: 47 righe `stale`, 1 `unmatched` (`Malaga`, che in CI la
 fusione delle grafie risolve in `Málaga`), 0 errori di aggancio.
+
+---
+
+## 36. Un test d'integrazione asseriva una premessa che la schedina ancorata aveva tolto
+
+**Cosa.** Dal 10/11/2026 `oddsMarketsFor()` chiede sempre `h2h` e `totals` (difetto 34). La
+parte d'integrazione di `tests/odds-cache.test.js` verificava invece che accendere il gruppo
+«gol» producesse una richiesta diversa e quindi **non** fosse servito dalla cache. Dopo la modifica
+«gol» non aggiunge piu' nessun mercato alla richiesta di lega: la cache risponde, ed e' giusto
+cosi' (stessa richiesta, stessa risposta, quota risparmiata). Il test l'ha letto come un difetto.
+
+**Costo.** Dal run dell'11/11 sera (20:06 UTC), il primo con i test Python tutti verdi dopo i
+difetti 33 e 35, al run del 16/11 delle 09:55: **13 esecuzioni consecutive** hanno costruito il
+dataset e non l'hanno pubblicato, tutte sulla stessa asserzione (verificato con `gh run view
+--log-failed`). La correzione era scritta dalla sera dell'11/11 ma e' rimasta senza commit:
+cinque giorni in piu' di sito fermo al 01/11, quindici in tutto con i difetti 33 e 35. Il danno
+e' quello del 33, cioe' previsioni calcolate senza i turni giocati dopo il 01/11, ma dal 10/11 la
+pagina lo dichiara («Dati fermi al …», `data-freshness.js`). Nessuna misura di accuratezza ne
+risente.
+
+**Perche' nessun test l'ha visto.** In locale quella parte del test **salta** quando il dataset
+non ha un turno di Serie A ancora da giocare, e il dataset locale era quello del 01/11. Il salto
+e' voluto (il test verifica la cache, non la freschezza dei dati), ma ha reso la suite locale
+verde su un'asserzione che non era stata eseguita. Il riassunto «`npm test` passa» contava una
+riga `SALTATO` come una riga `OK`. Lo stesso salto valeva nel deploy su push (`pages.yml` esegue
+`npm test` sul dataset committato, vecchio quanto il sito): l'unico posto in cui quella parte
+girava davvero era il job che pubblica i dati, cioe' proprio quello che il difetto bloccava.
+
+**Cosa lo intercetta adesso.** L'asserzione e' invertita e dice perche': con «gol» acceso la
+richiesta di lega e' la stessa e deve rispondere la cache. Che mercati diversi diano chiavi
+diverse lo verifica gia' la parte unitaria dello stesso file, che non salta mai. E la parte
+d'integrazione non dipende piu' dall'eta' del dataset: `generateSlip()` accetta `now` e il test
+gli passa `generated_at`, quindi gira in locale, nel deploy su push e nella validazione delle PR,
+non solo sul dataset appena rigenerato. Verificato il 16/11 sul dataset del 01/11 con l'orologio
+reale: la parte d'integrazione gira (nessun `SALTATO`), e con l'asserzione vecchia rimessa al suo
+posto fallisce con lo stesso messaggio della CI. Il 10/11 l'avrebbe quindi fermato in locale.
 
 ---
 
